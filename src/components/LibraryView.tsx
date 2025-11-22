@@ -64,7 +64,7 @@ export const LibraryView = () => {
       }
 
       // Check if we're in Tauri environment for file system access
-      if (typeof window.__TAURI__ === 'undefined') {
+      if (!isTauri()) {
         addToast("File system access is only available in the desktop app", 'warning');
         setLoading(false);
         return;
