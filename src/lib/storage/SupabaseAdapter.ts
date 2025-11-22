@@ -118,7 +118,7 @@ export class SupabaseAdapter implements DataService {
 
     const user = await this.supabase.auth.getUser();
     if (!user.data.user) throw new Error("User not logged in");
-    const userId = user.data.user.id;
+    // const userId = user.data.user.id; // Unused
 
     // Find any card for this note (MVP Hack)
     const { data: cardData } = await this.supabase
@@ -173,10 +173,6 @@ export class SupabaseAdapter implements DataService {
       .eq('note_id', noteId)
       .limit(1)
       .single();
-
-    if (error && error.code !== 'PGRST116') { // PGRST116 is "The result contains 0 rows"
-        console.warn("Error fetching card metadata:", error);
-    }
 
     if (!data) {
       return {

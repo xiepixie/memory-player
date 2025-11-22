@@ -121,7 +121,14 @@ export const LibraryView = () => {
       {/* Navbar */}
       <div className="navbar bg-base-100/80 backdrop-blur-md border-b border-base-200 px-4 h-16 shrink-0 sticky top-0 z-20">
         <div className="flex-1">
-          <div className="flex items-center gap-3">
+          <div 
+            className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={() => {
+                setRootPath(null);
+                setFiles([]);
+            }}
+            title="Return to Home"
+          >
              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
                 <Brain size={20} />
              </div>
@@ -264,7 +271,7 @@ export const LibraryView = () => {
                    >
                       <div className="divider opacity-10 mb-8">Recent Vaults</div>
                       <div className="flex flex-col gap-2">
-                        {recentVaults.map(path => (
+                        {recentVaults.filter(Boolean).map(path => (
                           <div
                             key={path}
                             onClick={() => { setFiles([]); setRootPath(path); }}
@@ -275,7 +282,7 @@ export const LibraryView = () => {
                             </div>
                             <div className="flex-1 text-left min-w-0">
                                 <div className="font-bold truncate text-sm" title={path}>
-                                    {path.split(/[\\/]/).pop()}
+                                    {path?.split(/[\\/]/).pop() || 'Unknown Vault'}
                                 </div>
                                 <div className="text-xs opacity-40 truncate font-mono mt-0.5" title={path}>
                                     {path}

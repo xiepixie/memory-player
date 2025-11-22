@@ -1,2 +1,2 @@
 @import "tailwindcss";
-@plugin "daisyui" { themes: winter --default, night --prefersdark, emerald, lofi, retro, cyberpunk, dracula, pastel, autumn, dim, nord, sunset };
+@plugin "daisyui" { themes: winter, night --default, pastel, autumn, dim, sunset };

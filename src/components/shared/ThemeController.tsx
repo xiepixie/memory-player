@@ -4,15 +4,9 @@ import { Palette } from 'lucide-react';
 const THEMES = [
     'winter',
     'night',
-    'emerald',
-    'lofi',
-    'retro',
-    'cyberpunk',
-    'dracula',
     'pastel',
     'autumn',
     'dim',
-    'nord',
     'sunset'
 ];
 

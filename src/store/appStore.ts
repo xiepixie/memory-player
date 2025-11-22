@@ -96,10 +96,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setRootPath: (path) => {
-    localStorage.setItem('rootPath', path);
+    if (path) {
+        localStorage.setItem('rootPath', path);
+    } else {
+        localStorage.removeItem('rootPath');
+    }
+    
     const { recentVaults } = get();
-    // Only add to recents if it's not the Demo Vault
-    if (path !== 'DEMO_VAULT') {
+    // Only add to recents if it's not the Demo Vault and not null
+    if (path && path !== 'DEMO_VAULT') {
       const updatedRecents = [path, ...recentVaults.filter(p => p !== path)].slice(0, 5);
       localStorage.setItem('recentVaults', JSON.stringify(updatedRecents));
       set({ rootPath: path, recentVaults: updatedRecents, contentCache: {} }); // Clear cache on vault switch
