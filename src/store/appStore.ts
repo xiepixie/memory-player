@@ -3,6 +3,7 @@ import { DataService, NoteMetadata } from '../lib/storage/types';
 import { MockAdapter } from '../lib/storage/MockAdapter';
 import { SupabaseAdapter } from '../lib/storage/SupabaseAdapter';
 import { fileSystem } from '../lib/services/fileSystem';
+import { isTauri } from '../lib/tauri';
 import { parseNote, ParsedNote } from '../lib/markdown/parser';
 import { fsrs } from 'ts-fsrs';
 import { useToastStore } from './toastStore';
@@ -197,7 +198,7 @@ The ==Ebbinghaus== forgetting curve shows how information is lost over time when
 `;
         } else {
             // Check if we're in Tauri environment
-            if (typeof window.__TAURI__ === 'undefined') {
+            if (!isTauri()) {
             useToastStore.getState().addToast("File system access is only available in the desktop app", 'error');
             return;
             }

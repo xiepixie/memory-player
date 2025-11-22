@@ -1,8 +1,9 @@
 import { useAppStore } from '../../store/appStore';
+import { isTauri } from '../../lib/tauri';
 import { useState, useRef, useEffect } from 'react';
 import { MarkdownContent } from '../shared/MarkdownContent';
 import { Save, Type, Bold, Italic, List, Heading1, Heading2, Quote, Copy } from 'lucide-react';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
+import { fileSystem } from '../../lib/services/fileSystem';
 import { useToastStore } from '../../store/toastStore';
 import { ClozeUtils } from '../../lib/markdown/clozeUtils';
 import { parseNote } from '../../lib/markdown/parser';
@@ -39,8 +40,8 @@ export const EditMode = () => {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      if (typeof window.__TAURI__ !== 'undefined') {
-        await writeTextFile(currentFilepath, content);
+      if (isTauri()) {
+        await fileSystem.writeNote(currentFilepath, content);
         
         // Sync to Supabase
         const noteId = useAppStore.getState().pathMap[currentFilepath];

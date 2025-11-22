@@ -1,4 +1,5 @@
 import { useAppStore } from '../store/appStore';
+import { isTauri } from '../lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readDir } from '@tauri-apps/plugin-fs';
 import { FolderOpen, FileText, Clock, X, LayoutGrid, List, FolderTree, Brain, PenTool, Cloud } from 'lucide-react';
@@ -31,7 +32,7 @@ export const LibraryView = () => {
   const handleOpenFolder = async () => {
     try {
       // Check if we're in Tauri environment
-      if (typeof window.__TAURI__ === 'undefined') {
+      if (!isTauri()) {
         addToast("File system access is only available in the desktop app", 'warning');
         return;
       }
