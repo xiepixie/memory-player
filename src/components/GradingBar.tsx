@@ -1,4 +1,5 @@
 import { useAppStore } from '../store/appStore';
+import { useToastStore } from '../store/toastStore';
 import { motion } from 'framer-motion';
 
 export const GradingBar = () => {
@@ -6,44 +7,86 @@ export const GradingBar = () => {
 
   if (!currentMetadata) return null;
 
-  const handleGrade = async (rating: number) => {
-    await saveReview(rating);
-  };
-
-  const buttons = [
-      { label: 'Again', rating: 1, color: 'btn-error', time: '1m', key: '1' },
-      { label: 'Hard', rating: 2, color: 'btn-warning', time: '2d', key: '2' },
-      { label: 'Good', rating: 3, color: 'btn-info', time: '4d', key: '3' },
-      { label: 'Easy', rating: 4, color: 'btn-success', time: '7d', key: '4' },
+  const leftButtons = [
+    { label: 'Again', rating: 1, color: 'hover:bg-error/20 hover:text-error', key: '1', type: 'error' as const, msg: 'Forgot?|Review scheduled soon' },
+    { label: 'Hard', rating: 2, color: 'hover:bg-warning/20 hover:text-warning', key: '2', type: 'warning' as const, msg: 'Hard|Review scheduled later' },
   ];
+
+  const rightButtons = [
+    { label: 'Good', rating: 3, color: 'hover:bg-info/20 hover:text-info', key: '3', type: 'info' as const, msg: 'Good|Progress recorded' },
+    { label: 'Easy', rating: 4, color: 'hover:bg-success/20 hover:text-success', key: '4', type: 'success' as const, msg: 'Easy|Mastered!' },
+  ];
+
+  type ButtonConfig = typeof leftButtons[number] | typeof rightButtons[number];
+
+  const ButtonGroup = ({ buttons, align }: { buttons: ButtonConfig[], align: 'left' | 'right' }) => (
+    <div className={`flex flex-col gap-3 ${align === 'left' ? 'items-start' : 'items-end'}`}>
+        {buttons.map((btn) => (
+        <motion.button
+            key={btn.rating}
+            whileHover={{ scale: 1.1, x: align === 'left' ? -5 : 5 }}
+            whileTap={{ scale: 0.95 }}
+            className={`
+                group relative flex items-center
+                ${align === 'left' ? 'flex-row' : 'flex-row-reverse'}
+            `}
+            onClick={() => {
+                useToastStore.getState().addToast(btn.msg, btn.type);
+                saveReview(btn.rating);
+            }}
+            title={`Press ${btn.key}`}
+        >
+            {/* Paper-style Orb Button */}
+            <div className={`
+                w-10 h-10 rounded-full flex items-center justify-center
+                shadow-md border border-base-300 bg-base-100
+                transition-all duration-200
+                hover:shadow-lg hover:border-base-content/20
+                ${btn.type === 'error' ? 'hover:text-error hover:border-error/30' :
+                  btn.type === 'warning' ? 'hover:text-warning hover:border-warning/30' :
+                  btn.type === 'info' ? 'hover:text-info hover:border-info/30' : 
+                  'hover:text-success hover:border-success/30'}
+            `}>
+                 <span className="text-sm font-bold font-mono opacity-60 group-hover:opacity-100 transition-opacity">
+                    {btn.key}
+                 </span>
+            </div>
+
+            {/* Floating Label - Paper Style */}
+            <div className={`
+                absolute ${align === 'left' ? 'left-12' : 'right-12'}
+                opacity-0 group-hover:opacity-100 transition-all duration-200
+                bg-base-100 border border-base-200 px-3 py-1.5 rounded-lg shadow-lg
+                whitespace-nowrap pointer-events-none z-50
+                flex items-center gap-2
+            `}>
+                 <span className={`text-xs font-bold uppercase tracking-wider ${
+                    btn.type === 'error' ? 'text-error' :
+                    btn.type === 'warning' ? 'text-warning' :
+                    btn.type === 'info' ? 'text-info' : 'text-success'
+                 }`}>
+                    {btn.label}
+                 </span>
+            </div>
+        </motion.button>
+        ))}
+    </div>
+  );
 
   return (
     <motion.div
-        initial={{ y: 50, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        className="card bg-base-100/80 backdrop-blur-md border border-base-200 shadow-2xl p-4 pb-6 mb-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="w-full flex justify-between pointer-events-none"
     >
-      <div className="flex gap-4">
-          {buttons.map((btn) => (
-              <motion.button
-                key={btn.rating}
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className={`btn btn-lg ${btn.color} flex flex-col gap-1 w-24 h-24 rounded-xl relative`}
-                onClick={() => handleGrade(btn.rating)}
-              >
-                  <span className="text-lg font-bold">{btn.label}</span>
-                  <span className="text-xs opacity-70 font-normal">{btn.time}</span>
-
-                  <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-base-100/30 text-[10px] flex items-center justify-center border border-white/20">
-                      {btn.key}
-                  </div>
-              </motion.button>
-          ))}
+      {/* Left Controls - Negative Offset to hang outside column */}
+      <div className="pointer-events-auto -translate-x-16">
+        <ButtonGroup buttons={leftButtons} align="left" />
       </div>
 
-      <div className="text-center mt-4 text-xs text-base-content/40 font-mono">
-          PRESS 1-4 TO GRADE
+      {/* Right Controls - Positive Offset to hang outside column */}
+      <div className="pointer-events-auto translate-x-16">
+        <ButtonGroup buttons={rightButtons} align="right" />
       </div>
     </motion.div>
   );

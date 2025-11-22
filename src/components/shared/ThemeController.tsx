@@ -2,11 +2,25 @@ import { useEffect, useState } from 'react';
 import { Palette } from 'lucide-react';
 
 const THEMES = [
-    'light', 'dark', 'cupcake', 'bumblebee', 'emerald', 'corporate', 'synthwave', 'retro', 'cyberpunk', 'valentine', 'halloween', 'garden', 'forest', 'aqua', 'lofi', 'pastel', 'fantasy', 'wireframe', 'black', 'luxury', 'dracula', 'cmyk', 'autumn', 'business', 'acid', 'lemonade', 'night', 'coffee', 'winter'
+    'winter',
+    'night',
+    'emerald',
+    'lofi',
+    'retro',
+    'cyberpunk',
+    'dracula',
+    'pastel',
+    'autumn',
+    'dim',
+    'nord',
+    'sunset'
 ];
 
 export const ThemeController = () => {
-    const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dim');
+    const [theme, setTheme] = useState(() => {
+        const stored = localStorage.getItem('theme');
+        return stored && THEMES.includes(stored) ? stored : 'winter';
+    });
 
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);

@@ -27,39 +27,15 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
   }
 
   // Parse Clozes
-  // Regex to match {{cNUMBER::ANSWER(::HINT)?}}
-  // Also support ==Answer== style as c1
-
+  // Only support ==Answer== style
   const clozes: ClozeItem[] = [];
-  let clozeCount = 0;
+  let clozeIdCounter = 1;
 
-  // Standard Anki-style clozes
-  const ankiRegex = /\{\{c(\d+)::(.*?)(::(.*?))?\}\}/g;
-  let match;
-
-  // We don't replace the content here, we just identify them.
-  // The renderer will handle replacement/wrapping.
-  while ((match = ankiRegex.exec(content)) !== null) {
-    clozes.push({
-      id: parseInt(match[1], 10),
-      original: match[0],
-      answer: match[2],
-      hint: match[4]
-    });
-  }
-
-  // ==Highlight== style -> Treat as c1 (or incremental if we want)
-  // Let's treat them as c1 for now, or auto-increment?
-  // Requirement says: Parse {{c1::...}} and ==...== into interactive "Bubbles".
   const highlightRegex = /==(.*?)==/g;
+  let match;
   while ((match = highlightRegex.exec(content)) !== null) {
-    clozeCount++;
-    // Assign a virtual ID starting from max existing or just 1?
-    // If user mixes them, it might be confusing. Let's assign 1 for highlights for simplicity,
-    // or max+1.
-    // Let's just say highlights are always "Active" clozes.
     clozes.push({
-      id: 1, // Defaulting highlights to group 1
+      id: clozeIdCounter++,
       original: match[0],
       answer: match[1],
       hint: undefined

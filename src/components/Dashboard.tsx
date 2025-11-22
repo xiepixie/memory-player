@@ -18,7 +18,49 @@ export const Dashboard = () => {
         startSession();
     };
 
-    if (dueNotes.length === 0) return null;
+    const handleReviewAhead = () => {
+        // Find future notes
+        const futureNotes = files.filter(f => {
+            const meta = fileMetadatas[f];
+            if (!meta || !meta.card) return false;
+            return new Date(meta.card.due) > now;
+        }).sort((a, b) => {
+            const dateA = new Date(fileMetadatas[a].card!.due).getTime();
+            const dateB = new Date(fileMetadatas[b].card!.due).getTime();
+            return dateA - dateB;
+        }).slice(0, 20); // Take next 20
+
+        if (futureNotes.length > 0) {
+            setQueue(futureNotes);
+            startSession();
+        }
+    };
+
+    if (dueNotes.length === 0) {
+        return (
+            <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="card bg-base-100 border border-base-200 shadow-sm mb-6 overflow-hidden relative"
+            >
+                <div className="card-body flex-row items-center justify-between p-6">
+                    <div>
+                        <h2 className="card-title text-2xl font-bold mb-1 text-success">All Caught Up! 🎉</h2>
+                        <p className="opacity-60 text-sm">You've reviewed all your due notes.</p>
+                    </div>
+                    <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        className="btn btn-ghost btn-outline gap-2"
+                        onClick={handleReviewAhead}
+                    >
+                        <Play size={16} />
+                        Review Ahead (20)
+                    </motion.button>
+                </div>
+            </motion.div>
+        );
+    }
 
     return (
         <motion.div

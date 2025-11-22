@@ -35,36 +35,45 @@ export const SessionSummary = () => {
     const seconds = totalSeconds % 60;
 
     return (
-        <div className="h-full flex flex-col items-center justify-center bg-base-100 p-8">
+        <div className="h-full w-full flex flex-col items-center justify-center bg-base-100 p-8 relative overflow-hidden">
+            {/* Subtle background glow */}
+            <div className="absolute inset-0 bg-gradient-to-b from-base-200/20 to-base-100 z-0" />
+            
             <motion.div
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                className="text-center max-w-lg w-full"
+                initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, ease: "easeOut" }}
+                className="text-center max-w-lg w-full z-10 flex flex-col items-center"
             >
-                <div className="flex justify-center mb-6 text-success">
-                    <CheckCircle size={80} strokeWidth={1} />
-                </div>
+                <motion.div 
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ delay: 0.2, type: "spring", stiffness: 200, damping: 15 }}
+                    className="flex justify-center mb-8 text-success bg-success/10 p-6 rounded-full ring-1 ring-success/20"
+                >
+                    <CheckCircle size={64} strokeWidth={1.5} />
+                </motion.div>
 
-                <h1 className="text-4xl font-bold mb-2">Session Complete!</h1>
-                <p className="opacity-60 mb-8">Great job keeping up with your knowledge.</p>
+                <h1 className="text-4xl font-serif font-bold mb-3 tracking-tight">Session Complete</h1>
+                <p className="text-base-content/60 mb-10 text-lg font-light">You've successfully reviewed your cards for now.</p>
 
-                <div className="stats shadow w-full mb-8 bg-base-200">
-                    <div className="stat place-items-center">
-                        <div className="stat-title">Reviewed</div>
-                        <div className="stat-value text-primary">{sessionStats.reviewedCount}</div>
-                        <div className="stat-desc">Cards</div>
+                <div className="stats shadow-xl w-full mb-10 bg-base-100/50 backdrop-blur-md border border-base-content/5 overflow-hidden rounded-2xl">
+                    <div className="stat place-items-center py-6">
+                        <div className="stat-title text-xs font-bold uppercase tracking-widest opacity-50 mb-1">Reviewed</div>
+                        <div className="stat-value text-primary text-3xl">{sessionStats.reviewedCount}</div>
+                        <div className="stat-desc font-medium opacity-60">Cards</div>
                     </div>
-                    <div className="stat place-items-center">
-                        <div className="stat-title">Time</div>
-                        <div className="stat-value text-secondary font-mono">
+                    <div className="stat place-items-center py-6 border-l border-base-content/5">
+                        <div className="stat-title text-xs font-bold uppercase tracking-widest opacity-50 mb-1">Time</div>
+                        <div className="stat-value text-secondary font-mono text-3xl">
                             {minutes}:{seconds.toString().padStart(2, '0')}
                         </div>
-                        <div className="stat-desc">Duration</div>
+                        <div className="stat-desc font-medium opacity-60">Duration</div>
                     </div>
                 </div>
 
                 {/* Ratings Breakdown */}
-                <div className="flex justify-center gap-2 mb-10 h-32 items-end">
+                <div className="flex justify-center items-end gap-4 mb-12 h-32 w-full px-4">
                     {[1, 2, 3, 4].map(rating => {
                         const count = sessionStats.ratings[rating] || 0;
                         const height = sessionStats.reviewedCount > 0
@@ -74,21 +83,22 @@ export const SessionSummary = () => {
                         const labels: any = { 1: 'Again', 2: 'Hard', 3: 'Good', 4: 'Easy' };
 
                         return (
-                            <div key={rating} className="flex flex-col items-center gap-1 w-16">
-                                <div className="text-xs font-bold">{count}</div>
+                            <div key={rating} className="flex flex-col items-center gap-2 flex-1">
+                                <div className="text-xs font-bold opacity-80">{count > 0 ? count : ''}</div>
                                 <motion.div
                                     initial={{ height: 0 }}
-                                    animate={{ height: `${Math.max(height, 5)}%` }}
-                                    className={`w-full rounded-t-md opacity-80 ${colors[rating]}`}
+                                    animate={{ height: `${Math.max(height, 2)}%` }}
+                                    transition={{ delay: 0.4 + rating * 0.1, duration: 1, ease: "circOut" }}
+                                    className={`w-full max-w-[60px] rounded-t-lg opacity-80 ${colors[rating]} shadow-sm`}
                                 />
-                                <div className="text-xs opacity-50">{labels[rating]}</div>
+                                <div className="text-[10px] uppercase tracking-wider font-bold opacity-40">{labels[rating]}</div>
                             </div>
                         );
                     })}
                 </div>
 
                 <button
-                    className="btn btn-primary btn-lg w-full"
+                    className="btn btn-primary btn-lg w-full rounded-full shadow-lg hover:shadow-xl transition-all gap-3"
                     onClick={() => setViewMode('library')}
                 >
                     <Home size={20} />

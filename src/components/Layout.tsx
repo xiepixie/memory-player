@@ -13,8 +13,6 @@ export const Layout = () => {
 
   return (
     <div className="h-screen w-screen bg-base-300 overflow-hidden flex relative">
-       <ToastContainer />
-
        <AnimatePresence mode="wait">
          {viewMode === 'library' ? (
             <motion.div
@@ -38,6 +36,8 @@ export const Layout = () => {
              </motion.div>
          )}
        </AnimatePresence>
+
+       <ToastContainer />
     </div>
   );
 };
