@@ -9,13 +9,6 @@ const icons = {
   error: <AlertCircle size={18} />,
 };
 
-const colors = {
-  info: 'alert-info',
-  success: 'alert-success',
-  warning: 'alert-warning',
-  error: 'alert-error',
-};
-
 export const ToastContainer = () => {
   const { toasts, removeToast } = useToastStore();
 

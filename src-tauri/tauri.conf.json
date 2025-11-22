@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "app",
+  "productName": "Memory Player",
   "version": "0.1.0",
-  "identifier": "com.jules.app",
+  "identifier": "com.memoryplayer.app",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,9 @@
   "app": {
     "windows": [
       {
-        "title": "app",
-        "width": 800,
-        "height": 600
+        "title": "Memory Player",
+        "width": 1200,
+        "height": 800
       }
     ],
     "security": {

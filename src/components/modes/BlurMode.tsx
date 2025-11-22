@@ -109,5 +109,7 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
 };
 
 function cleanContent(content: string): string {
-  return content.replace(/==(.*?)==/g, '$1');
+  return content
+    .replace(/==(.*?)==/g, '$1')
+    .replace(/{{c\d+::([\s\S]*?)(?:::(.*?))?}}/g, '$1');
 }

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { DataService, NoteMetadata } from '../lib/storage/types';
 import { MockAdapter } from '../lib/storage/MockAdapter';
 import { SupabaseAdapter } from '../lib/storage/SupabaseAdapter';
+import { fileSystem } from '../lib/services/fileSystem';
 import { parseNote, ParsedNote } from '../lib/markdown/parser';
 import { fsrs } from 'ts-fsrs';
 import { useToastStore } from './toastStore';
@@ -15,6 +16,8 @@ interface AppState {
   rootPath: string | null;
   files: string[];
   fileMetadatas: Record<string, NoteMetadata>;
+  idMap: Record<string, string>;
+  pathMap: Record<string, string>;
 
   recentVaults: string[];
   removeRecentVault: (path: string) => void;
@@ -56,6 +59,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   recentVaults: [],
   files: [],
   fileMetadatas: {},
+  idMap: {},
+  pathMap: {},
   contentCache: {},
   queue: [],
   sessionTotal: 0,
@@ -148,6 +153,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const { contentCache, rootPath } = get();
       let content = contentCache[filepath] || '';
+      let noteId = get().pathMap[filepath];
 
       if (!content) {
         if (rootPath === 'DEMO_VAULT') {
@@ -190,8 +196,17 @@ The ==Ebbinghaus== forgetting curve shows how information is lost over time when
             useToastStore.getState().addToast("File system access is only available in the desktop app", 'error');
             return;
             }
-            const { readTextFile } = await import('@tauri-apps/plugin-fs');
-            content = await readTextFile(filepath);
+            
+            // Use FileSystemService to ensure ID exists and read content
+            const result = await fileSystem.ensureNoteId(filepath);
+            content = result.content;
+            noteId = result.id;
+
+            // Update ID maps
+            set(state => ({
+                idMap: { ...state.idMap, [noteId!]: filepath },
+                pathMap: { ...state.pathMap, [filepath]: noteId! }
+            }));
         }
         
         // Update cache
@@ -199,7 +214,24 @@ The ==Ebbinghaus== forgetting curve shows how information is lost over time when
       }
 
       const parsed = parseNote(content);
-      const metadata = await get().dataService.getMetadata(filepath);
+      // Pass noteId if available, otherwise fallback to filepath
+      const metadata = await get().dataService.getMetadata(noteId || '', filepath);
+      
+      // Inject the real ID if we have it
+      if (noteId) {
+          metadata.noteId = noteId;
+          
+          // Update fileMetadatas with the discovered ID
+          const { fileMetadatas } = get();
+          if (fileMetadatas[filepath]) {
+              set({
+                  fileMetadatas: {
+                      ...fileMetadatas,
+                      [filepath]: { ...fileMetadatas[filepath], noteId }
+                  }
+              });
+          }
+      }
 
       const { viewMode } = get();
       const targetMode = ['edit', 'test', 'master'].includes(viewMode) ? viewMode : 'review';
@@ -229,7 +261,9 @@ The ==Ebbinghaus== forgetting curve shows how information is lost over time when
       return;
     }
 
-    await dataService.saveReview(currentFilepath, record.card, record.log);
+    // Use noteId if available, fallback to filepath (though adapter expects ID now, mock handles both)
+    const noteId = currentMetadata.noteId || currentFilepath;
+    await dataService.saveReview(noteId, record.card, record.log);
 
     const newMetadata: NoteMetadata = {
         ...currentMetadata,

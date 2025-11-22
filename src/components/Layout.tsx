@@ -12,7 +12,7 @@ export const Layout = () => {
   useKeyboardShortcuts();
 
   return (
-    <div className="h-screen w-screen bg-base-300 overflow-hidden flex relative">
+    <div className="h-screen w-screen bg-gradient-to-br from-base-300 to-base-200 overflow-hidden flex relative">
        <AnimatePresence mode="wait">
          {viewMode === 'library' ? (
             <motion.div

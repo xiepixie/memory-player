@@ -23,8 +23,6 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
 
   if (!currentNote) return null;
 
-  const processedContent = processClozes(currentNote.content);
-
   const toggleReveal = (id: string) => {
     if (!revealed[id]) {
       setRevealed(prev => ({ ...prev, [id]: true }));
@@ -71,34 +69,53 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
 
       <div className="transition-all duration-300 flex-1 prose prose-lg relative">
         <MarkdownContent
-          content={processedContent}
+          content={currentNote.renderableContent} // Use pre-parsed content with #cloze-id links
           components={{
             a: ({ href, children, title }) => {
-              // Check for #cloze: protocol (safe from sanitization)
-              if (href?.startsWith('#cloze:')) {
-                const id = href.split(':')[1];
+              // Parser outputs: #cloze-1 or #cloze-1-Hint
+              if (href?.startsWith('#cloze-')) {
+                const parts = href.replace('#cloze-', '').split('-');
+                const id = parts[0];
+                const hintStr = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('-')) : undefined;
+                
                 const isRevealed = revealed[id];
-                const hint = title;
+                
+                // Combine title attribute (if any) with parsed hint
+                const hint = hintStr || title;
 
                 return (
-                  <span
-                    className={clsx(
-                      "inline-block px-2 py-0.5 rounded mx-1 cursor-pointer transition-all duration-200 border-b-2 align-middle",
-                      isRevealed
-                        ? "bg-success/20 border-success text-success font-bold"
-                        : "bg-base-300 border-base-content/20 text-transparent min-w-[60px] hover:bg-base-content/10 select-none"
-                    )}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      toggleReveal(id);
-                    }}
-                    title={hint || "Click to reveal"}
-                  >
-                    {children}
+                  <span className="inline-flex items-center gap-1 align-middle mx-1">
+                    {/* ID Badge - Always visible to clarify order */}
+                    <span className="text-[10px] font-mono font-bold text-base-content/40 select-none bg-base-200 px-1 rounded border border-base-content/10">
+                        {id}
+                    </span>
+
+                    <span
+                      className={clsx(
+                        "px-2 py-0.5 rounded cursor-pointer transition-all duration-200 border-b-2",
+                        isRevealed
+                          ? "bg-success/20 border-success text-success font-bold"
+                          : "bg-base-300 border-base-content/20 text-transparent min-w-[60px] hover:bg-base-content/10 select-none relative overflow-hidden"
+                      )}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        toggleReveal(id);
+                      }}
+                      title={hint || "Click to reveal"}
+                    >
+                      {/* If hidden, we show hint if available, otherwise show nothing (transparent text handles size) */}
+                      {!isRevealed && hint && (
+                          <span className="absolute inset-0 flex items-center justify-center text-xs text-base-content/40 font-mono uppercase tracking-wide">
+                              {hint}
+                          </span>
+                      )}
+                      <span className={!isRevealed ? "invisible" : ""}>{children}</span>
+                    </span>
                   </span>
                 );
               }
-              return <a href={href} title={title} className="link link-primary">{children}</a>;
+              // Pass through other links
+              return <a href={href} title={title} className="link link-primary" target={href?.startsWith('http') ? "_blank" : undefined}>{children}</a>;
             },
           }}
         />
@@ -107,20 +124,3 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
   );
 };
 
-function processClozes(content: string): string {
-  let processed = content;
-
-  // Replace ==text== with [text](#cloze:id)
-  // We need to ensure IDs are unique or consistent. 
-  // Since parser.ts assigns IDs, we should ideally use those, but here we are re-processing raw content.
-  // The parser.ts logic is for the *data model*. Here is for *rendering*.
-  // We can just auto-increment here too.
-
-  let clozeId = 1;
-  processed = processed.replace(/==(.*?)==/g, (_match, answer) => {
-    const id = clozeId++;
-    return `[${answer}](#cloze:${id})`;
-  });
-
-  return processed;
-}

@@ -56,6 +56,44 @@ export const MarkdownContent = ({ content, components, className }: MarkdownCont
                             </div>
                         );
                     },
+                    a: ({ href, children }) => {
+                        if (href?.startsWith('#cloze-')) {
+                            // Parse format: #cloze-1-Hint%20Text or #cloze-1
+                            const parts = href.replace('#cloze-', '').split('-');
+                            const id = parts[0];
+                            const hint = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('-')) : undefined;
+                            
+                            return (
+                                <span 
+                                    className="inline-flex items-center gap-1.5 mx-1 align-baseline group relative cursor-help transition-all"
+                                    title={hint ? `Hint: ${hint}` : `Cloze #${id}`}
+                                >
+                                    <span className="badge badge-neutral badge-sm font-mono font-bold h-5 px-1.5 rounded text-[10px] text-neutral-content/80">
+                                        {id}
+                                    </span>
+                                    <span className={clsx(
+                                        "font-medium px-1 rounded transition-colors border-b-2 border-transparent",
+                                        "bg-primary/10 text-primary hover:bg-primary/20 border-primary/20"
+                                    )}>
+                                        {children}
+                                    </span>
+                                    {hint && (
+                                        <span className="sr-only">Hint: {hint}</span>
+                                    )}
+                                </span>
+                            );
+                        }
+                        
+                        // Legacy support for old highlight format if parser still emits it
+                        if (href === '#highlight') {
+                            return (
+                                <span className="bg-primary/20 text-primary border-b-2 border-primary px-1 rounded">
+                                    {children}
+                                </span>
+                            );
+                        }
+                        return <a href={href} className="link link-primary" target={href?.startsWith('http') ? "_blank" : undefined}>{children}</a>;
+                    },
                     strong: ({ children }) => <strong className="font-bold text-primary/90">{children}</strong>,
                     hr: () => <hr className="my-8 border-base-content/10" />,
                     ...components,

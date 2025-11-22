@@ -26,6 +26,6 @@ export const ReviewMode = () => {
 };
 
 function cleanContent(content: string): string {
-    let cleaned = content.replace(/\{\{c\d+::(.*?)(::.*?)?\}\}/g, '$1');
+    let cleaned = content.replace(/\{\{c\d+::([\s\S]*?)(?:::(.*?))?\}\}/g, '$1');
     return cleaned;
 }

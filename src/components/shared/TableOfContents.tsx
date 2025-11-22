@@ -17,7 +17,7 @@ export const TableOfContents = () => {
         const lines = currentNote.content.split('\n');
         const extracted: Header[] = [];
 
-        lines.forEach((line, index) => {
+        lines.forEach((line) => {
             const match = line.match(/^(#{1,3})\s+(.+)$/);
             if (match) {
                 const level = match[1].length;

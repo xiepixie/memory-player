@@ -41,9 +41,10 @@ export const Dashboard = () => {
             <motion.div
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                className="card bg-base-100 border border-base-200 shadow-sm mb-6 overflow-hidden relative"
+                className="card bg-gradient-to-br from-base-100 to-base-200/50 border border-base-200 shadow-sm mb-6 overflow-hidden relative"
             >
-                <div className="card-body flex-row items-center justify-between p-6">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-success/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+                <div className="card-body flex-row items-center justify-between p-6 relative z-10">
                     <div>
                         <h2 className="card-title text-2xl font-bold mb-1 text-success">All Caught Up! 🎉</h2>
                         <p className="opacity-60 text-sm">You've reviewed all your due notes.</p>
@@ -66,10 +67,11 @@ export const Dashboard = () => {
         <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="card bg-gradient-to-r from-primary to-primary/80 text-primary-content shadow-xl mb-6 overflow-hidden relative"
+            className="card bg-gradient-to-r from-primary to-secondary text-primary-content shadow-xl mb-6 overflow-hidden relative"
         >
             {/* Decorative background circle */}
-            <div className="absolute -right-10 -top-10 w-40 h-40 bg-white/10 rounded-full blur-2xl pointer-events-none" />
+            <div className="absolute -right-10 -top-10 w-64 h-64 bg-white/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute -left-10 -bottom-10 w-40 h-40 bg-black/5 rounded-full blur-2xl pointer-events-none" />
 
             <div className="card-body flex-row items-center justify-between p-6">
                 <div>

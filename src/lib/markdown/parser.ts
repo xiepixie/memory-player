@@ -1,4 +1,5 @@
 import matter from 'gray-matter';
+import { ClozeUtils } from './clozeUtils';
 
 export interface ParsedNote {
   content: string;
@@ -6,6 +7,7 @@ export interface ParsedNote {
   hints: string[];
   clozes: ClozeItem[];
   raw: string;
+  renderableContent: string; // Content with clozes replaced by [Answer](#cloze-id) for rendering
 }
 
 export interface ClozeItem {
@@ -18,7 +20,7 @@ export interface ClozeItem {
 export const parseNote = (rawMarkdown: string): ParsedNote => {
   const { content, data: frontmatter } = matter(rawMarkdown);
 
-  // Extract hints from frontmatter if they exist (e.g. 'hints' list or single 'hint')
+  // Extract hints from frontmatter
   let hints: string[] = [];
   if (frontmatter.hints && Array.isArray(frontmatter.hints)) {
     hints = frontmatter.hints;
@@ -26,27 +28,46 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
     hints = [frontmatter.hint];
   }
 
-  // Parse Clozes
-  // Only support ==Answer== style
   const clozes: ClozeItem[] = [];
-  let clozeIdCounter = 1;
+  
+  // 1. Parse Anki-style clozes: {{c1::Answer::Hint}}
+  // We replace them in renderableContent with a special link format for ReactMarkdown
+  let renderableContent = content.replace(ClozeUtils.CLOZE_REGEX, (match, idStr, answer, hint) => {
+    const id = parseInt(idStr, 10);
+    clozes.push({
+      id,
+      original: match,
+      answer,
+      hint
+    });
+    // Replace with link syntax: [Answer](#cloze-id-hint) or [Answer](#cloze-id)
+    const hash = hint ? `#cloze-${id}-${encodeURIComponent(hint)}` : `#cloze-${id}`;
+    return `[${answer}](${hash})`;
+  });
+
+  // 2. Parse Legacy Highlighting: ==Answer==
+  // We assign them IDs starting after the highest Anki ID found
+  let maxId = clozes.reduce((max, c) => Math.max(max, c.id), 0);
+  let legacyIdCounter = maxId + 1;
 
   const highlightRegex = /==(.*?)==/g;
-  let match;
-  while ((match = highlightRegex.exec(content)) !== null) {
-    clozes.push({
-      id: clozeIdCounter++,
-      original: match[0],
-      answer: match[1],
-      hint: undefined
-    });
-  }
+  renderableContent = renderableContent.replace(highlightRegex, (match, answer) => {
+      const id = legacyIdCounter++;
+      clozes.push({
+          id,
+          original: match,
+          answer,
+          hint: undefined
+      });
+      return `[${answer}](#cloze-${id})`;
+  });
 
   return {
-    content, // Content WITHOUT frontmatter
+    content, // Original content minus frontmatter
     frontmatter,
     hints,
     clozes,
-    raw: rawMarkdown
+    raw: rawMarkdown,
+    renderableContent
   };
 };
