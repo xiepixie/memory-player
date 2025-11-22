@@ -8,36 +8,68 @@ interface Header {
 }
 
 export const TableOfContents = () => {
-    const { currentNote } = useAppStore();
+    const currentNote = useAppStore((state) => state.currentNote);
+    const viewMode = useAppStore((state) => state.viewMode);
     const [headers, setHeaders] = useState<Header[]>([]);
 
     useEffect(() => {
-        if (!currentNote?.content) return;
+        if (!currentNote) {
+            setHeaders([]);
+            return;
+        }
 
-        const lines = currentNote.content.split('\n');
+        const container = document.getElementById('note-scroll-container');
+        if (!container) {
+            setHeaders([]);
+            return;
+        }
+
+        const headingElements = container.querySelectorAll<HTMLHeadingElement>('h1[id], h2[id], h3[id], h4[id]');
         const extracted: Header[] = [];
 
-        lines.forEach((line) => {
-            const match = line.match(/^(#{1,3})\s+(.+)$/);
-            if (match) {
-                const level = match[1].length;
-                const text = match[2].trim();
-                // Create a simple ID based on text
-                const id = text.toLowerCase().replace(/[^\w]+/g, '-');
-                extracted.push({ id, text, level });
-            }
+        headingElements.forEach((el) => {
+            // Ignore headings that are inside aria-hidden containers
+            if (el.closest('[aria-hidden="true"]')) return;
+
+            const level = Number(el.tagName.substring(1));
+            if (!level || level < 1 || level > 4) return;
+
+            const text = el.textContent?.trim() || '';
+            if (!text) return;
+
+            if (!el.id) return;
+
+            extracted.push({
+                id: el.id,
+                text,
+                level,
+            });
         });
 
         setHeaders(extracted);
-    }, [currentNote]);
+    }, [currentNote, viewMode]);
 
     if (headers.length === 0) return null;
 
     const scrollToHeader = (id: string) => {
+        const container = document.getElementById('note-scroll-container');
         const element = document.getElementById(id);
-        if (element) {
-            element.scrollIntoView({ behavior: 'smooth' });
+
+        if (!container || !element) {
+            console.warn(`[TableOfContents] Scroll target not found for id "${id}"`);
+            return;
         }
+
+        const containerRect = container.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        const currentScroll = container.scrollTop;
+        const offset = 80;
+        const targetScrollTop = currentScroll + (elementRect.top - containerRect.top) - offset;
+
+        container.scrollTo({
+            top: Math.max(targetScrollTop, 0),
+            behavior: 'smooth',
+        });
     };
 
     return (
@@ -61,7 +93,7 @@ export const TableOfContents = () => {
                         {/* Active indicator dot (optional - could rely on scroll spy later) */}
                         <div className="w-1 h-1 rounded-full bg-base-content/20 group-hover:bg-primary transition-colors" />
                         
-                        <span className="truncate opacity-60 group-hover:opacity-100 group-hover:text-primary-content transition-all text-xs font-medium">
+                        <span className="truncate opacity-60 group-hover:opacity-100 group-hover:text-primary-content transition-all text-xs font-medium" title={header.text}>
                             {header.text}
                         </span>
                     </li>

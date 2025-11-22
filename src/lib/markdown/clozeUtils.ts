@@ -7,11 +7,8 @@ export class ClozeUtils {
      */
     static getMaxClozeNumber(text: string): number {
         let max = 0;
-        let match;
-        // Reset lastIndex to ensure global search starts from beginning
-        const regex = new RegExp(ClozeUtils.CLOZE_REGEX);
-        
-        while ((match = regex.exec(text)) !== null) {
+        const regex = /{{c(\d+)::/g;
+        for (const match of text.matchAll(regex)) {
             const num = parseInt(match[1], 10);
             if (!isNaN(num) && num > max) {
                 max = num;

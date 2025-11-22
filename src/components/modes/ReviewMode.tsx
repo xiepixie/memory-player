@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { MarkdownImage } from '../shared/MarkdownImage';
 
 export const ReviewMode = () => {
-  const { currentNote } = useAppStore();
+  const currentNote = useAppStore((state) => state.currentNote);
 
   if (!currentNote) return null;
 

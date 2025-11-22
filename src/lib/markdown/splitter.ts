@@ -116,6 +116,8 @@ export class MarkdownSplitter {
             hash = Math.imul(hash, 0x01000193);
         }
         // Convert to positive hex string
-        return (hash >>> 0).toString(16).padStart(8, '0');
+        const hex = (hash >>> 0).toString(16).padStart(8, '0');
+        const full = (hex + hex + hex + hex).slice(0, 32);
+        return `${full.slice(0, 8)}-${full.slice(8, 12)}-${full.slice(12, 16)}-${full.slice(16, 20)}-${full.slice(20)}`;
     }
 }

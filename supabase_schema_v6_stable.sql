@@ -87,6 +87,7 @@ CREATE TABLE public.cards (
     difficulty DOUBLE PRECISION NOT NULL DEFAULT 0,
     elapsed_days DOUBLE PRECISION NOT NULL DEFAULT 0,
     scheduled_days INTEGER NOT NULL DEFAULT 0,
+    learning_steps INTEGER NOT NULL DEFAULT 0,
     reps INTEGER NOT NULL DEFAULT 0,
     lapses INTEGER NOT NULL DEFAULT 0,
     last_review TIMESTAMPTZ,
@@ -122,8 +123,18 @@ CREATE TABLE public.review_logs (
     stability DOUBLE PRECISION NOT NULL,
     difficulty DOUBLE PRECISION NOT NULL,
     duration_ms INTEGER DEFAULT 0,
-    reviewed_at TIMESTAMPTZ DEFAULT NOW()
+    reviewed_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    -- Extended FSRS stats for history reconstruction
+    scheduled_days INTEGER NOT NULL DEFAULT 0,
+    elapsed_days DOUBLE PRECISION NOT NULL DEFAULT 0,
+    last_elapsed_days DOUBLE PRECISION NOT NULL DEFAULT 0,
+    learning_steps INTEGER NOT NULL DEFAULT 0
 );
+
+-- Indexes
+CREATE INDEX idx_review_logs_user_reviewed_at ON public.review_logs(user_id, reviewed_at);
+CREATE INDEX idx_review_logs_card ON public.review_logs(card_id);
 
 ALTER TABLE public.review_logs ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Owner manage logs" ON public.review_logs FOR ALL USING (auth.uid() = user_id);
@@ -132,7 +143,8 @@ CREATE POLICY "Owner manage logs" ON public.review_logs FOR ALL USING (auth.uid(
 -- 5. Updated RPC (No change logic-wise, just compatibility)
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION submit_review(
-    p_card_id UUID,
+    p_note_id UUID,
+    p_cloze_index INTEGER,
     p_card_update JSONB,
     p_review_log JSONB
 )
@@ -143,13 +155,27 @@ SET search_path = public
 AS $$
 DECLARE
     v_user_id UUID;
+    v_card_id UUID;
 BEGIN
+    -- 1. Get User
     v_user_id := auth.uid();
     IF v_user_id IS NULL THEN
         RAISE EXCEPTION 'Not authenticated';
     END IF;
 
-    -- 1. Update Card
+    -- 2. Find Card ID (Hidden Lookup)
+    SELECT id INTO v_card_id
+    FROM public.cards
+    WHERE note_id = p_note_id
+      AND cloze_index = p_cloze_index
+      AND user_id = v_user_id
+    LIMIT 1;
+
+    IF v_card_id IS NULL THEN
+        RAISE EXCEPTION 'Card not found for note % cloze %', p_note_id, p_cloze_index;
+    END IF;
+
+    -- 3. Update Card
     UPDATE public.cards SET
         state = (p_card_update->>'state')::int,
         due = (p_card_update->>'due')::timestamptz,
@@ -157,17 +183,21 @@ BEGIN
         difficulty = (p_card_update->>'difficulty')::float,
         elapsed_days = (p_card_update->>'elapsed_days')::float,
         scheduled_days = (p_card_update->>'scheduled_days')::int,
+        learning_steps = (p_card_update->>'learning_steps')::int,
         reps = (p_card_update->>'reps')::int,
         lapses = (p_card_update->>'lapses')::int,
         last_review = (p_card_update->>'last_review')::timestamptz,
         updated_at = NOW()
-    WHERE id = p_card_id AND user_id = v_user_id;
+    WHERE id = v_card_id;
 
-    -- 2. Insert Log
+    -- 4. Insert Log
     INSERT INTO public.review_logs (
-        card_id, user_id, grade, state, due, stability, difficulty, duration_ms, reviewed_at
+        card_id, user_id, 
+        grade, state, due, stability, difficulty, 
+        duration_ms, reviewed_at,
+        scheduled_days, elapsed_days, last_elapsed_days, learning_steps
     ) VALUES (
-        p_card_id,
+        v_card_id,
         v_user_id,
         (p_review_log->>'grade')::int,
         (p_review_log->>'state')::int,
@@ -175,7 +205,11 @@ BEGIN
         (p_review_log->>'stability')::float,
         (p_review_log->>'difficulty')::float,
         (p_review_log->>'duration_ms')::int,
-        (p_review_log->>'reviewed_at')::timestamptz
+        (p_review_log->>'reviewed_at')::timestamptz,
+        (p_card_update->>'scheduled_days')::int,
+        (p_card_update->>'elapsed_days')::float,
+        (p_card_update->>'elapsed_days')::float, -- Simplify: use current elapsed as last_elapsed approximation if not tracked separately
+        (p_card_update->>'learning_steps')::int
     );
 END;
 $$;

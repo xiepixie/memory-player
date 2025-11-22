@@ -10,7 +10,8 @@ const icons = {
 };
 
 export const ToastContainer = () => {
-  const { toasts, removeToast } = useToastStore();
+  const toasts = useToastStore((state) => state.toasts);
+  const removeToast = useToastStore((state) => state.removeToast);
 
   return (
     <div className="toast toast-bottom toast-end z-[9999] p-6 gap-3 pointer-events-none">

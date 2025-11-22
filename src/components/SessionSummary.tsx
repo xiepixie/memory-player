@@ -5,7 +5,8 @@ import confetti from 'canvas-confetti';
 import { useEffect } from 'react';
 
 export const SessionSummary = () => {
-    const { sessionStats, setViewMode } = useAppStore();
+    const sessionStats = useAppStore((state) => state.sessionStats);
+    const setViewMode = useAppStore((state) => state.setViewMode);
 
     // Trigger big confetti on mount
     useEffect(() => {

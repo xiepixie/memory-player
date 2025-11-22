@@ -1,9 +1,10 @@
 import { useAppStore } from '../store/appStore';
+import { useShallow } from 'zustand/react/shallow';
 import { isTauri } from '../lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readDir } from '@tauri-apps/plugin-fs';
-import { FolderOpen, FileText, Clock, X, LayoutGrid, List, FolderTree, Brain, PenTool, Cloud } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { FolderOpen, FileText, Clock, X, LayoutGrid, List, FolderTree, Brain, PenTool, Cloud, Search } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { join } from '@tauri-apps/api/path';
 import { Dashboard } from './Dashboard';
 import { formatDistanceToNow, isPast, isToday } from 'date-fns';
@@ -11,15 +12,48 @@ import { ThemeController } from './shared/ThemeController';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToastStore } from '../store/toastStore';
 import { FileTreeView } from './shared/FileTreeView';
+import { Card } from 'ts-fsrs';
 
 export const LibraryView = () => {
-  const { rootPath, files, fileMetadatas, setRootPath, setFiles, loadNote, initDataService, loadSettings, recentVaults, removeRecentVault } = useAppStore();
-  const { addToast } = useToastStore();
+  const {
+    rootPath,
+    files,
+    fileMetadatas,
+    setRootPath,
+    setFiles,
+    loadNote,
+    initDataService,
+    loadSettings,
+    recentVaults,
+    removeRecentVault,
+  } = useAppStore(
+    useShallow((state) => ({
+      rootPath: state.rootPath,
+      files: state.files,
+      fileMetadatas: state.fileMetadatas,
+      setRootPath: state.setRootPath,
+      setFiles: state.setFiles,
+      loadNote: state.loadNote,
+      initDataService: state.initDataService,
+      loadSettings: state.loadSettings,
+      recentVaults: state.recentVaults,
+      removeRecentVault: state.removeRecentVault,
+    })),
+  );
+  const addToast = useToastStore((state) => state.addToast);
   const [loading, setLoading] = useState(false);
   const [viewType, setViewType] = useState<'list' | 'grid' | 'tree'>('list');
+  const [dashboardTab, setDashboardTab] = useState<'focus' | 'insights'>('focus');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchHistoryByVault, setSearchHistoryByVault] = useState<Record<string, string[]>>({});
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const [draftBeforeHistory, setDraftBeforeHistory] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    initDataService('mock');
+    const hasSupabase = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
+    initDataService(hasSupabase ? 'supabase' : 'mock');
     loadSettings();
   }, []);
 
@@ -27,7 +61,29 @@ export const LibraryView = () => {
     if (rootPath && files.length === 0) {
       scanFiles(rootPath);
     }
+  }, [rootPath, files.length]);
+
+  useEffect(() => {
+    const handleFocusSearch = () => {
+      if (!rootPath) return;
+      if (searchInputRef.current) {
+        searchInputRef.current.focus();
+        searchInputRef.current.select();
+      }
+    };
+
+    window.addEventListener('library-focus-search', handleFocusSearch as EventListener);
+    return () => window.removeEventListener('library-focus-search', handleFocusSearch as EventListener);
   }, [rootPath]);
+
+  const vaultKey = rootPath || 'NO_VAULT';
+  const searchHistory = searchHistoryByVault[vaultKey] || [];
+
+  const filteredFiles = useMemo(() => {
+    if (!searchQuery.trim()) return files;
+    const lowerQuery = searchQuery.toLowerCase();
+    return files.filter(f => f.toLowerCase().includes(lowerQuery));
+  }, [files, searchQuery]);
 
   const handleOpenFolder = async () => {
     try {
@@ -100,80 +156,245 @@ export const LibraryView = () => {
     }
   };
 
-  const grouped = files.reduce((acc, file) => {
+  const grouped = filteredFiles.reduce((acc, file) => {
     const meta = fileMetadatas[file];
-    const isNew = !meta?.card || meta.card.reps === 0;
-    const dueDate = meta?.card?.due ? new Date(meta.card.due) : null;
-
-    if (isNew) {
-      acc.new.push(file);
-    } else if (dueDate && isPast(dueDate) && !isToday(dueDate)) {
-      acc.overdue.push(file);
-    } else if (dueDate && isToday(dueDate)) {
-      acc.today.push(file);
-    } else {
-      acc.future.push(file);
+    if (!meta || !meta.cards) {
+        acc.new.push(file); // Treat untracked as new
+        return acc;
     }
+
+    const cards = Object.values(meta.cards);
+    if (cards.length === 0) {
+         acc.new.push(file);
+         return acc;
+    }
+
+    let hasOverdue = false;
+    let hasToday = false;
+    let hasNew = false;
+
+    cards.forEach(card => {
+        const due = new Date(card.due);
+        if (card.reps === 0) hasNew = true;
+        else if (isPast(due) && !isToday(due)) hasOverdue = true;
+        else if (isToday(due)) hasToday = true;
+    });
+
+    if (hasOverdue) acc.overdue.push(file);
+    else if (hasToday) acc.today.push(file);
+    else if (hasNew) acc.new.push(file);
+    else acc.future.push(file);
+    
     return acc;
   }, { overdue: [] as string[], today: [] as string[], new: [] as string[], future: [] as string[] });
 
   return (
     <div className="h-full flex flex-col bg-transparent">
       {/* Navbar */}
-      <div className="navbar bg-base-100/80 backdrop-blur-md border-b border-base-200 px-4 h-16 shrink-0 sticky top-0 z-20">
-        <div className="flex-1">
-          <div 
-            className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
-            onClick={() => {
-                setRootPath(null);
-                setFiles([]);
-            }}
-            title="Return to Home"
-          >
-             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                <Brain size={20} />
-             </div>
-             <span className="font-bold text-lg tracking-tight">Memory Player</span>
-          </div>
-        </div>
-        <div className="flex-none gap-2">
-          {rootPath && (
-            <div className="join bg-base-200/50 p-1 rounded-lg mr-2 border border-base-300/50">
-              <button
-                className={`join-item btn btn-xs btn-ghost ${viewType === 'list' ? 'bg-base-100 shadow-sm' : ''}`}
-                onClick={() => setViewType('list')}
-                title="List View"
-              >
-                <List size={14} />
-              </button>
-              <button
-                className={`join-item btn btn-xs btn-ghost ${viewType === 'grid' ? 'bg-base-100 shadow-sm' : ''}`}
-                onClick={() => setViewType('grid')}
-                title="Grid View"
-              >
-                <LayoutGrid size={14} />
-              </button>
-              <button
-                className={`join-item btn btn-xs btn-ghost ${viewType === 'tree' ? 'bg-base-100 shadow-sm' : ''}`}
-                onClick={() => setViewType('tree')}
-                title="Tree View"
-              >
-                <FolderTree size={14} />
-              </button>
-            </div>
-          )}
-          <ThemeController />
-          {rootPath && (
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className="btn btn-sm btn-ghost gap-2"
-                onClick={handleOpenFolder}
-                disabled={loading}
+      <div className="navbar bg-base-100/80 backdrop-blur-md border-b border-base-200 px-4 py-2 shrink-0 sticky top-0 z-20">
+        <div className="flex flex-col gap-2 w-full">
+          <div className="flex items-center justify-between gap-4">
+            <div 
+              className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
+              onClick={() => {
+                  setRootPath(null);
+                  setFiles([]);
+              }}
+              title="Return to Home"
             >
-                {loading ? <span className="loading loading-spinner loading-xs"></span> : <FolderOpen size={16} />}
-                Change
-            </motion.button>
+               <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                  <Brain size={20} />
+               </div>
+               <span className="font-bold text-lg tracking-tight hidden md:inline">Memory Player</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {rootPath && (
+                <div className="join bg-base-200/50 p-1 rounded-lg mr-2 border border-base-300/50">
+                  <button
+                    className={`join-item btn btn-xs btn-ghost ${viewType === 'list' ? 'bg-base-100 shadow-sm' : ''}`}
+                    onClick={() => setViewType('list')}
+                    title="List View"
+                  >
+                    <List size={14} />
+                  </button>
+                  <button
+                    className={`join-item btn btn-xs btn-ghost ${viewType === 'grid' ? 'bg-base-100 shadow-sm' : ''}`}
+                    onClick={() => setViewType('grid')}
+                    title="Grid View"
+                  >
+                    <LayoutGrid size={14} />
+                  </button>
+                  <button
+                    className={`join-item btn btn-xs btn-ghost ${viewType === 'tree' ? 'bg-base-100 shadow-sm' : ''}`}
+                    onClick={() => setViewType('tree')}
+                    title="Tree View"
+                  >
+                    <FolderTree size={14} />
+                  </button>
+                </div>
+              )}
+              <ThemeController />
+              {rootPath && (
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    className="btn btn-sm btn-ghost gap-2"
+                    onClick={handleOpenFolder}
+                    disabled={loading}
+                >
+                    {loading ? <span className="loading loading-spinner loading-xs"></span> : <FolderOpen size={16} />}
+                    Change
+                </motion.button>
+              )}
+            </div>
+          </div>
+
+          {/* Search Bar */}
+          {rootPath && (
+             <div className="relative w-full max-w-2xl mx-auto group">
+                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-base-content/40 group-focus-within:text-primary transition-colors" />
+                 <input 
+                    ref={searchInputRef}
+                    type="text" 
+                    placeholder="Search notes by name or path..." 
+                    className="input input-md input-bordered w-full pl-10 pr-8 bg-base-200/70 focus:bg-base-100 focus:border-primary/60 rounded-full shadow-sm focus:shadow-md transition-all text-sm"
+                    value={searchQuery}
+                    onFocus={() => setIsSearchFocused(true)}
+                    onBlur={() => setTimeout(() => setIsSearchFocused(false), 100)}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setHistoryIndex(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const trimmed = searchQuery.trim();
+                        if (trimmed) {
+                          setSearchHistoryByVault((prev: Record<string, string[]>) => {
+                            const current = prev[vaultKey] || [];
+                            const next = [trimmed, ...current.filter((item) => item !== trimmed)].slice(0, 10);
+                            return { ...prev, [vaultKey]: next };
+                          });
+                        }
+                        setHistoryIndex(null);
+                        setDraftBeforeHistory('');
+                        if (historyIndex !== null) {
+                          setIsSearchFocused(false);
+                        }
+                      }
+
+                      if (e.key === 'ArrowUp') {
+                        if (!searchHistory.length) return;
+                        e.preventDefault();
+                        setHistoryIndex(prev => {
+                          if (searchHistory.length === 0) return prev;
+                          const nextIndex = prev === null ? 0 : Math.min(prev + 1, searchHistory.length - 1);
+                          const nextQuery = searchHistory[nextIndex] || '';
+                          if (prev === null) {
+                            setDraftBeforeHistory(searchQuery);
+                          }
+                          setSearchQuery(nextQuery);
+                          return nextIndex;
+                        });
+                      }
+
+                      if (e.key === 'ArrowDown') {
+                        if (!searchHistory.length) return;
+                        e.preventDefault();
+                        setHistoryIndex(prev => {
+                          if (prev === null) return prev;
+                          if (prev === 0) {
+                            setSearchQuery(draftBeforeHistory);
+                            setDraftBeforeHistory('');
+                            return null;
+                          }
+                          const nextIndex = prev - 1;
+                          const nextQuery = searchHistory[nextIndex] || '';
+                          setSearchQuery(nextQuery);
+                          return nextIndex;
+                        });
+                      }
+
+                      if (e.key === 'Tab' && searchHistory.length > 0) {
+                        e.preventDefault();
+                        setHistoryIndex(prev => {
+                          if (searchHistory.length === 0) return prev;
+                          let nextIndex: number;
+                          if (prev === null) {
+                            setDraftBeforeHistory(searchQuery);
+                            nextIndex = e.shiftKey ? searchHistory.length - 1 : 0;
+                          } else if (e.shiftKey) {
+                            nextIndex = prev === 0 ? searchHistory.length - 1 : prev - 1;
+                          } else {
+                            nextIndex = prev === searchHistory.length - 1 ? 0 : prev + 1;
+                          }
+                          const nextQuery = searchHistory[nextIndex] || '';
+                          setSearchQuery(nextQuery);
+                          return nextIndex;
+                        });
+                      }
+                    }}
+                 />
+                 {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-base-content/70 transition-colors"
+                      aria-label="Clear search"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                 )}
+
+                 {isSearchFocused && searchHistory.length > 0 && (
+                   <div className="absolute left-0 right-0 mt-2 rounded-xl shadow-lg bg-base-100 border border-base-200 overflow-hidden z-20">
+                     <div className="flex items-center justify-between px-3 py-1.5 text-[10px] uppercase tracking-wide text-base-content/40 bg-base-100/90">
+                       <span>Recent searches</span>
+                       <button
+                         type="button"
+                         onMouseDown={(e) => e.preventDefault()}
+                         onClick={() => {
+                           setSearchHistoryByVault((prev: Record<string, string[]>) => {
+                             const next = { ...prev };
+                             delete next[vaultKey];
+                             return next;
+                           });
+                           setHistoryIndex(null);
+                           setDraftBeforeHistory('');
+                         }}
+                         className="text-[10px] font-medium normal-case text-primary hover:text-primary/80"
+                       >
+                         Clear vault history
+                       </button>
+                     </div>
+                     <ul className="max-h-60 overflow-y-auto py-1 text-sm">
+                       {searchHistory.map((query, index) => (
+                         <li key={`${query}-${index}`}>
+                           <button
+                             type="button"
+                             onMouseDown={(e) => e.preventDefault()}
+                             onClick={() => {
+                               setSearchQuery(query);
+                               setIsSearchFocused(false);
+                               setSearchHistoryByVault((prev: Record<string, string[]>) => {
+                                 const current = prev[vaultKey] || [];
+                                 const next = [query, ...current.filter((item) => item !== query)].slice(0, 10);
+                                 return { ...prev, [vaultKey]: next };
+                               });
+                             }}
+                             className={`flex w-full items-center justify-between px-3 py-1.5 text-left hover:bg-base-200/80 ${historyIndex === index ? 'bg-base-200/80' : ''}`}
+                           >
+                             <span className="truncate">{query}</span>
+                             <span className="ml-2 flex items-center text-base-content/40">
+                               <Clock size={12} />
+                             </span>
+                           </button>
+                         </li>
+                       ))}
+                     </ul>
+                   </div>
+                 )}
+             </div>
           )}
         </div>
       </div>
@@ -306,31 +527,77 @@ export const LibraryView = () => {
         ) : (
           // MAIN LIBRARY CONTENT
           <div className="p-4 md:p-6 max-w-7xl mx-auto w-full">
-            <Dashboard />
-            {loading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-pulse">
-                {[1, 2, 3, 4, 5, 6].map(i => <div key={i} className="h-32 bg-base-300 rounded-xl opacity-50"></div>)}
+            <div className="flex items-center justify-between mb-4 px-1">
+              <div className="join bg-base-200/50 p-1 rounded-lg border border-base-300/50">
+                <button
+                  className={`join-item btn btn-xs sm:btn-sm btn-ghost ${dashboardTab === 'focus' ? 'bg-base-100 shadow-sm' : ''}`}
+                  onClick={() => setDashboardTab('focus')}
+                >
+                  Focus
+                </button>
+                <button
+                  className={`join-item btn btn-xs sm:btn-sm btn-ghost ${dashboardTab === 'insights' ? 'bg-base-100 shadow-sm' : ''}`}
+                  onClick={() => setDashboardTab('insights')}
+                >
+                  Insights
+                </button>
               </div>
-            ) : (
-              <div className="space-y-6 pb-20">
-                {viewType === 'tree' ? (
-                  <div className="bg-base-100 rounded-2xl border border-base-200 p-4 shadow-sm">
-                      <FileTreeView files={files} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} />
+            </div>
+
+            {dashboardTab === 'focus' ? (
+              <>
+                <Dashboard mode="hero-only" />
+
+                <div className="flex items-center justify-between text-xs text-base-content/60 mt-2 mb-4 px-1">
+                  <span>
+                    {searchQuery.trim()
+                      ? `Showing ${filteredFiles.length} of ${files.length} notes for "${searchQuery}"`
+                      : `Browsing ${files.length} notes in this vault`}
+                  </span>
+                </div>
+
+                {loading ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-pulse">
+                    {[1, 2, 3, 4, 5, 6].map(i => <div key={i} className="h-32 bg-base-300 rounded-xl opacity-50"></div>)}
                   </div>
                 ) : (
-                  <>
-                    {grouped.overdue.length > 0 && <FileSection title="Overdue" icon="🚨" files={grouped.overdue} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="error" viewType={viewType} />}
-                    {grouped.today.length > 0 && <FileSection title="Due Today" icon="📅" files={grouped.today} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="warning" viewType={viewType} />}
-                    {grouped.new.length > 0 && <FileSection title="New Cards" icon="🆕" files={grouped.new} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="info" viewType={viewType} />}
-                    <FileSection title="Library" icon="📚" files={grouped.future} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="neutral" collapsed={false} viewType={viewType} />
-                  </>
+                  <div className="space-y-6 pb-20">
+                    {filteredFiles.length === 0 ? (
+                      <div className="mt-12 text-center text-base-content/60">
+                        <p className="text-sm mb-2">No notes match your search.</p>
+                        <p className="text-xs opacity-70">
+                          Try a different keyword or clear the search to browse all notes.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {viewType === 'tree' ? (
+                          <div className="bg-base-100 rounded-2xl border border-base-200 p-4 shadow-sm">
+                              <FileTreeView files={filteredFiles} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} />
+                          </div>
+                        ) : (
+                          <>
+                            {grouped.overdue.length > 0 && <FileSection title="Overdue" icon="🚨" files={grouped.overdue} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="error" viewType={viewType} />}
+                            {grouped.today.length > 0 && <FileSection title="Due Today" icon="📅" files={grouped.today} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="warning" viewType={viewType} />}
+                            {grouped.new.length > 0 && <FileSection title="New Cards" icon="🆕" files={grouped.new} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="info" viewType={viewType} />}
+                            <FileSection title="Library" icon="📚" files={grouped.future} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="neutral" collapsed={false} viewType={viewType} />
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
                 )}
-              </div>
+              </>
+            ) : (
+              <>
+                <Dashboard mode="insights-only" />
+              </>
             )}
           </div>
         )}
       </div>
-    </div>
+  
+  </div>
   );
 };
 
@@ -379,11 +646,26 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
                                                 {file.replace(rootPath || '', '').replace(/^\//, '')}
                                             </div>
                                         </div>
-                                        {meta?.card?.due && (
-                                            <div className="text-xs font-mono opacity-50 bg-base-200 px-2 py-1 rounded">
-                                                {formatDistanceToNow(new Date(meta.card.due), { addSuffix: true })}
-                                            </div>
-                                        )}
+                                        {(() => {
+                                            if (!meta?.cards) return null;
+                                            const cards = Object.values(meta.cards) as Card[];
+                                            if (cards.length === 0) return null;
+                                            
+                                            // Find the earliest due date
+                                            const earliest = cards.reduce((prev, curr) => {
+                                                return new Date(prev.due) < new Date(curr.due) ? prev : curr;
+                                            });
+                                            
+                                            if (!earliest.due) return null;
+
+                                            return (
+                                                <div className="text-xs font-mono opacity-50 bg-base-200 px-2 py-1 rounded flex gap-2 items-center">
+                                                    <span>{cards.length} cards</span>
+                                                    <span>•</span>
+                                                    <span>{formatDistanceToNow(new Date(earliest.due), { addSuffix: true })}</span>
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 );
                             })}
@@ -402,11 +684,20 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
                                     <div className={`p-2 rounded-lg bg-${color === 'neutral' ? 'base-200' : color + '/10'} text-${color === 'neutral' ? 'base-content' : color}`}>
                                         <FileText size={20} />
                                     </div>
-                                    {meta?.card?.due && (
-                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-base-200 opacity-60`}>
-                                        {formatDistanceToNow(new Date(meta.card.due))}
-                                    </span>
-                                    )}
+                                    {(() => {
+                                        if (!meta?.cards) return null;
+                                        const cards = Object.values(meta.cards) as Card[];
+                                        const count = cards.length;
+                                        if (count === 0) return null;
+                                        
+                                        const earliest = cards.reduce((prev, curr) => new Date(prev.due) < new Date(curr.due) ? prev : curr);
+
+                                        return (
+                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-base-200 opacity-60`}>
+                                                {formatDistanceToNow(new Date(earliest.due))}
+                                            </span>
+                                        );
+                                    })()}
                                 </div>
                                 <span className="font-bold text-sm line-clamp-2 leading-snug" title={file}>
                                     {file.replace(rootPath || '', '').replace(/^\//, '')}

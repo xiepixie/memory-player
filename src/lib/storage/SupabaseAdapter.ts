@@ -4,17 +4,67 @@ import { DataService, NoteMetadata } from './types';
 import { MarkdownSplitter } from '../markdown/splitter';
 import { parseNote } from '../markdown/parser';
 
+// Singleton Supabase client to avoid multiple GoTrueClient instances
+let supabaseSingleton: SupabaseClient | null = null;
+
 export class SupabaseAdapter implements DataService {
   private supabase: SupabaseClient | null = null;
 
   constructor(private supabaseUrl: string, private supabaseKey: string) {}
+
+  /**
+   * Ensures there is at least one vault for the current user and returns its ID.
+   * For now we use a single "Default Vault" per user.
+   */
+  private async getOrCreateDefaultVault(userId: string): Promise<string | null> {
+    if (!this.supabase) return null;
+
+    const defaultName = 'Default Vault';
+
+    // Try to find an existing default vault for this user
+    const { data: existing, error: selectError } = await this.supabase
+      .from('vaults')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('name', defaultName)
+      .limit(1);
+
+    if (selectError) {
+      console.error('Failed to fetch default vault', selectError);
+      return null;
+    }
+
+    if (existing && existing.length > 0) {
+      return existing[0].id;
+    }
+
+    // Create a new default vault for this user
+    const { data: inserted, error: insertError } = await this.supabase
+      .from('vaults')
+      .insert({
+        user_id: userId,
+        name: defaultName,
+      })
+      .select('id')
+      .single();
+
+    if (insertError) {
+      console.error('Failed to create default vault', insertError);
+      return null;
+    }
+
+    return inserted?.id ?? null;
+  }
 
   async init(): Promise<void> {
     if (!this.supabaseUrl || !this.supabaseKey) {
       console.warn("Supabase credentials missing. Adapter will not work.");
       return;
     }
-    this.supabase = createClient(this.supabaseUrl, this.supabaseKey);
+    if (!supabaseSingleton) {
+      supabaseSingleton = createClient(this.supabaseUrl, this.supabaseKey);
+    }
+    this.supabase = supabaseSingleton;
   }
 
   /**
@@ -28,6 +78,13 @@ export class SupabaseAdapter implements DataService {
       if (!user.data.user) return;
       const userId = user.data.user.id;
 
+      // Ensure we have a vault to attach this note to
+      const vaultId = await this.getOrCreateDefaultVault(userId);
+      if (!vaultId) {
+          console.error('No vault available for user; skipping note sync');
+          return;
+      }
+
       // 1. Parse Note Metadata
       const parsed = parseNote(content);
       const tags = parsed.frontmatter.tags || [];
@@ -40,7 +97,7 @@ export class SupabaseAdapter implements DataService {
             user_id: userId,
             // TODO: Get vault_id from context or default vault
             // For MVP we might need a 'default' vault or look it up
-            vault_id: '00000000-0000-0000-0000-000000000000', // Placeholder, needs real Vault ID
+            vault_id: vaultId,
             relative_path: filepath,
             title: parsed.frontmatter.title || filepath.split('/').pop(),
             tags: tags,
@@ -106,101 +163,96 @@ export class SupabaseAdapter implements DataService {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   }
 
-  async saveReview(noteId: string, card: Card, log: ReviewLog): Promise<void> {
-    // Schema v5 uses 'card_id', not 'note_id' for reviews.
-    // But the appStore passes 'noteId' (which is actually the Note ID).
-    // We need to know WHICH card we are reviewing.
-    // The appStore needs to be updated to track 'currentCardId'.
-    
-    // For backward compatibility with the current appStore which assumes 1 Note = 1 Card (MVP):
-    // We will look up the FIRST card associated with this note_id.
+  async saveReview(noteId: string, clozeIndex: number, card: Card, log: ReviewLog): Promise<void> {
     if (!this.supabase) throw new Error("Supabase not initialized");
+
+    // If we don't have a noteId (e.g. Demo Vault), skip remote save
+    if (!noteId) {
+      console.warn("Supabase saveReview skipped: missing noteId");
+      return;
+    }
 
     const user = await this.supabase.auth.getUser();
     if (!user.data.user) throw new Error("User not logged in");
-    // const userId = user.data.user.id; // Unused
 
-    // Find any card for this note (MVP Hack)
-    const { data: cardData } = await this.supabase
-        .from('cards')
-        .select('id')
-        .eq('note_id', noteId)
-        .limit(1)
-        .single();
-        
-    if (!cardData) {
-        console.warn("No card found for note, cannot save review");
-        return;
-    }
-    
-    const cardId = cardData.id;
-
-    // Call RPC
-    const { error } = await this.supabase.rpc('submit_review', {
-        p_card_id: cardId,
-        p_card_update: {
-            state: card.state,
-            due: card.due,
-            stability: card.stability,
-            difficulty: card.difficulty,
-            elapsed_days: card.elapsed_days,
-            scheduled_days: card.scheduled_days,
-            reps: card.reps,
-            lapses: card.lapses,
-            last_review: new Date().toISOString()
-        },
-        p_review_log: {
-            grade: log.rating,
-            state: log.state,
-            due: log.due,
-            stability: log.stability,
-            difficulty: log.difficulty,
-            duration_ms: log.elapsed_days * 24 * 60 * 60 * 1000,
-            reviewed_at: log.review.toISOString()
-        }
+    // 2. Call RPC to update card and insert log atomically
+    // Note: We now pass note_id + cloze_index directly, letting the DB find the card_id
+    const { error: rpcError } = await this.supabase.rpc('submit_review', {
+      p_note_id: noteId,
+      p_cloze_index: clozeIndex,
+      p_card_update: {
+        state: card.state,
+        due: card.due,
+        stability: card.stability,
+        difficulty: card.difficulty,
+        elapsed_days: card.elapsed_days,
+        scheduled_days: card.scheduled_days,
+        learning_steps: card.learning_steps,
+        reps: card.reps,
+        lapses: card.lapses,
+        last_review: new Date().toISOString()
+      },
+      p_review_log: {
+        grade: log.rating,
+        state: log.state,
+        due: log.due,
+        stability: log.stability,
+        difficulty: log.difficulty,
+        duration_ms: log.elapsed_days * 24 * 60 * 60 * 1000, // approx
+        reviewed_at: log.review
+      }
     });
 
-    if (error) throw error;
+    if (rpcError) {
+      console.error("Failed to submit review via RPC", rpcError);
+      throw rpcError;
+    }
   }
 
   async getMetadata(noteId: string, filepath: string): Promise<NoteMetadata> {
     if (!this.supabase) throw new Error("Supabase not initialized");
 
-    // MVP: Fetch the first card for this note
-    const { data } = await this.supabase
-      .from('cards')
-      .select('*')
-      .eq('note_id', noteId)
-      .limit(1)
-      .single();
-
-    if (!data) {
+    // If noteId is empty (e.g. demo notes), avoid making an invalid note_id=eq. request
+    if (!noteId) {
       return {
         noteId,
         filepath,
-        card: createEmptyCard(),
+        cards: {},
+        lastReviews: {},
       };
     }
 
-    // Map DB fields back to Card
-    const card: Card = {
-        ...createEmptyCard(), // Fix missing props
-        state: data.state,
-        due: new Date(data.due),
-        stability: data.stability,
-        difficulty: data.difficulty,
-        elapsed_days: data.elapsed_days,
-        scheduled_days: data.scheduled_days,
-        reps: data.reps,
-        lapses: data.lapses,
-        last_review: data.last_review ? new Date(data.last_review) : undefined
-    };
+    // Fetch ALL cards for this note
+    const { data } = await this.supabase
+      .from('cards')
+      .select('*')
+      .eq('note_id', noteId);
+
+    const cards: Record<number, Card> = {};
+    const lastReviews: Record<number, ReviewLog> = {}; // We don't fetch logs yet in getMetadata for perf
+
+    if (data) {
+        data.forEach((row: any) => {
+            cards[row.cloze_index] = {
+                ...createEmptyCard(),
+                state: row.state,
+                due: new Date(row.due),
+                stability: row.stability,
+                difficulty: row.difficulty,
+                elapsed_days: row.elapsed_days,
+                scheduled_days: row.scheduled_days,
+                reps: row.reps,
+                lapses: row.lapses,
+                last_review: row.last_review ? new Date(row.last_review) : undefined
+            };
+        });
+    }
 
     return {
       noteId,
       filepath,
-      card,
-      lastReview: undefined, 
+      cards,
+      lastReviews, 
     };
   }
 
@@ -218,21 +270,66 @@ export class SupabaseAdapter implements DataService {
 
     if (error) throw error;
 
-    return (data || []).map((row: any) => ({
-      noteId: row.note_id, // This maps back to Note ID
-      filepath: row.notes?.relative_path || '',
-      card: {
-        ...createEmptyCard(),
-        state: row.state,
-        due: new Date(row.due),
-        stability: row.stability,
-        difficulty: row.difficulty,
-        elapsed_days: row.elapsed_days,
-        scheduled_days: row.scheduled_days,
-        reps: row.reps,
-        lapses: row.lapses,
-        last_review: row.last_review ? new Date(row.last_review) : undefined
-      } as Card,
-    }));
+    // Aggregate cards by note_id
+    const map: Record<string, NoteMetadata> = {};
+
+    (data || []).forEach((row: any) => {
+        const nid = row.note_id;
+        if (!map[nid]) {
+            map[nid] = {
+                noteId: nid,
+                filepath: row.notes?.relative_path || '',
+                cards: {},
+                lastReviews: {}
+            };
+        }
+        
+        map[nid].cards[row.cloze_index] = {
+            ...createEmptyCard(),
+            state: row.state,
+            due: new Date(row.due),
+            stability: row.stability,
+            difficulty: row.difficulty,
+            elapsed_days: row.elapsed_days,
+            scheduled_days: row.scheduled_days,
+            reps: row.reps,
+            lapses: row.lapses,
+            last_review: row.last_review ? new Date(row.last_review) : undefined
+        };
+    });
+
+    return Object.values(map);
+  }
+
+  async getReviewHistory(start: Date, end: Date): Promise<ReviewLog[]> {
+      if (!this.supabase) throw new Error("Supabase not initialized");
+
+      const { data, error } = await this.supabase
+          .from('review_logs')
+          .select('*')
+          .gte('reviewed_at', start.toISOString())
+          .lte('reviewed_at', end.toISOString())
+          .order('reviewed_at', { ascending: true });
+      
+      if (error) {
+          console.error("Failed to fetch review history", error);
+          return [];
+      }
+
+      return (data || []).map((row: any) => {
+          const elapsedDays = row.duration_ms / (24 * 60 * 60 * 1000);
+          return {
+              rating: row.grade,
+              state: row.state,
+              due: new Date(row.due),
+              stability: row.stability,
+              difficulty: row.difficulty,
+              elapsed_days: elapsedDays, // approx reverse
+              last_elapsed_days: elapsedDays,
+              scheduled_days: 0,
+              learning_steps: 0,
+              review: new Date(row.reviewed_at)
+          };
+      });
   }
 }

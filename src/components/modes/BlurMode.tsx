@@ -1,48 +1,23 @@
 import { useAppStore } from '../../store/appStore';
-import { useRef, useEffect, useState } from 'react';
 import { MarkdownContent } from '../shared/MarkdownContent';
 import { ModeActionHint } from '../shared/ModeActionHint';
+import { useFileWatcher } from '../../hooks/useFileWatcher';
+import { useShallow } from 'zustand/react/shallow';
 
 export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
-  const { currentNote } = useAppStore();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [isPeeking, setIsPeeking] = useState(false);
+  const { currentNote, currentFilepath, loadNote } = useAppStore(
+    useShallow((state) => ({
+      currentNote: state.currentNote,
+      currentFilepath: state.currentFilepath,
+      loadNote: state.loadNote,
+    })),
+  );
 
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        containerRef.current.style.setProperty('--x', `${x}px`);
-        containerRef.current.style.setProperty('--y', `${y}px`);
-      }
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        e.preventDefault();
-        setIsPeeking(true);
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        e.preventDefault();
-        setIsPeeking(false);
-      }
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, []);
+  useFileWatcher(currentFilepath, () => {
+    if (currentFilepath) {
+        loadNote(currentFilepath);
+    }
+  });
 
   if (!currentNote) return null;
 
@@ -50,7 +25,9 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
   const hints = currentNote.hints || [];
 
   return (
-    <div className={`w-full min-h-full flex flex-col select-none transition-all duration-500 ease-out ${immersive ? 'px-12 py-4' : 'px-8 py-8'}`}>
+    <div
+      className={`w-full min-h-full flex flex-col select-none transition-all duration-500 ease-out ${immersive ? 'px-12 py-4' : 'px-8 py-8'}`}
+    >
       {/* Hints Section */}
       {hints.length > 0 && !immersive && (
         <div className="mb-8 p-4 bg-warning/10 border-l-4 border-warning rounded-r">
@@ -74,39 +51,18 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
         )}
       </div>
 
-      {/* Flashlight Container */}
-      <div
-        ref={containerRef}
-        className="relative flex-1 prose prose-lg max-w-none"
-        style={{
-          '--x': '0px',
-          '--y': '0px',
-          cursor: isPeeking ? 'default' : 'none'
-        } as React.CSSProperties}
-      >
-        {/* Blurred Layer (Background) - Relative to set height */}
-        <div
-          className={`relative transition-all duration-200 ${isPeeking ? 'filter-none opacity-100' : 'filter blur-[6px] opacity-100'}`}
-          aria-hidden="true"
-        >
-          <MarkdownContent content={cleanContent(currentNote.content)} />
-        </div>
-
-        {/* Reveal Layer (Flashlight) - Only visible when NOT peeking */}
-        <div
-          className="absolute inset-0 transition-opacity duration-200 pointer-events-none"
-          style={{
-            opacity: isPeeking ? 0 : 1,
-            maskImage: 'radial-gradient(circle 80px at var(--x) var(--y), black 0%, transparent 100%)',
-            WebkitMaskImage: 'radial-gradient(circle 80px at var(--x) var(--y), black 0%, transparent 100%)',
-          }}
-        >
-          <MarkdownContent content={cleanContent(currentNote.content)} />
+      {/* Flashlight Container (layout only; blur handled at note-scroll-container level) */}
+      <div className="relative flex-1 max-w-none">
+        <div className="relative border-t border-transparent transition-all duration-200 prose prose-lg max-w-none">
+          <MarkdownContent 
+            content={cleanContent(currentNote.content)} 
+            disableIds={false}
+          />
         </div>
       </div>
     </div>
   );
-};
+}
 
 function cleanContent(content: string): string {
   return content

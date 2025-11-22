@@ -6,7 +6,7 @@ import { useKeyboardShortcuts } from './shared/useKeyboardShortcuts';
 import { ToastContainer } from './shared/ToastContainer';
 
 export const Layout = () => {
-  const { viewMode } = useAppStore();
+  const viewMode = useAppStore((state) => state.viewMode);
 
   // Initialize Global Shortcuts
   useKeyboardShortcuts();

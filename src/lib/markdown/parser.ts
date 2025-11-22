@@ -46,20 +46,10 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
   });
 
   // 2. Parse Legacy Highlighting: ==Answer==
-  // We assign them IDs starting after the highest Anki ID found
-  let maxId = clozes.reduce((max, c) => Math.max(max, c.id), 0);
-  let legacyIdCounter = maxId + 1;
-
+  // Render as visual highlight only (no additional cloze IDs)
   const highlightRegex = /==(.*?)==/g;
-  renderableContent = renderableContent.replace(highlightRegex, (match, answer) => {
-      const id = legacyIdCounter++;
-      clozes.push({
-          id,
-          original: match,
-          answer,
-          hint: undefined
-      });
-      return `[${answer}](#cloze-${id})`;
+  renderableContent = renderableContent.replace(highlightRegex, (_match, answer) => {
+      return `[${answer}](#highlight)`;
   });
 
   return {

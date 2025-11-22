@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Palette } from 'lucide-react';
+import { useAppStore } from '../../store/appStore';
 
 const THEMES = [
     'winter',
@@ -11,14 +12,11 @@ const THEMES = [
 ];
 
 export const ThemeController = () => {
-    const [theme, setTheme] = useState(() => {
-        const stored = localStorage.getItem('theme');
-        return stored && THEMES.includes(stored) ? stored : 'winter';
-    });
+    const theme = useAppStore((state) => state.theme);
+    const setTheme = useAppStore((state) => state.setTheme);
 
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);
-        localStorage.setItem('theme', theme);
     }, [theme]);
 
     return (

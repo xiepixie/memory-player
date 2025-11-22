@@ -2,12 +2,21 @@ import { useEffect } from 'react';
 import { useAppStore } from '../../store/appStore';
 
 export const useKeyboardShortcuts = () => {
-    const { viewMode, saveReview } = useAppStore();
+    const viewMode = useAppStore((state) => state.viewMode);
+    const saveReview = useAppStore((state) => state.saveReview);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             // Ignore if typing in an input
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+                return;
+            }
+
+            if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                if (viewMode === 'library') {
+                    window.dispatchEvent(new CustomEvent('library-focus-search'));
+                }
                 return;
             }
 
@@ -18,6 +27,10 @@ export const useKeyboardShortcuts = () => {
             }
 
             if (['review', 'test', 'master'].includes(viewMode)) {
+                // Check for grading lock
+                if (useAppStore.getState().isGrading) return;
+                if (e.repeat) return;
+
                 switch (e.key) {
                     case '1':
                         saveReview(1);

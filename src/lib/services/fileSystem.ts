@@ -1,8 +1,31 @@
-import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { readTextFile, writeTextFile, watch } from '@tauri-apps/plugin-fs';
 import matter from 'gray-matter';
 import { v4 as uuidv4 } from 'uuid';
 
 export class FileSystemService {
+  /**
+   * Watch a file for changes.
+   * Returns a function to stop watching.
+   */
+  async watchFile(filepath: string, onChange: () => void): Promise<() => void> {
+    try {
+       // debounce the callback slightly to avoid duplicate events
+       let timeout: ReturnType<typeof setTimeout> | null = null;
+       
+       const unwatch = await watch(filepath, (_event) => {
+           // Simply trigger on any event for now to be safe
+           if (timeout) clearTimeout(timeout);
+           timeout = setTimeout(() => {
+               onChange();
+           }, 100);
+       });
+       return unwatch;
+    } catch (error) {
+        console.error(`Failed to watch file ${filepath}:`, error);
+        return () => {};
+    }
+  }
+
   /**
    * Ensures a note has a persistent ID in its frontmatter.
    * - Reads the file
@@ -28,7 +51,13 @@ export class FileSystemService {
         // Reconstruct the file with new frontmatter
         // Note: this might reformat existing frontmatter
         const newContent = matter.stringify(file.content, file.data);
-        await writeTextFile(filepath, newContent);
+        try {
+          await writeTextFile(filepath, newContent);
+        } catch (writeError) {
+          console.error(`Failed to write ID to file ${filepath}. This might be a read-only file or iCloud sync issue.`, writeError);
+          // If we can't write, we still return the content and the in-memory ID
+          // The user can still view/study, but progress tracking might be flaky across renames if ID isn't saved.
+        }
         return {
             id,
             content: newContent,
