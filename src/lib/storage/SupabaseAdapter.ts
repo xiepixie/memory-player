@@ -167,7 +167,7 @@ export class SupabaseAdapter implements DataService {
     if (!this.supabase) throw new Error("Supabase not initialized");
 
     // MVP: Fetch the first card for this note
-    const { data, error } = await this.supabase
+    const { data } = await this.supabase
       .from('cards')
       .select('*')
       .eq('note_id', noteId)

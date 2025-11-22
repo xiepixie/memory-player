@@ -22,7 +22,7 @@ interface AppState {
   recentVaults: string[];
   removeRecentVault: (path: string) => void;
 
-  setRootPath: (path: string) => void;
+  setRootPath: (path: string | null) => void;
   setFiles: (files: string[]) => void;
   loadAllMetadata: () => Promise<void>;
 

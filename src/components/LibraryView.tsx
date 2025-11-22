@@ -334,7 +334,6 @@ export const LibraryView = () => {
 };
 
 const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color, collapsed = false, viewType = 'list' }: any) => {
-  const textColor = color === 'neutral' ? 'text-base-content' : `text-${color}`;
   const [isOpen, setIsOpen] = useState(!collapsed);
   
   if (files.length === 0) return null;

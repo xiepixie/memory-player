@@ -25,7 +25,7 @@ export class MockAdapter implements DataService {
     }
   }
 
-  async syncNote(filepath: string, content: string, noteId: string): Promise<void> {
+  async syncNote(filepath: string, _content: string, noteId: string): Promise<void> {
     // Mock adapter doesn't sync to cloud, but we could log it or update local state if needed.
     console.log(`[Mock] Syncing note: ${filepath} (${noteId})`);
     return Promise.resolve();
