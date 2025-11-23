@@ -26,6 +26,7 @@ interface AppState {
   syncMode: 'mock' | 'supabase';
   currentUser: { id: string; email?: string | null } | null;
   lastSyncAt: Date | null;
+  lastServerSyncAt: string | null; // ISO string for incremental sync cursor
   pendingNoteSyncs: Record<string, true>;
   markNoteSyncPending: (filepath: string) => void;
   markNoteSynced: (filepath: string) => void;
@@ -166,6 +167,7 @@ type ServiceSlice = Pick<
   | 'syncMode'
   | 'currentUser'
   | 'lastSyncAt'
+  | 'lastServerSyncAt'
   | 'pendingNoteSyncs'
   | 'markNoteSyncPending'
   | 'markNoteSynced'
@@ -197,6 +199,7 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
   syncMode: 'mock',
   currentUser: null,
   lastSyncAt: null,
+  lastServerSyncAt: null,
   pendingNoteSyncs: {},
   authCheckCounter: 0,
 
@@ -229,6 +232,20 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
       // Parallelize initial data fetching
       // Review history is independent of vault, so we can fetch it immediately
       const historyPromise = get().loadReviewHistory();
+
+      // Optimistic UI: If we have a session, assume we are logged in and load data
+      if (type === 'supabase' && userInfo) {
+         // Background verification
+         getSupabaseClient()?.auth.getUser().then(({ data, error }) => {
+             if (error || !data.user) {
+                 console.warn("Session verification failed", error);
+                 if (get().currentUser) {
+                     get().signOut();
+                     useToastStore.getState().addToast("Session expired", 'warning');
+                 }
+             }
+         });
+      }
       
       await get().loadVaults();
       if (get().currentVault) {
@@ -355,16 +372,70 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
 
   loadAllMetadata: async () => {
     try {
-      const { dataService, currentVault } = get();
+      const { dataService, currentVault, lastServerSyncAt } = get();
       // If no vault selected, skip loading metadata to avoid full-table scan
       if (!currentVault) return;
 
-      const allTracked = await dataService.getAllMetadata(currentVault.id);
-      const map: Record<string, NoteMetadata> = {};
-      allTracked.forEach(m => { map[m.filepath] = m; });
-      set({ fileMetadatas: map });
+      // Determine if incremental
+      const after = lastServerSyncAt;
+      
+      const { items: remoteMetas, serverNow } = await dataService.getAllMetadata(currentVault.id, after);
+      
+      set((state) => {
+        const next = { ...state.fileMetadatas };
+
+        if (!after) {
+            // Full Sync: We could replace, but to preserve local-only files, we merge.
+            // Ideally, we should mark everything not in remoteMetas as deleted if it was supposed to be synced?
+            // For safety in this phase, we just upsert.
+        }
+
+        remoteMetas.forEach((m: NoteMetadata) => {
+            if (m.isDeleted) {
+                // Soft delete: remove from local cache
+                if (next[m.filepath]) {
+                    delete next[m.filepath];
+                }
+                return;
+            }
+
+            const existing = next[m.filepath];
+            if (!existing) {
+                next[m.filepath] = m;
+            } else {
+                // Merge cards
+                const mergedCards = { ...existing.cards };
+                
+                // If m.cards contains deleted cards (marked via isDeleted property), remove them
+                Object.entries(m.cards).forEach(([idxStr, card]) => {
+                     const idx = Number(idxStr);
+                     if ((card as any).isDeleted) {
+                         delete mergedCards[idx];
+                     } else {
+                         mergedCards[idx] = card;
+                     }
+                });
+                
+                next[m.filepath] = {
+                    ...existing,
+                    ...m, // Update note props
+                    cards: mergedCards
+                };
+            }
+        });
+
+        return { 
+            fileMetadatas: next,
+            lastServerSyncAt: serverNow // Use server-provided timestamp
+        };
+      });
     } catch (e) {
       console.error("Failed to load metadata", e);
+      if ((e as any)?.status === 401 || (e as any)?.code === 'PGRST301') {
+         get().signOut();
+         useToastStore.getState().addToast("Session expired", 'warning');
+         return;
+      }
       useToastStore.getState().addToast("Failed to load metadata", 'error');
     }
   },
@@ -427,6 +498,10 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
       set({ vaults, currentVault });
     } catch (e) {
       console.error("Failed to load vaults", e);
+      if ((e as any)?.status === 401 || (e as any)?.code === 'PGRST301') {
+          get().signOut();
+          useToastStore.getState().addToast("Session expired", 'warning');
+      }
     }
   },
 
@@ -948,6 +1023,11 @@ const createSmartQueueSlice: AppStateCreator<SmartQueueSlice> = (set, get) => ({
       useToastStore.getState().addToast(`Loaded ${dueCards.length} due cards`, 'success');
     } catch (e) {
       console.error("Failed to fetch due cards", e);
+      if ((e as any)?.status === 401 || (e as any)?.code === 'PGRST301') {
+          get().signOut();
+          useToastStore.getState().addToast("Session expired", 'warning');
+          return;
+      }
       useToastStore.getState().addToast("Failed to fetch due cards", 'error');
     }
   },
@@ -1009,11 +1089,28 @@ export const useAppStore = create<AppState>()(
       }),
       {
         name: 'app-store',
+        version: 1,
+        migrate: (persistedState: any, version: number) => {
+            if (version === 0) {
+                // Migration from v0 to v1
+                // Reset fileMetadatas if format is incompatible, or just keep it.
+                // Since we are adding fields, old data is fine, just missing 'lastServerSyncAt'.
+                return {
+                    ...persistedState,
+                    fileMetadatas: {}, // Safer to clear cache on schema change
+                    lastServerSyncAt: null
+                };
+            }
+            return persistedState;
+        },
         partialize: (state) => ({
           rootPath: state.rootPath,
           recentVaults: state.recentVaults,
           files: state.files,
           theme: state.theme,
+          // Persist metadata for offline/optimistic support
+          fileMetadatas: state.fileMetadatas,
+          lastServerSyncAt: state.lastServerSyncAt
         }),
       },
     ),

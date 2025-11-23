@@ -7,6 +7,10 @@ export interface NoteMetadata {
   cards: Record<number, Card>;
   // Optional: track last review per card for history
   lastReviews?: Record<number, ReviewLog>;
+
+  // Incremental Sync Support
+  remoteUpdatedAt?: string;  // Server-side timestamp
+  isDeleted?: boolean;       // Soft delete flag
 }
 
 export interface QueueItem {
@@ -87,8 +91,11 @@ export interface DataService {
 
   /**
    * Get all tracked notes metadata
+   * @param vaultId Optional vault ID to filter by
+   * @param after Optional timestamp for incremental sync
+   * @returns Object containing the metadata items and the server's current timestamp
    */
-  getAllMetadata(vaultId?: string): Promise<NoteMetadata[]>;
+  getAllMetadata(vaultId?: string, after?: string | Date | null): Promise<{ items: NoteMetadata[], serverNow: string }>;
 
   /**
    * Get review history within a date range

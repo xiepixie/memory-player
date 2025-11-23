@@ -177,10 +177,10 @@ export class MockAdapter implements DataService {
     };
   }
 
-  async getAllMetadata(_vaultId?: string): Promise<NoteMetadata[]> {
+  async getAllMetadata(_vaultId?: string, _after?: string | Date | null): Promise<{ items: NoteMetadata[], serverNow: string }> {
     // Expose proper filepath for each note so that Library/Dashboard can
     // aggregate by real file path just like the Supabase adapter.
-    return Object.entries(this.data)
+    const items = Object.entries(this.data)
       .filter(([, entry]) => !entry.isDeleted)
       .map(([key, entry]) => ({
         noteId: key,
@@ -188,6 +188,8 @@ export class MockAdapter implements DataService {
         cards: entry.cards,
         lastReviews: {},
       }));
+    
+    return { items, serverNow: new Date().toISOString() };
   }
 
   async getReviewHistory(start: Date, end: Date): Promise<ReviewLog[]> {

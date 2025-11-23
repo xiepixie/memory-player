@@ -85,7 +85,7 @@ export class SupabaseAdapter implements DataService {
 
     if (error) {
       console.error('Failed to fetch vaults', error);
-      return [];
+      throw error;
     }
 
     return (data || []) as Vault[];
@@ -158,13 +158,29 @@ export class SupabaseAdapter implements DataService {
   async softDeleteNote(noteId: string): Promise<void> {
     if (!this.supabase) throw new Error("Supabase not initialized");
 
-    const { error } = await this.supabase
+    const now = new Date().toISOString();
+
+    // 1. Soft delete the note
+    const { error: noteError } = await this.supabase
       .from('notes')
-      .update({ is_deleted: true })
+      .update({ is_deleted: true, updated_at: now })
       .eq('id', noteId);
 
-    if (error) {
-      console.error('Failed to soft delete note', error);
+    if (noteError) {
+      console.error('Failed to soft delete note', noteError);
+      throw noteError;
+    }
+
+    // 2. Soft delete all associated cards to ensure incremental sync picks them up
+    const { error: cardError } = await this.supabase
+      .from('cards')
+      .update({ is_deleted: true, updated_at: now })
+      .eq('note_id', noteId);
+
+    if (cardError) {
+      console.error('Failed to soft delete associated cards', cardError);
+      // We don't throw here to avoid breaking the flow if note was already deleted?
+      // But for consistency we should probably log it.
     }
   }
 
@@ -186,7 +202,7 @@ export class SupabaseAdapter implements DataService {
 
     if (error) {
       console.error('Failed to load deleted notes', error);
-      return [];
+      throw error;
     }
 
     const rows = data || [];
@@ -455,6 +471,7 @@ export class SupabaseAdapter implements DataService {
         content_raw: card.content_raw,
         section_path: card.section_path,
         tags: card.tags,
+        is_deleted: false, // Ensure it is active
         updated_at: new Date().toISOString()
       };
 
@@ -513,22 +530,22 @@ export class SupabaseAdapter implements DataService {
     if (currentClozeIndices.length > 0) {
       const { error: deleteError } = await this.supabase
         .from('cards')
-        .delete()
+        .update({ is_deleted: true, updated_at: new Date().toISOString() })
         .eq('note_id', noteId)
         .not('cloze_index', 'in', `(${currentClozeIndices.join(',')})`);
 
       if (deleteError) {
-        console.error('Delete Stale Cards Error', deleteError);
+        console.error('Soft Delete Stale Cards Error', deleteError);
       }
     } else {
-      // If no cards remain, delete ALL cards for this note
+      // If no cards remain, soft delete ALL cards for this note
       const { error: deleteAllError } = await this.supabase
         .from('cards')
-        .delete()
+        .update({ is_deleted: true, updated_at: new Date().toISOString() })
         .eq('note_id', noteId);
 
       if (deleteAllError) {
-        console.error('Delete All Cards Error', deleteAllError);
+        console.error('Soft Delete All Cards Error', deleteAllError);
       }
     }
   }
@@ -599,11 +616,12 @@ export class SupabaseAdapter implements DataService {
       };
     }
 
-    // Fetch ALL cards for this note
+    // Fetch ALL ACTIVE cards for this note
     const { data } = await this.supabase
       .from('cards')
       .select('*')
-      .eq('note_id', noteId);
+      .eq('note_id', noteId)
+      .eq('is_deleted', false);
 
     const cards: Record<number, Card> = {};
     const lastReviews: Record<number, ReviewLog> = {}; // We don't fetch logs yet in getMetadata for perf
@@ -634,7 +652,7 @@ export class SupabaseAdapter implements DataService {
     };
   }
 
-  async getAllMetadata(vaultId?: string): Promise<NoteMetadata[]> {
+  async getAllMetadata(vaultId?: string, after?: string | Date | null): Promise<{ items: NoteMetadata[], serverNow: string }> {
     if (!this.supabase) throw new Error("Supabase not initialized");
 
     // Use strict inner join if filtering by vault, otherwise default left join
@@ -647,7 +665,8 @@ export class SupabaseAdapter implements DataService {
         ${notesJoin} (
             relative_path,
             is_deleted,
-            vault_id
+            vault_id,
+            updated_at
         )
       `);
 
@@ -655,11 +674,36 @@ export class SupabaseAdapter implements DataService {
       query = query.eq('notes.vault_id', vaultId);
     }
 
+    if (after) {
+      // Incremental Sync: Get all cards updated after 'after'
+      const afterISO = after instanceof Date ? after.toISOString() : after;
+      query = query.gt('updated_at', afterISO);
+    } else {
+       // Full Sync: Only return active cards for active notes
+       // We only fetch active cards to rebuild local cache.
+       // Note: If we want to be purely incremental even for full sync, we could return everything,
+       // but usually full sync implies "current state".
+       query = query.eq('is_deleted', false).eq('notes.is_deleted', false);
+    }
+
     const { data, error } = await query;
 
     if (error) throw error;
 
     const rows = data || [];
+    
+    // Calculate max updated_at to use as new cursor
+    // Fallback to client time if no rows, though this is still subject to drift.
+    // Ideally we would fetch server time separately or have it in response.
+    let maxUpdatedAt = new Date().toISOString();
+    if (rows.length > 0) {
+        // Find max updated_at in rows
+        const maxRow = rows.reduce((prev, current) => {
+            return (prev.updated_at > current.updated_at) ? prev : current;
+        });
+        maxUpdatedAt = maxRow.updated_at;
+    }
+
     const vaultIds = new Set<string>();
     (rows as any[]).forEach((row: any) => {
       if (row.notes && row.notes.vault_id) {
@@ -676,10 +720,9 @@ export class SupabaseAdapter implements DataService {
     const map: Record<string, NoteMetadata> = {};
 
     (rows as any[]).forEach((row: any) => {
-      // Skip cards that belong to soft-deleted notes
-      if (row.notes && row.notes.is_deleted) {
-        return;
-      }
+      // For Incremental Sync (after != null), we DO want to return deleted items so the Store can remove them.
+      // For Full Sync (after == null), we filtered them out in SQL.
+
       const nid = row.note_id;
       if (!map[nid]) {
         const vaultId = row.notes ? (row.notes.vault_id as string | null | undefined) : null;
@@ -689,12 +732,14 @@ export class SupabaseAdapter implements DataService {
           noteId: nid,
           filepath,
           cards: {},
-          lastReviews: {}
+          lastReviews: {},
+          isDeleted: row.notes?.is_deleted, // Propagate note deletion status
+          remoteUpdatedAt: row.updated_at
         };
       }
 
       const baseCard = createEmptyCard();
-      map[nid].cards[row.cloze_index] = {
+      const constructedCard = {
         ...baseCard,
         state: row.state,
         due: row.due ? new Date(row.due) : baseCard.due,
@@ -704,11 +749,25 @@ export class SupabaseAdapter implements DataService {
         scheduled_days: row.scheduled_days,
         reps: row.reps,
         lapses: row.lapses,
-        last_review: row.last_review ? new Date(row.last_review) : undefined
+        last_review: row.last_review ? new Date(row.last_review) : undefined,
+        // Inject deletion flag for incremental merging
       };
+      
+      if (row.is_deleted && after) {
+         // Mark as deleted so Store can remove it
+         (constructedCard as any).isDeleted = true;
+      } else if (row.is_deleted && !after) {
+         // Full sync: skip deleted cards (should be filtered by SQL anyway but double check)
+         return; 
+      }
+
+      map[nid].cards[row.cloze_index] = constructedCard;
     });
 
-    return Object.values(map);
+    return {
+        items: Object.values(map),
+        serverNow: maxUpdatedAt
+    };
   }
 
   async getReviewHistory(start: Date, end: Date): Promise<ReviewLog[]> {
@@ -723,7 +782,7 @@ export class SupabaseAdapter implements DataService {
 
     if (error) {
       console.error("Failed to fetch review history", error);
-      return [];
+      throw error;
     }
 
     return (data || []).map((row: any) => {
@@ -786,6 +845,7 @@ export class SupabaseAdapter implements DataService {
       `)
       .lte('due', new Date().toISOString())
       .eq('is_suspended', false)
+      .eq('is_deleted', false)
       .eq('notes.is_deleted', false)
       .order('due', { ascending: true })
       .limit(limit);
@@ -838,12 +898,13 @@ export class SupabaseAdapter implements DataService {
         )
       `)
       .ilike('content_raw', `%${query}%`)
+      .eq('is_deleted', false)
       .eq('notes.is_deleted', false)
       .limit(20);
 
     if (error) {
       console.error("Failed to search cards", error);
-      return [];
+      throw error;
     }
 
     const rows = data || [];
