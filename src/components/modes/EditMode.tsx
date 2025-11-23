@@ -131,7 +131,7 @@ const MetadataEditor = ({ content, onChange }: { content: string; onChange: (new
 };
 
 export const EditMode = () => {
-  const { currentNote, currentFilepath, loadNote, dataService, currentClozeIndex, updateLastSync, currentVault } = useAppStore();
+  const { currentNote, currentFilepath, loadNote, dataService, updateLastSync, currentVault } = useAppStore();
   const addToast = useToastStore((state) => state.addToast);
   const [content, setContent] = useState(currentNote?.raw || '');
   const [isSaving, setIsSaving] = useState(false);

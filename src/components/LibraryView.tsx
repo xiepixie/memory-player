@@ -34,7 +34,6 @@ export const LibraryView = () => {
     signOut,
     vaults,
     setCurrentVault,
-    currentVault,
     updateLastSync
   } = useAppStore(
     useShallow((state) => ({
@@ -54,7 +53,6 @@ export const LibraryView = () => {
       signOut: state.signOut,
       vaults: state.vaults,
       setCurrentVault: state.setCurrentVault,
-      currentVault: state.currentVault,
       updateLastSync: state.updateLastSync
     })),
   );

@@ -79,6 +79,7 @@ CREATE TABLE public.cards (
     tags TEXT[] DEFAULT '{}', 
     
     is_suspended BOOLEAN DEFAULT false,
+    is_deleted BOOLEAN DEFAULT false,
     
     -- FSRS State
     state INTEGER NOT NULL DEFAULT 0,
@@ -93,13 +94,13 @@ CREATE TABLE public.cards (
     last_review TIMESTAMPTZ,
     
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-
-    -- Constraints
-    CONSTRAINT uq_card_identity UNIQUE (note_id, cloze_index)
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Indexes
+CREATE UNIQUE INDEX uq_card_identity_active
+ON public.cards (note_id, cloze_index)
+WHERE is_deleted = false;
 CREATE INDEX idx_cards_note_id ON public.cards(note_id);
 CREATE INDEX idx_cards_due ON public.cards(due); -- Critical for "Get Due Cards"
 CREATE INDEX idx_cards_tags ON public.cards USING GIN(tags); 
