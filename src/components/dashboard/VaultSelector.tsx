@@ -15,7 +15,8 @@ export const VaultSelector = () => {
       loadVaults: state.loadVaults,
     })),
   );
-  const dataService = useAppStore((state) => state.dataService);
+  const createVault = useAppStore((state) => state.createVault);
+  const updateVault = useAppStore((state) => state.updateVault);
   const addToast = useToastStore((state) => state.addToast);
 
   const [isOpen, setIsOpen] = useState(false);
@@ -49,14 +50,12 @@ export const VaultSelector = () => {
   };
 
   const handleCreate = async () => {
-    if (!dataService || !newVaultName.trim()) return;
+    if (!newVaultName.trim()) return;
 
     try {
       setIsBusy(true);
-      const created = await dataService.createVault(newVaultName.trim(), rootPath ? { rootPath } : {});
-      await loadVaults();
+      const created = await createVault(newVaultName.trim(), rootPath ? { rootPath } : {});
       if (created) {
-        setCurrentVault(created);
         addToast(`Vault "${created.name}" created`, 'success');
       }
       setIsCreating(false);
@@ -71,12 +70,11 @@ export const VaultSelector = () => {
   };
 
   const handleLinkRoot = async () => {
-    if (!dataService || !rootPath || !currentVault || rootPath === 'DEMO_VAULT') return;
+    if (!rootPath || !currentVault || rootPath === 'DEMO_VAULT') return;
     try {
       setIsBusy(true);
       const nextConfig = { ...(currentVault.config || {}), rootPath } as any;
-      await dataService.updateVault(currentVault.id, { config: nextConfig } as any);
-      await loadVaults();
+      await updateVault(currentVault.id, { config: nextConfig } as any);
       addToast(`Linked "${rootPath.split(/[\\/]/).pop()}" to vault`, 'success');
       setIsOpen(false);
     } catch (e) {

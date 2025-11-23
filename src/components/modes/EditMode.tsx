@@ -427,20 +427,21 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   });
 
   useEffect(() => {
-    if (currentNote) {
+    if (active && currentNote) {
       setContent(currentNote.raw);
       setParsedPreview(parseNote(currentNote.raw));
     }
-  }, [currentNote]);
+  }, [currentNote, active]);
 
   // Debounce preview and stats update
   useEffect(() => {
+    if (!active) return;
     const timer = setTimeout(() => {
       setParsedPreview(parseNote(content));
       setDebouncedContent(content);
     }, 200);
     return () => clearTimeout(timer);
-  }, [content]);
+  }, [content, active]);
 
   useEffect(() => {
       return () => {

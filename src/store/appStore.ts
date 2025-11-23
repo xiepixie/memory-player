@@ -1,5 +1,6 @@
 import { create, StateCreator } from 'zustand';
-import { devtools, persist } from 'zustand/middleware';
+import { devtools, persist, createJSONStorage } from 'zustand/middleware';
+import type { StateStorage } from 'zustand/middleware';
 import { DataService, NoteMetadata, QueueItem, ReviewLog, Vault } from '../lib/storage/types';
 import { MockAdapter } from '../lib/storage/MockAdapter';
 import { fileSystem } from '../lib/services/fileSystem';
@@ -9,10 +10,170 @@ import { fsrs, createEmptyCard } from 'ts-fsrs';
 import { useToastStore } from './toastStore';
 import { getSupabaseClient } from '../lib/supabaseClient';
 import { formatDistanceToNow } from 'date-fns';
+import superjson from 'superjson';
 
 export type ViewMode = 'library' | 'review' | 'test' | 'master' | 'edit' | 'summary';
 
 export const MAX_CONTENT_CACHE_ENTRIES = 200;
+
+const isBrowser = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+
+const isIndexedDBAvailable = () =>
+  isBrowser() && typeof window.indexedDB !== 'undefined';
+
+let idbDatabasePromise: Promise<IDBDatabase> | null = null;
+
+const getIdbDatabase = (): Promise<IDBDatabase> => {
+  if (!isIndexedDBAvailable()) {
+    return Promise.reject(new Error('IndexedDB is not available'));
+  }
+  if (!idbDatabasePromise) {
+    idbDatabasePromise = new Promise((resolve, reject) => {
+      const request = window.indexedDB.open('memory-player-store', 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('app-store')) {
+          db.createObjectStore('app-store');
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () =>
+        reject(request.error ?? new Error('Failed to open IndexedDB'));
+    });
+  }
+  return idbDatabasePromise;
+};
+
+const idbSetItem = async (name: string, value: string): Promise<void> => {
+  try {
+    const db = await getIdbDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('app-store', 'readwrite');
+      const store = tx.objectStore('app-store');
+      const request = store.put(value, name);
+      request.onsuccess = () => resolve();
+      request.onerror = () =>
+        reject(request.error ?? new Error('IndexedDB setItem failed'));
+    });
+  } catch (err) {
+    console.error('IndexedDB setItem failed, falling back to localStorage', err);
+    if (isBrowser()) {
+      try {
+        window.localStorage.setItem(name, value);
+      } catch (e) {
+        console.error('localStorage fallback setItem failed', e);
+      }
+    }
+  }
+};
+
+const idbGetItem = async (name: string): Promise<string | null> => {
+  try {
+    const db = await getIdbDatabase();
+    const value: string | null = await new Promise((resolve, reject) => {
+      const tx = db.transaction('app-store', 'readonly');
+      const store = tx.objectStore('app-store');
+      const request = store.get(name);
+      request.onsuccess = () =>
+        resolve((request.result as string | undefined) ?? null);
+      request.onerror = () =>
+        reject(request.error ?? new Error('IndexedDB getItem failed'));
+    });
+
+    if (value != null) {
+      return value;
+    }
+
+    // Migration path: fall back to legacy localStorage on first run
+    if (isBrowser()) {
+      try {
+        const legacy = window.localStorage.getItem(name);
+        if (legacy != null) {
+          try {
+            await idbSetItem(name, legacy);
+          } catch (e) {
+            console.error('Failed to migrate legacy localStorage data to IndexedDB', e);
+          }
+          return legacy;
+        }
+      } catch (e) {
+        console.error('Failed to read legacy localStorage during IndexedDB migration', e);
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.error('IndexedDB getItem failed, falling back to localStorage', err);
+    if (isBrowser()) {
+      try {
+        return window.localStorage.getItem(name);
+      } catch (e) {
+        console.error('localStorage fallback getItem failed', e);
+      }
+    }
+    return null;
+  }
+};
+
+const idbRemoveItem = async (name: string): Promise<void> => {
+  try {
+    const db = await getIdbDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('app-store', 'readwrite');
+      const store = tx.objectStore('app-store');
+      const request = store.delete(name);
+      request.onsuccess = () => resolve();
+      request.onerror = () =>
+        reject(request.error ?? new Error('IndexedDB removeItem failed'));
+    });
+  } catch (err) {
+    console.error('IndexedDB removeItem failed, falling back to localStorage', err);
+    if (isBrowser()) {
+      try {
+        window.localStorage.removeItem(name);
+      } catch (e) {
+        console.error('localStorage fallback removeItem failed', e);
+      }
+    }
+  }
+};
+
+const indexedDBStorage: StateStorage = {
+  getItem: (name) => idbGetItem(name),
+  setItem: (name, value) => idbSetItem(name, value),
+  removeItem: (name) => idbRemoveItem(name),
+};
+
+const localStorageStorage: StateStorage = {
+  getItem: async (name) => {
+    if (!isBrowser()) return null;
+    try {
+      return window.localStorage.getItem(name);
+    } catch (e) {
+      console.error('localStorage getItem failed', e);
+      return null;
+    }
+  },
+  setItem: async (name, value) => {
+    if (!isBrowser()) return;
+    try {
+      window.localStorage.setItem(name, value);
+    } catch (e) {
+      console.error('localStorage setItem failed', e);
+    }
+  },
+  removeItem: async (name) => {
+    if (!isBrowser()) return;
+    try {
+      window.localStorage.removeItem(name);
+    } catch (e) {
+      console.error('localStorage removeItem failed', e);
+    }
+  },
+};
+
+const getStorage = (): StateStorage =>
+  isIndexedDBAvailable() ? indexedDBStorage : localStorageStorage;
 
 // Track the most recent locally-initiated review so we can avoid
 // duplicating toasts when the corresponding Supabase realtime
@@ -103,10 +264,10 @@ interface AppState {
   currentVault: Vault | null;
   loadVaults: () => Promise<void>;
   setCurrentVault: (vault: Vault | null) => void;
-  
-  // Actions
   restoreNote: (noteId: string) => Promise<void>;
   createVault: (name: string, config?: any) => Promise<Vault | null>;
+  updateVault: (vaultId: string, updates: Partial<Vault>) => Promise<void>;
+
 }
 
 type VaultSlice = Pick<
@@ -253,7 +414,10 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
                  console.warn("Session verification failed", error);
                  if (get().currentUser) {
                      get().signOut();
-                     useToastStore.getState().addToast("Session expired", 'warning');
+                     useToastStore.getState().addToast(
+                       "Session expired|Please log in again to continue syncing.",
+                       'warning',
+                     );
                  }
              }
          });
@@ -264,7 +428,10 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
       
     } catch (e) {
       console.error("Failed to initialize data service", e);
-      useToastStore.getState().addToast("Failed to initialize sync service", 'error');
+      useToastStore.getState().addToast(
+        "Sync error|Failed to initialize sync service.",
+        'error',
+      );
     }
   },
 
@@ -522,10 +689,16 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
       console.error("Failed to load metadata", e);
       if ((e as any)?.status === 401 || (e as any)?.code === 'PGRST301') {
          get().signOut();
-         useToastStore.getState().addToast("Session expired", 'warning');
+         useToastStore.getState().addToast(
+           "Session expired|Please log in again to continue syncing.",
+           'warning',
+         );
          return;
       }
-      useToastStore.getState().addToast("Failed to load metadata", 'error');
+      useToastStore.getState().addToast(
+        "Sync error|Failed to load metadata from the server.",
+        'error',
+      );
     }
   },
 
@@ -627,13 +800,88 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
       console.error("Failed to load vaults", e);
       if ((e as any)?.status === 401 || (e as any)?.code === 'PGRST301') {
           get().signOut();
-          useToastStore.getState().addToast("Session expired", 'warning');
+          useToastStore.getState().addToast(
+            "Session expired|Please log in again to continue syncing.",
+            'warning',
+          );
       }
     }
   },
 
+  restoreNote: async (noteId: string) => {
+    const { dataService, idMap, updateLastSync, currentVault } = get();
+    try {
+      await dataService.restoreNote(noteId);
+      updateLastSync();
+
+      const filepath = idMap[noteId];
+      if (filepath) {
+        try {
+          await get().refreshMetadata(filepath, noteId);
+        } catch (metaError) {
+          console.error(`[VaultSlice] Failed to refresh metadata after restore for ${filepath}`, metaError);
+        }
+      } else if (currentVault) {
+        try {
+          await get().loadAllMetadata();
+        } catch (e) {
+          console.error('[VaultSlice] Failed to reload metadata after restore', e);
+        }
+      }
+    } catch (e) {
+      console.error('[VaultSlice] Failed to restore note', e);
+      throw e;
+    }
+  },
+
+  createVault: async (name: string, config?: any) => {
+    const { dataService } = get();
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+
+    try {
+      const created = await dataService.createVault(trimmed, config as any);
+      await get().loadVaults();
+      if (created) {
+        get().setCurrentVault(created);
+      }
+      return created;
+    } catch (e) {
+      console.error('[VaultSlice] Failed to create vault', e);
+      throw e;
+    }
+  },
+
+  updateVault: async (vaultId: string, updates: Partial<Vault>) => {
+    const { dataService } = get();
+    try {
+      await dataService.updateVault(vaultId, updates);
+      await get().loadVaults();
+    } catch (e) {
+      console.error('[VaultSlice] Failed to update vault', e);
+      throw e;
+    }
+  },
+
   setCurrentVault: (vault) => {
-    set({ currentVault: vault });
+    const { rootPath, recentVaults } = get();
+    const updates: any = { currentVault: vault };
+
+    if (vault) {
+        const linkedPath = vault.config?.rootPath;
+        if (linkedPath && linkedPath !== rootPath) {
+            updates.rootPath = linkedPath;
+            updates.files = [];
+            updates.contentCache = {};
+            
+            if (linkedPath !== 'DEMO_VAULT') {
+                updates.recentVaults = [linkedPath, ...recentVaults.filter(p => p !== linkedPath)].slice(0, 5);
+            }
+        }
+    }
+
+    set(updates);
+
     if (vault) {
         get().loadAllMetadata();
     }
@@ -881,31 +1129,6 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
         return false;
       }
 
-      // Immediate FSRS-based feedback (label, next due, stability)
-      let ratingLabel = '';
-      if (rating === 1) ratingLabel = 'Again';
-      else if (rating === 2) ratingLabel = 'Hard';
-      else if (rating === 3) ratingLabel = 'Good';
-      else if (rating === 4) ratingLabel = 'Easy';
-
-      let dueText: string | null = null;
-      const dueDate = record.card.due ? new Date(record.card.due as any) : null;
-      if (dueDate && !isNaN(dueDate.getTime())) {
-        dueText = formatDistanceToNow(dueDate, { addSuffix: true });
-      }
-
-      const feedbackParts: string[] = [];
-      if (ratingLabel) feedbackParts.push(ratingLabel);
-      if (dueText) feedbackParts.push(`next ${dueText}`);
-      if (typeof record.card.stability === 'number') {
-        feedbackParts.push(`stability ${record.card.stability.toFixed(2)}`);
-      }
-
-      if (feedbackParts.length > 0) {
-        const toastType = rating === 1 ? 'error' : rating === 2 ? 'warning' : rating === 3 ? 'info' : 'success';
-        useToastStore.getState().addToast(feedbackParts.join(' • '), toastType as any);
-      }
-
       // Use noteId if available, fallback to filepath
       const noteId = currentMetadata.noteId || currentFilepath;
 
@@ -948,7 +1171,10 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
       dataService.saveReview(noteId, currentClozeIndex, record.card, record.log, durationMs)
         .catch(e => {
            console.error("Background save review failed", e);
-           useToastStore.getState().addToast("Review sync failed (saved locally)", 'warning');
+           useToastStore.getState().addToast(
+             "Review sync failed|Your grade was saved locally and will sync later.",
+             'warning',
+           );
         });
 
       // Navigation Logic
@@ -974,12 +1200,18 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
         }
       } else {
         // If not in an active session (e.g. grading manually in Library mode), just stay or toast
-        useToastStore.getState().addToast("Review saved", 'success');
+        useToastStore.getState().addToast(
+          "Review saved|This review was saved outside an active session.",
+          'success',
+        );
       }
       return true;
     } catch (e) {
       console.error("Save review failed", e);
-      useToastStore.getState().addToast("Failed to save review", 'error');
+      useToastStore.getState().addToast(
+        "Review error|Failed to save this review.",
+        'error',
+      );
       return false;
     } finally {
       set({ isGrading: false });
@@ -1210,7 +1442,10 @@ const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
     } catch (e) {
       console.error("Failed to load note:", e);
       const errorMessage = e instanceof Error ? e.message : String(e);
-      useToastStore.getState().addToast(`Failed to load note: ${filepath}\n${errorMessage}`, 'error');
+      useToastStore.getState().addToast(
+        `Failed to load note|${filepath}\n${errorMessage}`,
+        'error',
+      );
     }
   },
 
@@ -1269,7 +1504,10 @@ const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
         .catch((e) => {
           console.error('Failed to sync note in saveCurrentNote', e);
           markNoteSyncPending(currentFilepath);
-          useToastStore.getState().addToast('Cloud sync failed (saved locally)', 'warning');
+          useToastStore.getState().addToast(
+            'Cloud sync failed|Your note was saved locally and will sync later.',
+            'warning',
+          );
         });
     }
   },
@@ -1292,15 +1530,24 @@ const createSmartQueueSlice: AppStateCreator<SmartQueueSlice> = (set, get) => ({
       const vaultId = currentVault?.id;
       const dueCards = await dataService.getDueCards(limit, vaultId);
       set({ queue: dueCards });
-      useToastStore.getState().addToast(`Loaded ${dueCards.length} due cards`, 'success');
+      useToastStore.getState().addToast(
+        `Deck ready|Loaded ${dueCards.length} due cards.`,
+        'success',
+      );
     } catch (e) {
       console.error("Failed to fetch due cards", e);
       if ((e as any)?.status === 401 || (e as any)?.code === 'PGRST301') {
           get().signOut();
-          useToastStore.getState().addToast("Session expired", 'warning');
+          useToastStore.getState().addToast(
+            "Session expired|Please log in again to continue syncing.",
+            'warning',
+          );
           return;
       }
-      useToastStore.getState().addToast("Failed to fetch due cards", 'error');
+      useToastStore.getState().addToast(
+        "Sync error|Failed to load due cards from the server.",
+        'error',
+      );
     }
   },
 
@@ -1348,6 +1595,30 @@ const createSmartQueueSlice: AppStateCreator<SmartQueueSlice> = (set, get) => ({
   }
 });
 
+const appStoreJSONStorage = createJSONStorage(() => getStorage(), {
+  reviver: (key, value) => {
+    // For new data we store the entire persist payload as a Superjson string
+    // at the root (key === ''). For legacy JSON data (from the previous
+    // localStorage-based persist), value will be an object, so we simply
+    // return it unchanged for backward compatibility.
+    if (key === '' && typeof value === 'string') {
+      try {
+        return superjson.parse(value as string);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  },
+  replacer: (key, value) => {
+    // Only wrap the root payload; nested properties are handled by Superjson.
+    if (key === '') {
+      return superjson.stringify(value);
+    }
+    return value;
+  },
+});
+
 export const useAppStore = create<AppState>()(
   devtools(
     persist(
@@ -1363,6 +1634,7 @@ export const useAppStore = create<AppState>()(
       {
         name: 'app-store',
         version: 1,
+        storage: appStoreJSONStorage,
         migrate: (persistedState: any, version: number) => {
             if (version === 0) {
                 // Migration from v0 to v1
@@ -1382,8 +1654,22 @@ export const useAppStore = create<AppState>()(
           files: state.files,
           theme: state.theme,
           // Persist metadata for offline/optimistic support
-          fileMetadatas: state.fileMetadatas,
-          lastServerSyncAt: state.lastServerSyncAt
+          // fileMetadatas removed to avoid performance issues (Issue 7). 
+          // It will be re-fetched by LibraryView -> loadAllMetadata.
+          lastServerSyncAt: state.lastServerSyncAt,
+
+          // Persist Session & View State for instant resume
+          viewMode: state.viewMode,
+          currentFilepath: state.currentFilepath,
+          // currentNote & currentMetadata are too heavy/derived to persist. 
+          // They will be re-loaded by NoteRenderer via loadNote(currentFilepath)
+          currentClozeIndex: state.currentClozeIndex,
+
+          // Persist Active Review Session
+          queue: state.queue,
+          sessionIndex: state.sessionIndex,
+          sessionTotal: state.sessionTotal,
+          sessionStats: state.sessionStats,
         }),
       },
     ),

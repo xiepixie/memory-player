@@ -32,11 +32,11 @@ export const LibraryView = () => {
     currentUser,
     signOut,
     vaults,
-    setCurrentVault,
     updateLastSync,
     loadAllMetadata,
     fetchDueCards,
     manualSyncPendingNotes,
+    createVault,
   } = useAppStore(
     useShallow((state) => ({
       rootPath: state.rootPath,
@@ -54,11 +54,11 @@ export const LibraryView = () => {
       currentUser: state.currentUser,
       signOut: state.signOut,
       vaults: state.vaults,
-      setCurrentVault: state.setCurrentVault,
       updateLastSync: state.updateLastSync,
       loadAllMetadata: state.loadAllMetadata,
       fetchDueCards: state.fetchDueCards,
       manualSyncPendingNotes: state.manualSyncPendingNotes,
+      createVault: state.createVault,
     })),
   );
   const dataService = useAppStore((state) => state.dataService);
@@ -317,14 +317,12 @@ export const LibraryView = () => {
   };
 
   const handleCreateFirstVault = async () => {
-    if (!dataService || !rootPath) return;
+    if (!rootPath) return;
     try {
       setVaultOnboardingBusy(true);
       const defaultName = folderName || 'New Vault';
-      const created = await dataService.createVault(defaultName, { rootPath } as any);
-      await loadVaults();
+      const created = await createVault(defaultName, { rootPath } as any);
       if (created) {
-        setCurrentVault(created as any);
         addToast(`Vault "${created.name}" created & linked`, 'success');
         markVaultOnboarded();
       } else {

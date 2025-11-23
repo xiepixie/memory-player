@@ -34,7 +34,7 @@ export const RecycleBin = () => {
   const handleRestore = async (noteId: string) => {
     try {
       setRestoringId(noteId);
-      await dataService.restoreNote(noteId);
+      await restoreNote(noteId);
       setItems((prev) => prev.filter((n) => n.noteId !== noteId));
       addToast('Note restored', 'success');
     } catch (e) {

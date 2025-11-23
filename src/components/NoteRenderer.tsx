@@ -57,6 +57,13 @@ export const NoteRenderer = () => {
     const [stickyOpen, setStickyOpen] = useState(false);
     const addToast = useToastStore((state) => state.addToast);
 
+    // Restore note content if we have a filepath but no parsed note yet (e.g. after app restart)
+    useEffect(() => {
+        if (currentFilepath && !currentNote && viewMode !== 'library') {
+            loadNote(currentFilepath);
+        }
+    }, [currentFilepath, currentNote, loadNote]);
+
     // Animation: Track previous viewMode to determine transition direction
     const prevViewModeRef = useRef(viewMode);
     useEffect(() => {

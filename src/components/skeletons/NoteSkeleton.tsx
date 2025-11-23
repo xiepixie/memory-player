@@ -2,7 +2,7 @@ export const NoteSkeleton = () => {
   return (
     <div className="h-full w-full bg-base-100 flex flex-col relative overflow-hidden">
       {/* 1. Header Skeleton */}
-      <div className="h-16 border-b border-base-200 flex items-center justify-between px-4 bg-base-100/50 backdrop-blur-sm z-10">
+      <div className="h-16 border-b border-base-200 flex items-center justify-between px-4 bg-base-100/50 z-10">
         {/* Left: Back Button & Title */}
         <div className="flex items-center gap-3 w-1/3">
           <div className="w-8 h-8 rounded-full bg-base-200 animate-pulse" /> {/* Back Btn */}

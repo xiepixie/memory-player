@@ -73,19 +73,21 @@ export const GradingBar = () => {
                 const preview = previews[opt.rating];
                 
                 return (
-                    <button
-                        key={opt.rating}
-                        onClick={() => handleRate(opt.rating)}
-                        disabled={isGrading}
-                        className={`
-                            relative group flex flex-col items-center justify-center
-                            w-24 h-14 rounded-2xl transition-all duration-200
-                            disabled:opacity-50 disabled:cursor-not-allowed
-                            ${opt.colorClass}
-                            ${isGrading ? '' : 'hover:scale-105 active:scale-95'}
-                        `}
-                        title={`${opt.tooltip} (Press ${opt.key})`}
-                    >
+                        <motion.button
+                            key={opt.rating}
+                            onClick={() => handleRate(opt.rating)}
+                            disabled={isGrading}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.9 }}
+                            transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                            className={`
+                                relative group flex flex-col items-center justify-center
+                                w-24 h-14 rounded-2xl transition-colors duration-200
+                                disabled:opacity-50 disabled:cursor-not-allowed
+                                ${opt.colorClass}
+                            `}
+                            title={`${opt.tooltip} (Press ${opt.key})`}
+                        >
                         {/* Rating Label */}
                         <span className="font-bold text-sm uppercase tracking-wider">
                             {opt.label}
@@ -107,7 +109,7 @@ export const GradingBar = () => {
                                 <span className="loading loading-spinner loading-xs"></span>
                              </div>
                         )}
-                    </button>
+                    </motion.button>
                 );
             })}
         </div>
