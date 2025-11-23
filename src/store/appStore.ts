@@ -919,19 +919,19 @@ $$}}
 async function loadContentFromSource(
   state: AppState, 
   filepath: string
-): Promise<{ content: string; noteId: string | null; isNewId: boolean }> {
+): Promise<{ content: string; noteId: string | null }> {
   const { contentCache, rootPath, pathMap } = state;
   
   // 1. Check Cache
   if (contentCache[filepath]) {
-    return { content: contentCache[filepath], noteId: pathMap[filepath] || null, isNewId: false };
+    return { content: contentCache[filepath], noteId: pathMap[filepath] || null };
   }
 
   // 2. Check Demo Vault
   if (rootPath === 'DEMO_VAULT') {
     const fileName = filepath.split('/').pop() || 'Demo';
     const noteId = pathMap[filepath] || null;
-    return { content: getDemoContent(fileName), noteId, isNewId: false };
+    return { content: getDemoContent(fileName), noteId };
   }
 
   // 3. Check Filesystem (Desktop Only)
@@ -940,24 +940,21 @@ async function loadContentFromSource(
   }
 
   const result = await fileSystem.ensureNoteId(filepath);
-  const existingId = pathMap[filepath];
-  const isNewId = !!(result.id && result.id !== existingId);
   
-  return { content: result.content, noteId: result.id, isNewId };
+  return { content: result.content, noteId: result.id };
 }
 
 function updateCacheAndIds(
   set: (fn: (state: AppState) => Partial<AppState>) => void, 
   filepath: string, 
   content: string, 
-  noteId: string | null,
-  isNewId: boolean
+  noteId: string | null
 ) {
   set(state => {
     const updates: Partial<AppState> = {};
     
     // Update ID Maps if needed
-    if (isNewId && noteId) {
+    if (noteId && state.pathMap[filepath] !== noteId) {
       updates.idMap = { ...state.idMap, [noteId]: filepath };
       updates.pathMap = { ...state.pathMap, [filepath]: noteId };
     }
@@ -1022,12 +1019,12 @@ const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
   loadNote: async (filepath, targetClozeIndex = null) => {
     try {
       // 1. Load Content (Cache -> Demo -> FS)
-      const { content, noteId, isNewId } = await loadContentFromSource(get(), filepath);
+      const { content, noteId } = await loadContentFromSource(get(), filepath);
 
       // 2. Update Cache & ID Maps
       // We only need to update cache/IDs if we actually loaded from FS or it's new
       // But calling this always is safe and ensures LRU is updated (cache promotion)
-      updateCacheAndIds(set, filepath, content, noteId, isNewId);
+      updateCacheAndIds(set, filepath, content, noteId);
 
       // 3. Parse & Update View State
       const parsed = parseNote(content);
