@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useAppStore } from '../store/appStore';
 import { useShallow } from 'zustand/react/shallow';
 import {
-    Brain, Activity, CheckCircle, Layers, AlertCircle
+    Brain, Activity, CheckCircle, Layers
 } from 'lucide-react';
 import { QueueItem } from '../lib/storage/types';
 import { format, differenceInDays, subDays } from 'date-fns';
@@ -15,7 +15,7 @@ import { VaultHealth } from './dashboard/charts/VaultHealth';
 import { DifficultyDistribution } from './dashboard/charts/DifficultyDistribution';
 import { StabilityScatter } from './dashboard/charts/StabilityScatter';
 import { HourlyActivity } from './dashboard/charts/HourlyActivity';
-import { CardHeader } from './dashboard/Shared';
+import { StatLabelIcon } from './dashboard/Shared';
 import { GlobalSearch } from './dashboard/GlobalSearch';
 import { RecycleBin } from './dashboard/RecycleBin';
 
@@ -56,7 +56,7 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
         const futureCounts: Record<string, number> = {};
         const stats = { new: 0, learning: 0, review: 0, relearning: 0 };
         const stabilityList: number[] = [];
-        const folderDifficulty: Record<string, { sum: number; count: number }> = {};
+        const folderLapses: Record<string, { sum: number; count: number }> = {};
 
         files.forEach(f => {
             const meta = fileMetadatas[f];
@@ -83,11 +83,11 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
 
                 if (card.state !== 0) {
                     stabilityList.push(card.stability);
-                    if (!folderDifficulty[folder]) {
-                        folderDifficulty[folder] = { sum: 0, count: 0 };
+                    if (!folderLapses[folder]) {
+                        folderLapses[folder] = { sum: 0, count: 0 };
                     }
-                    folderDifficulty[folder].sum += card.difficulty;
-                    folderDifficulty[folder].count += 1;
+                    folderLapses[folder].sum += card.lapses;
+                    folderLapses[folder].count += 1;
                 }
 
                 if (card.lapses > 5) leeches.push(item);
@@ -139,7 +139,7 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
 
         return {
             dueItems, overdueItems, newItems, leeches, futureCounts, stats,
-            orphanCount, stabilityList, folderDifficulty, currentStreak,
+            orphanCount, stabilityList, folderLapses, currentStreak,
             retentionRate, ratingDist
         };
     }, [files, fileMetadatas, reviewHistory]);
@@ -191,24 +191,20 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-500 slide-in-from-bottom-2">
                     {/* Main Action Center - 9/12 cols */}
                     <div className="lg:col-span-9 h-full">
-                        <div className="h-full shadow-sm hover:shadow-md transition-shadow duration-300 rounded-xl overflow-hidden border border-base-200/50">
-                            <ActionCenter
-                                dueItems={dashboardData.dueItems}
-                                overdueItems={dashboardData.overdueItems}
-                                newItems={dashboardData.newItems}
-                                sessionInProgress={hasSessionInProgress}
-                                onResume={handleResumeSession}
-                                onStart={handleStartSession}
-                                streak={dashboardData.currentStreak}
-                            />
-                        </div>
+                        <ActionCenter
+                            dueItems={dashboardData.dueItems}
+                            overdueItems={dashboardData.overdueItems}
+                            newItems={dashboardData.newItems}
+                            sessionInProgress={hasSessionInProgress}
+                            onResume={handleResumeSession}
+                            onStart={handleStartSession}
+                            streak={dashboardData.currentStreak}
+                        />
                     </div>
 
                     {/* Auxiliary Panel (Recycle Bin) - 3/12 cols */}
                     <div className="lg:col-span-3 h-full min-h-[240px]">
-                        <div className="h-full shadow-sm hover:shadow-md transition-shadow duration-300 rounded-xl overflow-hidden border border-base-200/50 bg-base-100/50">
-                            <RecycleBin />
-                        </div>
+                        <RecycleBin />
                     </div>
                 </div>
             )}
@@ -226,72 +222,44 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
                             { label: 'Total Notes', val: files.length, icon: Layers, color: 'text-secondary' },
                         ].map((stat, i) => (
                             <div key={i} className="card bg-base-100 border border-base-200 shadow-sm p-4 flex flex-col gap-1 hover:border-base-300 transition-colors">
-                                <div className="flex items-center gap-2 text-[10px] font-bold uppercase text-base-content/40">
-                                    <stat.icon size={12} className={stat.color} />
-                                    {stat.label}
-                                </div>
+                                <StatLabelIcon icon={stat.icon} label={stat.label} iconClassName={stat.color} />
                                 <div className="text-2xl font-black text-base-content">{stat.val}</div>
                             </div>
                         ))}
                     </div>
 
                     {/* 2. Bento Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 auto-rows-[minmax(280px,auto)]">
-                        {/* Top Row */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 auto-rows-[minmax(300px,auto)]">
+                        {/* Row 1: Retention (Wide) + Vault Health */}
                         <div className="md:col-span-2 h-full">
                             <RetentionSimulator stabilityList={dashboardData.stabilityList} />
-                        </div>
-                        <div className="md:col-span-1 h-full">
-                            <ReviewTrends distribution={dashboardData.ratingDist} />
-                        </div>
-
-                        {/* Middle Row */}
-                        <div className="md:col-span-2 h-full">
-                            <ActivityGrid />
                         </div>
                         <div className="md:col-span-1 h-full">
                             <VaultHealth stats={dashboardData.stats} orphanCount={dashboardData.orphanCount} />
                         </div>
 
-                        {/* Bottom Row */}
+                        {/* Row 2: Consistency (Wide) + Review Trends */}
+                        <div className="md:col-span-2 h-full">
+                            <ActivityGrid />
+                        </div>
+                        <div className="md:col-span-1 h-full">
+                            <ReviewTrends distribution={dashboardData.ratingDist} />
+                        </div>
+
+                        {/* Row 3: Planning (3 cols) */}
                         <div className="md:col-span-1 h-full">
                             <WorkloadForecast futureCounts={dashboardData.futureCounts} />
                         </div>
                         <div className="md:col-span-1 h-full">
-                            <DifficultyDistribution folderDifficulty={dashboardData.folderDifficulty} />
+                            <HourlyActivity />
                         </div>
                         <div className="md:col-span-1 h-full">
-                            {/* Leech Killer Mini */}
-                            <div className="card bg-base-100 shadow-sm border border-base-200 h-full">
-                                <div className="card-body p-6">
-                                    <CardHeader icon={AlertCircle} title="Problem Areas" color="text-error" />
-                                    {dashboardData.leeches.length === 0 ? (
-                                        <div className="flex-1 flex flex-col items-center justify-center opacity-40 text-center">
-                                            <CheckCircle size={32} className="mb-2 text-success" />
-                                            <p className="text-sm">Clean health bill.</p>
-                                            <p className="text-xs">No leeches detected.</p>
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-2">
-                                            <p className="text-xs opacity-60 mb-2">{dashboardData.leeches.length} cards require attention.</p>
-                                            {dashboardData.leeches.slice(0, 3).map((item, i) => (
-                                                <div key={i} className="flex items-center gap-2 text-sm font-mono bg-error/5 p-2 rounded text-error">
-                                                    <AlertCircle size={12} />
-                                                    <span className="truncate">{item.filepath.split('/').pop()}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
+                            <DifficultyDistribution folderLapses={dashboardData.folderLapses} />
                         </div>
 
-                        {/* New Charts Row */}
-                        <div className="md:col-span-2 h-full">
+                        {/* Row 4: Deep Analysis (Full Width) */}
+                        <div className="md:col-span-3 h-full min-h-[350px]">
                             <StabilityScatter />
-                        </div>
-                        <div className="md:col-span-1 h-full">
-                            <HourlyActivity />
                         </div>
                     </div>
 

@@ -1,66 +1,93 @@
 import { useMemo } from 'react';
-import { Target } from 'lucide-react';
+import { Target, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '../../../store/appStore';
-import { CardHeader } from '../Shared';
+import { DashboardCard, TooltipCard } from '../Shared';
 
 export const StabilityScatter = () => {
     const fileMetadatas = useAppStore((state) => state.fileMetadatas);
 
-    const points = useMemo(() => {
-        const pts: { s: number; d: number; id: string }[] = [];
+    const { points, leechCount } = useMemo(() => {
+        const pts: { s: number; d: number; id: string; isLeech?: boolean }[] = [];
+        let leeches = 0;
+
         Object.values(fileMetadatas).forEach(meta => {
             if (!meta.cards) return;
             Object.entries(meta.cards).forEach(([clozeIndex, card]) => {
                 if (card.reps > 0) {
+                    const isLeech = card.difficulty > 8 && card.stability < 5;
+                    if (isLeech) leeches++;
+                    
                     pts.push({
                         s: card.stability,
                         d: card.difficulty,
-                        id: `${meta.filepath}#${clozeIndex}`
+                        id: `${meta.filepath.split('/').pop()} #${clozeIndex}`,
+                        isLeech
                     });
                 }
             });
         });
-        return pts;
+        return { points: pts, leechCount: leeches };
     }, [fileMetadatas]);
 
     return (
-        <div className="card bg-base-100 shadow-sm border border-base-200 h-full overflow-hidden">
-            <div className="card-body p-6">
-                <CardHeader icon={Target} title="Stability vs Difficulty" color="text-accent" subtitle={`${points.length} cards`} />
+        <DashboardCard 
+            icon={Target} 
+            title="Stability Matrix" 
+            headerColor="text-accent" 
+            subtitle={
+                <div className="flex gap-2">
+                    <span>{points.length} cards</span>
+                    {leechCount > 0 && <span className="text-error flex items-center gap-1"><AlertTriangle size={10}/> {leechCount} leeches</span>}
+                </div>
+            }
+        >
+            <div className="relative w-full flex-1 border-l border-b border-base-300 min-h-[160px] mt-2 ml-2 mb-4">
+                {/* Axis Labels */}
+                <div className="absolute -left-6 top-1/2 -rotate-90 text-[10px] opacity-40 font-mono whitespace-nowrap">Difficulty</div>
+                <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] opacity-40 font-mono whitespace-nowrap">Stability (Days)</div>
 
-                <div className="relative w-full h-48 border-l border-b border-base-300 mt-2">
-                    {/* Axis Labels */}
-                    <div className="absolute -left-6 top-1/2 -rotate-90 text-[10px] opacity-40 font-mono">Difficulty</div>
-                    <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[10px] opacity-40 font-mono">Stability (Days)</div>
+                {/* Grid Lines */}
+                {[25, 50, 75, 100].map(x => (
+                    <div key={x} className="absolute bottom-0 border-r border-base-300/30 h-full" style={{ left: `${x}%` }} />
+                ))}
+                {[2.5, 5, 7.5].map(y => (
+                    <div key={y} className="absolute left-0 border-t border-base-300/30 w-full" style={{ bottom: `${y * 10}%` }} />
+                ))}
 
-                    {/* Grid Lines */}
-                    {[25, 50, 75, 100].map(x => (
-                        <div key={x} className="absolute bottom-0 border-r border-base-300/30 h-full" style={{ left: `${x}%` }} />
-                    ))}
-                    {[2.5, 5, 7.5].map(y => (
-                        <div key={y} className="absolute left-0 border-t border-base-300/30 w-full" style={{ bottom: `${y * 10}%` }} />
-                    ))}
-
-                    {points.map((p, i) => (
-                        <div
-                            key={i}
-                            className="absolute w-1.5 h-1.5 rounded-full bg-accent/40 hover:bg-accent hover:scale-150 transition-all cursor-pointer shadow-sm"
-                            style={{
-                                left: `${Math.min((p.s / 100) * 100, 100)}%`, // Cap stability at 100 days for viz
-                                bottom: `${(p.d / 10) * 100}%`,
-                            }}
-                            title={`S:${p.s.toFixed(1)} D:${p.d.toFixed(1)}`}
-                        />
-                    ))}
-
-                    {/* Hell Zone Gradient */}
-                    <div className="absolute top-0 right-0 w-full h-full bg-gradient-to-bl from-error/5 via-transparent to-transparent pointer-events-none rounded-tr-lg" />
-
-                    <div className="absolute top-2 right-2 text-[9px] text-error/40 font-bold uppercase tracking-widest pointer-events-none">
-                        Ease Hell?
+                {/* Points */}
+                {points.map((p, i) => (
+                    <div
+                        key={i}
+                        className={`absolute w-2 h-2 rounded-full transition-all cursor-pointer shadow-sm group
+                            ${p.isLeech ? 'bg-error z-10 animate-pulse' : 'bg-accent/40 hover:bg-accent z-0'}`}
+                        style={{
+                            left: `${Math.min((p.s / 100) * 100, 100)}%`, // Cap stability at 100 days for viz
+                            bottom: `${Math.min((p.d / 10) * 100, 100)}%`,
+                        }}
+                    >
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 whitespace-nowrap">
+                             <TooltipCard
+                                title={p.id}
+                                items={[
+                                    { label: 'Stability', value: `${p.s.toFixed(1)}d` },
+                                    { label: 'Difficulty', value: p.d.toFixed(1), color: p.d > 8 ? 'text-error' : '' }
+                                ]}
+                                severity={p.isLeech ? 'error' : 'neutral'}
+                            />
+                        </div>
                     </div>
+                ))}
+
+                {/* Hell Zone Gradient */}
+                <div className="absolute top-0 left-0 w-full h-1/2 bg-gradient-to-b from-error/5 to-transparent pointer-events-none" />
+
+                <div className="absolute top-2 left-2 text-[9px] text-error/40 font-bold uppercase tracking-widest pointer-events-none">
+                    Hard & Unstable
+                </div>
+                 <div className="absolute bottom-2 right-2 text-[9px] text-success/40 font-bold uppercase tracking-widest pointer-events-none">
+                    Solid
                 </div>
             </div>
-        </div>
+        </DashboardCard>
     );
 };

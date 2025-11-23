@@ -62,7 +62,18 @@ export class SupabaseAdapter implements DataService {
       return;
     }
     if (!supabaseSingleton) {
-      supabaseSingleton = createClient(this.supabaseUrl, this.supabaseKey);
+      // Try to reuse a single client across HMR/dev reloads
+      if (typeof window !== 'undefined') {
+        const anyWindow = window as any;
+        if (anyWindow.__MP_SUPABASE_CLIENT__) {
+          supabaseSingleton = anyWindow.__MP_SUPABASE_CLIENT__ as SupabaseClient;
+        } else {
+          supabaseSingleton = createClient(this.supabaseUrl, this.supabaseKey);
+          anyWindow.__MP_SUPABASE_CLIENT__ = supabaseSingleton;
+        }
+      } else {
+        supabaseSingleton = createClient(this.supabaseUrl, this.supabaseKey);
+      }
     }
     this.supabase = supabaseSingleton;
   }
@@ -73,7 +84,6 @@ export class SupabaseAdapter implements DataService {
 
     const user = await this.supabase.auth.getUser();
     if (!user.data.user) {
-      console.warn('getVaults called without authenticated user');
       return [];
     }
     const userId = user.data.user.id;
@@ -170,7 +180,7 @@ export class SupabaseAdapter implements DataService {
 
     const user = await this.supabase.auth.getUser();
     if (!user.data.user) {
-      console.warn('getDeletedNotes called without authenticated user');
+      // console.debug('getDeletedNotes called without authenticated user');
       return [];
     }
     const userId = user.data.user.id;

@@ -8,18 +8,35 @@ import { useToastStore } from '../store/toastStore';
 export function useVaultWatcher() {
     const { rootPath, dataService, updateLastSync, currentVault } = useAppStore();
     const addToast = useToastStore((state) => state.addToast);
-    const watcherRef = useRef<(() => void) | null>(null);
+    const watcherRef = useRef<(() => void | Promise<void>) | null>(null);
     const processingRef = useRef<Set<string>>(new Set());
 
     useEffect(() => {
-        if (!rootPath || !isTauri()) return;
+        // Only watch real vault paths in the desktop app; skip demo vault and non-Tauri environments
+        if (!rootPath || rootPath === 'DEMO_VAULT' || !isTauri()) return;
+
+        const cleanupWatcher = () => {
+            if (watcherRef.current) {
+                const unwatch = watcherRef.current;
+                watcherRef.current = null;
+                try {
+                    const maybePromise: any = (unwatch as any)();
+                    if (maybePromise && typeof maybePromise.then === 'function') {
+                        (maybePromise as Promise<void>).catch((e: any) => {
+                            console.warn('[VaultWatcher] Failed to unwatch vault (ignored)', e);
+                        });
+                    }
+                } catch (e) {
+                    console.warn('[VaultWatcher] Failed to unwatch vault (ignored)', e);
+                }
+            }
+        };
+
+        let cancelled = false;
 
         const startWatching = async () => {
-            // Cleanup previous watcher
-            if (watcherRef.current) {
-                watcherRef.current();
-                watcherRef.current = null;
-            }
+            // Ensure any previous watcher is fully cleaned up before starting a new one
+            cleanupWatcher();
 
             console.log(`[VaultWatcher] Starting watch on: ${rootPath}`);
 
@@ -85,6 +102,21 @@ export function useVaultWatcher() {
                     { recursive: true }
                 );
 
+                if (cancelled) {
+                    // Effect was cleaned up while watch() was in-flight; immediately unwatch.
+                    try {
+                        const maybePromise: any = (unwatch as any)();
+                        if (maybePromise && typeof maybePromise.then === 'function') {
+                            (maybePromise as Promise<void>).catch((e: any) => {
+                                console.warn('[VaultWatcher] Failed to unwatch vault after cancel (ignored)', e);
+                            });
+                        }
+                    } catch (e) {
+                        console.warn('[VaultWatcher] Failed to unwatch vault after cancel (ignored)', e);
+                    }
+                    return;
+                }
+
                 watcherRef.current = unwatch;
             } catch (e) {
                 console.error("[VaultWatcher] Failed to start watcher", e);
@@ -95,9 +127,8 @@ export function useVaultWatcher() {
         startWatching();
 
         return () => {
-            if (watcherRef.current) {
-                watcherRef.current();
-            }
+            cancelled = true;
+            cleanupWatcher();
         };
     }, [rootPath, dataService, currentVault]);
 }

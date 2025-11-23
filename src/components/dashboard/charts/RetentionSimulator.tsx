@@ -1,14 +1,18 @@
 import { useMemo, useRef, useState, MouseEvent } from 'react';
-import { Brain } from 'lucide-react';
-import { CardHeader } from '../Shared';
+import { Brain, Info } from 'lucide-react';
+import { DashboardCard } from '../Shared';
 
 export const RetentionSimulator = ({ stabilityList }: { stabilityList: number[] }) => {
     const [hoverDay, setHoverDay] = useState<number | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
-    const dataPoints = useMemo(() => {
-        if (stabilityList.length === 0) return [];
+    const { dataPoints, stats } = useMemo(() => {
+        if (stabilityList.length === 0) return { dataPoints: [], stats: null };
+        
         const points: { day: number; retention: number }[] = [];
+        let day80 = 0;
+        let found80 = false;
+
         for (let t = 0; t <= 31; t += 0.5) { // 0.5 resolution
             let totalR = 0;
             stabilityList.forEach(s => {
@@ -17,8 +21,16 @@ export const RetentionSimulator = ({ stabilityList }: { stabilityList: number[] 
             });
             const avgR = (totalR / stabilityList.length) * 100;
             points.push({ day: t, retention: avgR });
+
+            if (!found80 && avgR < 80) {
+                day80 = t;
+                found80 = true;
+            }
         }
-        return points;
+        return { 
+            dataPoints: points, 
+            stats: { day80: found80 ? day80 : '>30', avgStability: (stabilityList.reduce((a,b)=>a+b,0)/stabilityList.length).toFixed(1) } 
+        };
     }, [stabilityList]);
 
     const handleMouseMove = (e: MouseEvent) => {
@@ -32,8 +44,7 @@ export const RetentionSimulator = ({ stabilityList }: { stabilityList: number[] 
     };
 
     const activePoint = useMemo(() => {
-        if (hoverDay === null || dataPoints.length === 0) return dataPoints[dataPoints.length - 1]; // Default to last
-        // Find closest point
+        if (hoverDay === null || dataPoints.length === 0) return dataPoints[dataPoints.length - 1];
         return dataPoints.reduce((prev, curr) =>
             Math.abs(curr.day - hoverDay) < Math.abs(prev.day - hoverDay) ? curr : prev
         );
@@ -41,19 +52,12 @@ export const RetentionSimulator = ({ stabilityList }: { stabilityList: number[] 
 
     if (stabilityList.length === 0) {
         return (
-            <div className="card bg-base-100 shadow-sm border border-base-200 h-full">
-                <div className="card-body p-6 flex flex-col items-center justify-center text-center gap-4">
-                    <div className="w-16 h-16 bg-base-200 rounded-full flex items-center justify-center text-base-content/20">
-                        <Brain size={32} />
-                    </div>
-                    <div>
-                        <h3 className="text-lg font-bold">No Retention Data</h3>
-                        <p className="text-sm opacity-60 max-w-xs mx-auto mt-1">
-                            Complete reviews to generate your personalized forgetting curve.
-                        </p>
-                    </div>
+            <DashboardCard icon={Brain} title="Forgetting Curve" headerColor="text-info">
+                <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 opacity-60">
+                    <Brain size={32} />
+                    <p className="text-xs">Complete reviews to generate curve.</p>
                 </div>
-            </div>
+            </DashboardCard>
         );
     }
 
@@ -72,29 +76,34 @@ export const RetentionSimulator = ({ stabilityList }: { stabilityList: number[] 
     const areaPath = `M 0,${height} L ${pointsStr} L ${width},${height} Z`;
 
     return (
-        <div className="card bg-base-100 shadow-sm border border-base-200 h-full overflow-hidden group relative">
-            <div className="card-body p-6 z-10">
-                <CardHeader
-                    icon={Brain}
-                    title="Forgetting Curve"
-                    subtitle="Estimated recall probability over time"
-                    color="text-info"
-                />
+        <DashboardCard 
+            icon={Brain} 
+            title="Forgetting Curve" 
+            subtitle={`Avg Stability: ${stats?.avgStability}d`}
+            headerColor="text-info"
+        >
+            <div className="flex flex-col h-full">
+                {stats && (
+                    <div className="text-[10px] mb-4 px-2 py-1 rounded border bg-info/10 border-info/20 text-info flex items-center gap-2">
+                        <Info size={12} />
+                        <span>Retention drops to 80% after <strong>{stats.day80} days</strong>.</span>
+                    </div>
+                )}
 
-                <div className="flex justify-between items-end mb-6">
+                <div className="flex justify-between items-end mb-2">
                     <div>
                         <div className="text-3xl font-black text-info tracking-tight">
                             {activePoint?.retention.toFixed(1)}%
                         </div>
                         <div className="text-xs font-bold opacity-50 uppercase tracking-wide mt-1">
-                            Retention at Day {activePoint?.day.toFixed(0)}
+                            Retention at Day {activePoint?.day.toFixed(1)}
                         </div>
                     </div>
                 </div>
 
                 <div
                     ref={containerRef}
-                    className="h-48 w-full relative cursor-crosshair touch-none"
+                    className="h-48 w-full relative cursor-crosshair touch-none flex-1"
                     onMouseMove={handleMouseMove}
                     onMouseLeave={() => setHoverDay(null)}
                 >
@@ -107,9 +116,18 @@ export const RetentionSimulator = ({ stabilityList }: { stabilityList: number[] 
                         </defs>
 
                         {/* Grid Lines */}
-                        {[25, 50, 75].map(y => (
-                            <line key={y} x1="0" y1={y} x2="100" y2={y} stroke="currentColor" className="text-base-content/5" strokeWidth="0.5" strokeDasharray="2 2" />
-                        ))}
+                        {[20, 40, 60, 80].map(ret => {
+                            const y = 100 - ret;
+                            return (
+                                <g key={ret}>
+                                    <line x1="0" y1={y} x2="100" y2={y} stroke="currentColor" className="text-base-content/5" strokeWidth="0.5" strokeDasharray="2 2" />
+                                    <text x="-2" y={y+1} className="text-[4px] fill-base-content/30" textAnchor="end">{ret}%</text>
+                                </g>
+                            );
+                        })}
+
+                        {/* 80% Threshold Line */}
+                        <line x1="0" y1="20" x2="100" y2="20" stroke="currentColor" className="text-info/30" strokeWidth="0.5" strokeDasharray="1 1" />
 
                         {/* The Curve */}
                         <path d={areaPath} fill="url(#retentionGradient)" />
@@ -148,6 +166,6 @@ export const RetentionSimulator = ({ stabilityList }: { stabilityList: number[] 
                     </div>
                 </div>
             </div>
-        </div>
+        </DashboardCard>
     );
 };
