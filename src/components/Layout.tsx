@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { useAppStore } from '../store/appStore';
+import { useShallow } from 'zustand/react/shallow';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useKeyboardShortcuts } from './shared/useKeyboardShortcuts';
 import { ToastContainer } from './shared/ToastContainer';
@@ -19,7 +20,12 @@ export const Layout = () => {
   useVaultWatcher();
 
   // Initialize Realtime Subscription (DB -> UI)
-  const { dataService, handleExternalCardUpdate } = useAppStore();
+  const { dataService, handleExternalCardUpdate } = useAppStore(
+    useShallow((state) => ({
+      dataService: state.dataService,
+      handleExternalCardUpdate: state.handleExternalCardUpdate,
+    })),
+  );
 
   useEffect(() => {
     const unsub = dataService.subscribeToRealtime((payload: any) => {

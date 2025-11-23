@@ -2,12 +2,13 @@ import { useAppStore } from '../../store/appStore';
 import { isTauri } from '../../lib/tauri';
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { MarkdownContent } from '../shared/MarkdownContent';
-import { Save, Type, Bold, Italic, List, Heading1, Heading2, Quote, Copy } from 'lucide-react';
+import { Save, Type, Bold, Italic, List, Heading1, Heading2, Quote, Copy, Eraser, RefreshCw, AlertTriangle, Wand2, Trash2, X, ExternalLink } from 'lucide-react';
 import { fileSystem } from '../../lib/services/fileSystem';
 import { useToastStore } from '../../store/toastStore';
 import { ClozeUtils } from '../../lib/markdown/clozeUtils';
 import { parseNote } from '../../lib/markdown/parser';
 import { useFileWatcher } from '../../hooks/useFileWatcher';
+import { createPortal } from 'react-dom';
 
 export const EditMode = () => {
   const { currentNote, currentFilepath, loadNote, dataService, currentClozeIndex, updateLastSync, currentVault } = useAppStore();
@@ -15,6 +16,13 @@ export const EditMode = () => {
   const [content, setContent] = useState(currentNote?.raw || '');
   const [isSaving, setIsSaving] = useState(false);
   const [targetClozeId, setTargetClozeId] = useState<number | null>(null);
+  
+  // State for Floating Menu in Preview
+  const [activePreviewCloze, setActivePreviewCloze] = useState<{
+      id: number;
+      index: number;
+      rect: DOMRect;
+  } | null>(null);
 
   // Instead of raw preview content, we parse it to use our renderableContent logic
   // We use a parsed state to hold the result of parseNote
@@ -48,8 +56,11 @@ export const EditMode = () => {
       .sort((a, b) => a[0] - b[0])
       .map(([id, count]) => ({ id, count }));
 
-    return { total, unique: entries.length, entries, missingIds };
-  }, [parsedPreview]);
+    // Check for unclosed clozes (raw regex check on content)
+    const unclosed = ClozeUtils.findUnclosedClozes(content);
+
+    return { total, unique: entries.length, entries, missingIds, unclosed };
+  }, [parsedPreview, content]);
 
   const scrollToCloze = (id: number) => {
     const textarea = textareaRef.current;
@@ -79,7 +90,7 @@ export const EditMode = () => {
 
     const targetPos = indices[targetIndex];
 
-    // 1. Scroll Editor & Select
+    // 1. Scroll Editor & Select (select the opening tag for quick orientation)
     textarea.focus();
     textarea.setSelectionRange(targetPos, targetPos + pattern.length);
     
@@ -98,20 +109,16 @@ export const EditMode = () => {
     if (targetEl) {
       targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
       
-      // Reset animation trick
+      // Highlight only the target element with a short pulse
       previewElements.forEach((el) => {
         el.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
       });
       void targetEl.offsetWidth; // Force reflow
-      previewElements.forEach((el) => {
-        el.classList.add('ring-2', 'ring-primary', 'ring-offset-2');
-      });
+      targetEl.classList.add('ring-2', 'ring-primary', 'ring-offset-2');
       
       setTimeout(() => {
-        previewElements.forEach((el) => {
-          el.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
-        });
-      }, 4000);
+        targetEl.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
+      }, 1200);
     }
   };
   
@@ -156,6 +163,11 @@ export const EditMode = () => {
       setParsedPreview(parseNote(content));
     }, 200);
     return () => clearTimeout(timer);
+  }, [content]);
+
+  // Close floating menu when content changes
+  useEffect(() => {
+      setActivePreviewCloze(null);
   }, [content]);
 
   if (!currentNote || !currentFilepath) return null;
@@ -336,8 +348,327 @@ export const EditMode = () => {
       }, 0);
   };
 
+  const replaceTextRange = (newText: string, start: number, end: number) => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      textarea.focus();
+      textarea.setSelectionRange(start, end);
+      
+      const success = document.execCommand('insertText', false, newText);
+      
+      // Fallback if execCommand fails
+      if (!success) {
+          const val = textarea.value;
+          const combined = val.substring(0, start) + newText + val.substring(end);
+          setContent(combined);
+      }
+      // If success, onChange will handle setContent
+  };
+
+  const replaceAllText = (newText: string) => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const savedStart = textarea.selectionStart;
+      const savedScroll = textarea.scrollTop;
+
+      textarea.focus();
+      textarea.select();
+      
+      const success = document.execCommand('insertText', false, newText);
+      
+      if (!success) {
+          setContent(newText);
+      }
+
+      // Restore cursor and scroll best effort
+      // Note: indices might have shifted if ID lengths changed, but keeping relative pos is better than end
+      try {
+          textarea.setSelectionRange(savedStart, savedStart);
+          textarea.scrollTop = savedScroll;
+      } catch (e) {
+          // Ignore range errors
+      }
+  };
+
+  const handleClearCloze = () => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const full = textarea.value;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const hasSelection = start !== end;
+
+      if (hasSelection) {
+          // 只在选区子串上清除挖空，避免对整篇文本做不必要的重写
+          const selected = full.substring(start, end);
+          const result = ClozeUtils.removeClozesInRange(selected, 0, selected.length);
+          if (result.removedCount > 0) {
+              replaceTextRange(result.text, start, end);
+              addToast(`Cleared ${result.removedCount} clozes`, 'success');
+          } else {
+              addToast('No clozes in selection', 'info');
+          }
+      } else {
+          // 单点清除：基于全文字符串做一次变换
+          const unclozeRes = ClozeUtils.unclozeAt(full, start);
+          if (unclozeRes.changed) {
+              replaceAllText(unclozeRes.text);
+              if (unclozeRes.range) {
+                 // 将光标放到还原文本末尾，便于继续编辑
+                 setTimeout(() => {
+                     const current = textareaRef.current;
+                     if (!current) return;
+                     current.setSelectionRange(unclozeRes.range!.end, unclozeRes.range!.end);
+                 }, 0);
+              }
+          } else {
+             addToast('No cloze at cursor', 'info');
+          }
+      }
+  };
+
+  const handleNormalizeIds = () => {
+      if (!confirm('This will renumber all clozes sequentially (c1, c2, c3...) to fix gaps and ordering.\n\nThis may change card scheduling if IDs shift.\n\nContinue?')) {
+          return;
+      }
+      // Use textarea.value to ensure we have latest without race conditions
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const { text, changed } = ClozeUtils.normalizeClozeIds(textarea.value);
+      if (changed) {
+          const savedStart = textarea.selectionStart;
+          const savedScroll = textarea.scrollTop;
+
+          // Directly update React state instead of using replaceAllText/execCommand
+          setContent(text);
+
+          setTimeout(() => {
+              const current = textareaRef.current;
+              if (!current) return;
+              try {
+                  current.setSelectionRange(savedStart, savedStart);
+                  current.scrollTop = savedScroll;
+              } catch {
+                  // Ignore range errors
+              }
+          }, 0);
+
+          addToast('Cloze IDs normalized', 'success');
+      } else {
+          addToast('IDs are already normalized', 'info');
+      }
+  };
+
+  const handleCleanInvalid = () => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const { text, cleanedCount } = ClozeUtils.cleanInvalidClozes(textarea.value);
+      if (cleanedCount > 0) {
+          if (confirm(`Found ${cleanedCount} broken/invalid cloze patterns (e.g. missing colons).\n\nRemove their formatting (keep text)?`)) {
+              const savedStart = textarea.selectionStart;
+              const savedScroll = textarea.scrollTop;
+
+              setContent(text);
+
+              setTimeout(() => {
+                  const current = textareaRef.current;
+                  if (!current) return;
+                  try {
+                      current.setSelectionRange(savedStart, savedStart);
+                      current.scrollTop = savedScroll;
+                  } catch {
+                      // Ignore range errors
+                  }
+              }, 0);
+
+              addToast(`Cleaned ${cleanedCount} invalid clozes`, 'success');
+          }
+      } else {
+          addToast('No invalid clozes found', 'info');
+      }
+  };
+
+  const handleDeleteCloze = () => {
+      if (!activePreviewCloze) return;
+      
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const { id, index } = activePreviewCloze;
+      const full = textarea.value;
+
+      const info = ClozeUtils.findClozeByIdAndOccurrence(full, id, index);
+      if (!info) return;
+
+      const { matchStart, matchEnd } = info;
+
+      // Delete the entire cloze segment, including answer and hint
+      replaceTextRange('', matchStart, matchEnd);
+      setActivePreviewCloze(null);
+      addToast('Deleted cloze and text', 'info');
+  };
+
+  const handleClearPreviewCloze = () => {
+      if (!activePreviewCloze) return;
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const { id, index } = activePreviewCloze;
+      const full = textarea.value;
+
+      const info = ClozeUtils.findClozeByIdAndOccurrence(full, id, index);
+      if (!info) return;
+
+      const { matchStart, matchEnd, answerText } = info;
+
+      // Replace the cloze wrapper with just the answer text
+      replaceTextRange(answerText, matchStart, matchEnd);
+      setActivePreviewCloze(null);
+      addToast('Cloze cleared (text kept)', 'success');
+  };
+
+  const handleJumpToUnclosed = () => {
+      const unclosed = clozeStats.unclosed;
+      if (unclosed.length === 0) return;
+
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const currentPos = textarea.selectionStart;
+
+      // Find the first unclosed cloze that comes after the current cursor
+      let target = unclosed.find((u) => u.index > currentPos);
+
+      // If none found, wrap around to the first unclosed
+      if (!target) {
+          target = unclosed[0];
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(target.index, target.index + 2); // Select the {{
+
+      // Scroll to center
+      const val = textarea.value;
+      const textBefore = val.substring(0, target.index);
+      const lines = textBefore.split('\n').length;
+      const lineHeight = 24;
+      const targetTop = (lines - 1) * lineHeight;
+      textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight / 2);
+  };
+
+  const handlePreviewClozeClick = (id: number, occurrenceIndex: number, target: HTMLElement) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    
+    // Update floating menu position
+    if (target) {
+        setActivePreviewCloze({
+            id,
+            index: occurrenceIndex,
+            rect: target.getBoundingClientRect()
+        });
+    }
+
+    const full = textarea.value;
+    const info = ClozeUtils.findClozeByIdAndOccurrence(full, id, occurrenceIndex);
+
+    if (info) {
+        const { answerStart, answerEnd } = info;
+
+        textarea.focus();
+        textarea.setSelectionRange(answerStart, answerEnd);
+
+        // Scroll to center based on answer start
+        const textBefore = full.substring(0, answerStart);
+        const lines = textBefore.split('\n').length;
+        const lineHeight = 24;
+        const targetTop = (lines - 1) * lineHeight;
+        textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight / 2);
+        return;
+    }
+
+    // Fallback: previous behavior if we failed to locate the cloze instance
+    const indices = ClozeUtils.findClozeIndices(full, id);
+    if (occurrenceIndex >= indices.length) return;
+
+    const start = indices[occurrenceIndex];
+    const tail = full.substring(start);
+    const localRegex = new RegExp(ClozeUtils.CLOZE_REGEX.source);
+    const match = localRegex.exec(tail);
+    
+    let length = `{{c${id}::`.length;
+    if (match && match.index === 0) {
+        length = match[0].length;
+    }
+
+    textarea.focus();
+    textarea.setSelectionRange(start, start + length);
+    
+    const textBefore = full.substring(0, start);
+    const lines = textBefore.split('\n').length;
+    const lineHeight = 24;
+    const targetTop = (lines - 1) * lineHeight;
+    textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight / 2);
+  };
+
   return (
-    <div className="h-full flex flex-col bg-base-100">
+    <div className="h-full flex flex-col bg-base-100 relative">
+      {/* Floating Menu Portal */}
+      {activePreviewCloze && createPortal(
+          <div 
+            className="fixed z-50 flex flex-col gap-1 bg-base-100 shadow-lg border border-base-300 rounded-lg p-1 animate-in fade-in zoom-in-95 duration-100"
+            style={{
+                left: activePreviewCloze.rect.left,
+                top: activePreviewCloze.rect.bottom + 8,
+            }}
+            onMouseLeave={() => setActivePreviewCloze(null)}
+          >
+            <div className="flex items-center gap-1 px-2 py-1 border-b border-base-200 bg-base-200/50 rounded-t mb-1">
+                <span className="text-[10px] font-mono font-bold opacity-50">c{activePreviewCloze.id}</span>
+                <div className="flex-1" />
+                <button onClick={() => setActivePreviewCloze(null)} className="btn btn-ghost btn-xs btn-square h-4 w-4 min-h-0">
+                    <X size={10} />
+                </button>
+            </div>
+            
+            <div className="flex flex-col gap-1">
+                <button 
+                    className="btn btn-xs btn-ghost justify-start gap-2 h-8 font-normal"
+                    onClick={handleClearPreviewCloze}
+                >
+                    <Eraser size={14} className="text-secondary" />
+                    Clear Cloze
+                </button>
+                <button 
+                    className="btn btn-xs btn-ghost justify-start gap-2 h-8 font-normal text-error hover:bg-error/10"
+                    onClick={handleDeleteCloze}
+                >
+                    <Trash2 size={14} />
+                    Delete All
+                </button>
+                <div className="divider my-0 h-0" />
+                <button 
+                    className="btn btn-xs btn-ghost justify-start gap-2 h-8 font-normal"
+                    onClick={() => {
+                        // Already selected by the click, just close menu
+                        setActivePreviewCloze(null);
+                        // Focus editor
+                        textareaRef.current?.focus();
+                    }}
+                >
+                    <ExternalLink size={14} className="opacity-50" />
+                    Edit Text
+                </button>
+            </div>
+          </div>,
+          document.body
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center justify-between p-2 border-b border-base-200 bg-base-100">
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
@@ -360,14 +691,35 @@ export const EditMode = () => {
           </div>
 
           {/* Cloze Distribution Stats */}
-          {(clozeStats.entries.length > 0 || clozeStats.missingIds.length > 0) && (
+          {(clozeStats.entries.length > 0 || clozeStats.missingIds.length > 0 || clozeStats.unclosed.length > 0) && (
             <div className="hidden lg:flex items-center gap-1 mr-2 text-xs">
-              {/* Warning for missing IDs */}
-              {clozeStats.missingIds.length > 0 && (
-                <div className="tooltip tooltip-bottom tooltip-warning" data-tip="Some cloze IDs are missing. If you deleted a cloze by accident, its review card may also be gone.">
-                  <span className="badge badge-warning badge-outline badge-xs gap-1 font-mono mr-1">
-                    ⚠ Missing: {clozeStats.missingIds.map(id => `c${id}`).join(', ')}
-                  </span>
+              {/* Unclosed Warning */}
+              {clozeStats.unclosed.length > 0 && (
+                <button 
+                    onClick={handleJumpToUnclosed}
+                    className="badge badge-error badge-outline badge-xs gap-1 font-mono mr-1 cursor-pointer hover:bg-error hover:text-error-content"
+                    title="Jump to unclosed cloze (missing '}}')"
+                >
+                    <AlertTriangle size={10} />
+                    Unclosed: {clozeStats.unclosed.length}
+                </button>
+              )}
+
+              {/* Warning for missing IDs / Normalize */}
+              {(clozeStats.missingIds.length > 0) && (
+                <div className="flex items-center">
+                    <div className="tooltip tooltip-bottom tooltip-warning" data-tip="Some cloze IDs are missing.">
+                    <span className="badge badge-warning badge-outline badge-xs gap-1 font-mono mr-1">
+                        ⚠ Missing: {clozeStats.missingIds.map(id => `c${id}`).join(', ')}
+                    </span>
+                    </div>
+                    <button 
+                        onClick={handleNormalizeIds}
+                        className="btn btn-xs btn-ghost text-warning px-1 h-5 min-h-0"
+                        title="Normalize IDs (renumber c1..cN to fix gaps)"
+                    >
+                        <RefreshCw size={12} />
+                    </button>
                 </div>
               )}
 
@@ -441,6 +793,24 @@ export const EditMode = () => {
                 <Copy size={16} />
                 {targetClozeId && <span className="text-[10px] font-mono opacity-60">c{targetClozeId}</span>}
               </button>
+              <button
+                className="btn btn-sm join-item btn-ghost text-secondary/60"
+                onClick={handleClearCloze}
+                title="Clear Cloze (Ctrl+Shift+U) - Remove formatting, keep text"
+              >
+                <Eraser size={16} />
+              </button>
+          </div>
+
+          {/* Maintenance Tools */}
+          <div className="ml-2 border-l border-base-300 pl-2">
+             <button
+                className="btn btn-sm btn-ghost btn-square text-base-content/40 hover:text-primary"
+                onClick={handleCleanInvalid}
+                title="Clean invalid/broken clozes"
+             >
+                <Wand2 size={14} />
+             </button>
           </div>
         </div>
 
@@ -481,6 +851,10 @@ export const EditMode = () => {
                   e.preventDefault();
                   insertCloze(true);
               }
+              if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'U' || e.key === 'u')) {
+                e.preventDefault();
+                handleClearCloze();
+              }
               if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                 e.preventDefault();
                 handleSave();
@@ -494,6 +868,7 @@ export const EditMode = () => {
           <MarkdownContent
             content={parsedPreview.renderableContent}
             className="text-base"
+            onClozeClick={handlePreviewClozeClick}
           />
         </div>
       </div>

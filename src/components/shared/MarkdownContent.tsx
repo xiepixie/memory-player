@@ -14,6 +14,7 @@ interface MarkdownContentProps {
     components?: Components;
     className?: string;
     disableIds?: boolean;
+    onClozeClick?: (id: number, occurrenceIndex: number, target: HTMLElement) => void;
 }
 
 const extractText = (children: any): string => {
@@ -24,10 +25,13 @@ const extractText = (children: any): string => {
     return '';
 };
 
-export const MarkdownContent = ({ content, components, className, disableIds = false }: MarkdownContentProps) => {
+export const MarkdownContent = ({ content, components, className, disableIds = false, onClozeClick }: MarkdownContentProps) => {
     const slugCounts = useRef<Record<string, number>>({});
-    // Reset slug counts on every render to ensure IDs are deterministic for the current content
+    const clozeCounts = useRef<Record<number, number>>({});
+    
+    // Reset slug and cloze counts on every render
     slugCounts.current = {};
+    clozeCounts.current = {};
 
     const generateId = (children: any) => {
         if (disableIds) return undefined;
@@ -131,19 +135,37 @@ export const MarkdownContent = ({ content, components, className, disableIds = f
                             const id = parts[0];
                             const hint = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('-')) : undefined;
                             
+                            const numId = parseInt(id, 10);
+                            let occurrenceIndex = 0;
+                            if (!isNaN(numId)) {
+                                occurrenceIndex = clozeCounts.current[numId] || 0;
+                                clozeCounts.current[numId] = occurrenceIndex + 1;
+                            }
+
                             return (
                                 <span 
                                     id={`cloze-item-${id}`}
                                     data-cloze-id={id}
-                                    className="inline-flex items-center gap-1.5 mx-1 align-baseline group relative cursor-help transition-all"
+                                    className={clsx(
+                                        "inline-flex items-center gap-1.5 mx-1 align-baseline group relative transition-all",
+                                        onClozeClick ? "cursor-pointer hover:scale-105 active:scale-95" : "cursor-help"
+                                    )}
                                     title={hint ? `Hint: ${hint}` : `Cloze #${id}`}
+                                    onClick={(e) => {
+                                        if (onClozeClick && !isNaN(numId)) {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            onClozeClick(numId, occurrenceIndex, e.currentTarget);
+                                        }
+                                    }}
                                 >
                                     <span className="badge badge-neutral badge-sm font-mono font-bold h-5 px-1.5 rounded text-[10px] text-neutral-content/80">
                                         {id}
                                     </span>
                                     <span className={clsx(
                                         "font-medium px-1 rounded transition-colors border-b-2 border-transparent",
-                                        "bg-primary/10 text-primary hover:bg-primary/20 border-primary/20"
+                                        "bg-primary/10 text-primary hover:bg-primary/20 border-primary/20",
+                                        onClozeClick && "group-hover:bg-primary/30 group-hover:border-primary/40"
                                     )}>
                                         {children}
                                     </span>

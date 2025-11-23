@@ -11,6 +11,7 @@ type AuthStatus = 'checking' | 'no-supabase' | 'needs-login' | 'ready';
 
 export const AuthGate = ({ children }: AuthGateProps) => {
   const initDataService = useAppStore((state) => state.initDataService);
+  const authCheckCounter = useAppStore((state) => state.authCheckCounter);
   const addToast = useToastStore((state) => state.addToast);
   const [status, setStatus] = useState<AuthStatus>('checking');
   const [email, setEmail] = useState('');
@@ -62,7 +63,15 @@ export const AuthGate = ({ children }: AuthGateProps) => {
     return () => {
       cancelled = true;
     };
-  }, [initDataService]);
+  }, [initDataService, authCheckCounter]);
+
+  useEffect(() => {
+    // When authCheckCounter changes (e.g. after sign-out), reset the
+    // login form so users always see a clean state.
+    setEmail('');
+    setPassword('');
+    setError(null);
+  }, [authCheckCounter]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -488,7 +488,7 @@ export const LibraryView = () => {
                             className="btn btn-sm btn-ghost w-full text-error justify-start gap-2 hover:bg-error/10"
                           >
                             <span className="w-2 h-2 rounded-full bg-error" />
-                            Sign out to local-only mode
+                            Sign out
                           </button>
                         </div>
                       </div>

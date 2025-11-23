@@ -26,6 +26,8 @@ interface AppState {
   lastSyncAt: Date | null;
   pendingSyncCount: number;
   signOut: () => Promise<void>;
+  authCheckCounter: number;
+  triggerAuthCheck: () => void;
 
   rootPath: string | null;
   files: string[];
@@ -156,6 +158,8 @@ type ServiceSlice = Pick<
   | 'lastSyncAt'
   | 'updateLastSync'
   | 'signOut'
+  | 'authCheckCounter'
+  | 'triggerAuthCheck'
 >;
 
 type SmartQueueSlice = Pick<
@@ -179,6 +183,7 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
   syncMode: 'mock',
   currentUser: null,
   lastSyncAt: null,
+  authCheckCounter: 0,
 
   initDataService: async (type) => {
     try {
@@ -229,6 +234,23 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
     }
     // Switch back to local-only mode
     await get().initDataService('mock');
+
+    set((state) => ({
+      authCheckCounter: state.authCheckCounter + 1,
+      rootPath: null,
+      files: [],
+      currentFilepath: null,
+      currentNote: null,
+      currentMetadata: null,
+      currentClozeIndex: null,
+      viewMode: 'library',
+      currentVault: null,
+      contentCache: {},
+    }));
+  },
+
+  triggerAuthCheck: () => {
+    set((state) => ({ authCheckCounter: state.authCheckCounter + 1 }));
   },
 });
 
