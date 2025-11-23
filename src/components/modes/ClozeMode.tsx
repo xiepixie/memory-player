@@ -95,14 +95,14 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
       el.classList.remove('toc-target-highlight');
     });
 
-    // Force reflow to allow restarting animation on repeated focus
-    void nextEl.offsetWidth;
+    // Restart CSS animation in the next frame without forcing synchronous reflow
+    requestAnimationFrame(() => {
+      nextEl.classList.add('toc-target-highlight');
 
-    nextEl.classList.add('toc-target-highlight');
-
-    setTimeout(() => {
-      nextEl.classList.remove('toc-target-highlight');
-    }, 1500);
+      setTimeout(() => {
+        nextEl.classList.remove('toc-target-highlight');
+      }, 1500);
+    });
   };
 
   const toggleReveal = (key: string) => {

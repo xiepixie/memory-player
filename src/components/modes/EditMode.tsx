@@ -134,6 +134,7 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   const currentFilepath = useAppStore((state) => state.currentFilepath);
   const loadNote = useAppStore((state) => state.loadNote);
   const saveCurrentNote = useAppStore((state) => state.saveCurrentNote);
+  const setHasUnsavedChanges = useAppStore((state) => state.setHasUnsavedChanges);
   const addToast = useToastStore((state) => state.addToast);
   const [content, setContent] = useState(currentNote?.raw || '');
   const [isSaving, setIsSaving] = useState(false);
@@ -159,6 +160,12 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   const [debouncedContent, setDebouncedContent] = useState(content);
   const [parsedPreview, setParsedPreview] = useState(() => parseNote(content));
   const isDirty = content !== (currentNote?.raw ?? '');
+
+  // Sync dirty state to global store
+  useEffect(() => {
+      setHasUnsavedChanges(isDirty);
+  }, [isDirty, setHasUnsavedChanges]);
+
   const clozeStats = useMemo(() => {
     const clozes = ((parsedPreview as any)?.clozes ?? []) as { id?: number }[];
     const counts = new Map<number, number>();
@@ -230,17 +237,23 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
     clearCurrentPreviewHighlight();
 
+    // Remove existing highlight classes first, then restart the CSS animation
+    // on the next animation frame without forcing a synchronous reflow.
     elements.forEach((el) => {
         el.classList.remove('cloze-target-highlight');
-        void el.offsetWidth;
-        el.classList.add('cloze-target-highlight');
     });
 
-    highlightedPreviewElementsRef.current = elements;
+    requestAnimationFrame(() => {
+        elements.forEach((el) => {
+            el.classList.add('cloze-target-highlight');
+        });
 
-    highlightTimerRef.current = setTimeout(() => {
-        clearCurrentPreviewHighlight();
-    }, 2000); // Match animation duration roughly (longer is fine, class handles it)
+        highlightedPreviewElementsRef.current = elements;
+
+        highlightTimerRef.current = setTimeout(() => {
+            clearCurrentPreviewHighlight();
+        }, 2000); // Match animation duration roughly (longer is fine, class handles it)
+    });
   };
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -320,10 +333,12 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     textarea.focus();
     textarea.setSelectionRange(targetPos, targetPos + pattern.length);
     
-    // Accurate Scroll Position Logic
-    const targetTop = getCaretCoordinates(textarea, targetPos);
+    // Approximate scroll position based on line count to avoid layout reads
+    const textBefore = val.substring(0, targetPos);
+    const lines = textBefore.split('\n').length;
+    const lineHeight = 24;
+    const targetTop = (lines - 1) * lineHeight;
     const clientHeight = textarea.clientHeight;
-    // Position at 30% from top for better context visibility
     textarea.scrollTop = Math.max(0, targetTop - clientHeight * 0.3);
 
     // 2. Scroll Preview (Sync with the specific instance index)
@@ -377,9 +392,11 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       textarea.focus();
       textarea.setSelectionRange(target.pos, target.pos + pattern.length);
       
-      // Scroll Editor - Middle-Top Alignment (30%)
-      const targetTop = getCaretCoordinates(textarea, target.pos);
-      // Position at 30% from top for better context visibility
+      // Scroll Editor - Middle-Top Alignment (30%) using line-count approximation
+      const textBefore = full.substring(0, target.pos);
+      const lines = textBefore.split('\n').length;
+      const lineHeight = 24;
+      const targetTop = (lines - 1) * lineHeight;
       textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
       
       // Scroll Preview
@@ -1028,8 +1045,11 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
         textarea.focus();
         textarea.setSelectionRange(answerStart, answerEnd);
 
-        // Scroll to center based on answer start (30% from top)
-        const targetTop = getCaretCoordinates(textarea, answerStart);
+        // Scroll to center based on answer start (30% from top) using line-count approximation
+        const textBefore = full.substring(0, answerStart);
+        const lines = textBefore.split('\n').length;
+        const lineHeight = 24;
+        const targetTop = (lines - 1) * lineHeight;
         textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
 
         flashPreviewCloze(id);
@@ -1055,7 +1075,10 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     textarea.focus();
     textarea.setSelectionRange(start, start + length);
     
-    const targetTop = getCaretCoordinates(textarea, start);
+    const textBefore = full.substring(0, start);
+    const lines = textBefore.split('\n').length;
+    const lineHeight = 24;
+    const targetTop = (lines - 1) * lineHeight;
     textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
 
     flashPreviewCloze(id);

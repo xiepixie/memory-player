@@ -238,6 +238,8 @@ interface AppState {
 
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
+  dashboardTab: 'focus' | 'insights';
+  setDashboardTab: (tab: 'focus' | 'insights') => void;
 
   theme: string;
   setTheme: (theme: string) => void;
@@ -249,6 +251,8 @@ interface AppState {
   syncNoteFromFilesystem: (filepath: string, content: string, noteId: string) => Promise<void>;
   saveReview: (rating: number) => Promise<boolean>;
   closeNote: () => void;
+  hasUnsavedChanges: boolean;
+  setHasUnsavedChanges: (hasChanges: boolean) => void;
 
   loadSettings: () => void;
   updateLastSync: () => void;
@@ -326,12 +330,16 @@ type NoteSlice = Pick<
   | 'loadNote'
   | 'saveCurrentNote'
   | 'closeNote'
+  | 'hasUnsavedChanges'
+  | 'setHasUnsavedChanges'
 >;
 
 type UISlice = Pick<
   AppState,
   | 'viewMode'
   | 'setViewMode'
+  | 'dashboardTab'
+  | 'setDashboardTab'
   | 'theme'
   | 'setTheme'
 >;
@@ -1405,6 +1413,9 @@ const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
   currentNote: null,
   currentMetadata: null,
   currentClozeIndex: null,
+  hasUnsavedChanges: false,
+
+  setHasUnsavedChanges: (hasChanges) => set({ hasUnsavedChanges: hasChanges }),
 
   loadNote: async (filepath, targetClozeIndex = null) => {
     try {
@@ -1512,14 +1523,23 @@ const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
     }
   },
 
-  closeNote: () => set({ currentFilepath: null, currentNote: null, currentClozeIndex: null, viewMode: 'library' }),
+  closeNote: () => set({ 
+    currentFilepath: null, 
+    currentNote: null, 
+    currentClozeIndex: null, 
+    hasUnsavedChanges: false,
+    viewMode: 'library',
+    dashboardTab: 'focus' // Reset dashboard to focus tab on close
+  }),
 });
 
 const createUISlice: AppStateCreator<UISlice> = (set) => ({
   viewMode: 'library',
+  dashboardTab: 'focus',
   theme: 'winter',
 
   setViewMode: (mode) => set({ viewMode: mode }),
+  setDashboardTab: (tab) => set({ dashboardTab: tab }),
   setTheme: (theme) => set({ theme }),
 });
 
@@ -1657,6 +1677,7 @@ export const useAppStore = create<AppState>()(
           // fileMetadatas removed to avoid performance issues (Issue 7). 
           // It will be re-fetched by LibraryView -> loadAllMetadata.
           lastServerSyncAt: state.lastServerSyncAt,
+          pendingNoteSyncs: state.pendingNoteSyncs,
 
           // Persist Session & View State for instant resume
           viewMode: state.viewMode,

@@ -1,13 +1,13 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Memory Player",
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "memory player",
   "version": "0.1.0",
-  "identifier": "com.memoryplayer.app",
+  "identifier": "com.xiepixie.memoryplayer",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
-    "frontendDist": "../dist"
+    "beforeDevCommand": "bun dev",
+    "beforeBuildCommand": "bun build"
   },
   "app": {
     "windows": [
@@ -15,9 +15,8 @@
         "title": "Memory Player",
         "width": 1200,
         "height": 800,
-        "decorations": false,
-        "transparent": true,
-        "fullscreen": true
+        "resizable": true,
+        "fullscreen": false
       }
     ],
     "security": {

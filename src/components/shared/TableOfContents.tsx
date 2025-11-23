@@ -65,13 +65,6 @@ export const TableOfContents = () => {
 
             const nextHeaders = extracted;
 
-            // Debug: trace header collection for TOC
-            console.debug('[TableOfContents] collectHeaders', {
-                count: nextHeaders.length,
-                ids: nextHeaders.map(h => h.id),
-                levels: nextHeaders.map(h => h.level),
-            });
-
             setHeaders((prev) => (headersAreEqual(prev, nextHeaders) ? prev : nextHeaders));
         };
 
@@ -130,18 +123,10 @@ export const TableOfContents = () => {
             element = candidates.find((el) => el.id === id) ?? null;
         }
 
-        const foundInsideContainer = !!element && container.contains(element);
-
         if (!element) {
             console.warn(`[TableOfContents] Scroll target not found for id "${id}"`);
             return;
         }
-
-        console.debug('[TableOfContents] scrollToHeader', {
-            id,
-            hasContainer: !!container,
-            foundInsideContainer,
-        });
 
         // Let the browser find the nearest scroll container and respect `scroll-margin-top` (scroll-mt-20)
         element.scrollIntoView({
@@ -154,15 +139,15 @@ export const TableOfContents = () => {
             el.classList.remove('toc-target-highlight');
         });
 
-        // Force reflow to allow restarting animation if clicking same link
-        void element.offsetWidth;
+        // Restart CSS animation in the next frame without forcing synchronous reflow
+        requestAnimationFrame(() => {
+            element.classList.add('toc-target-highlight');
 
-        element.classList.add('toc-target-highlight');
-
-        // Clean up after animation
-        setTimeout(() => {
-            element.classList.remove('toc-target-highlight');
-        }, 1500);
+            // Clean up after animation
+            setTimeout(() => {
+                element.classList.remove('toc-target-highlight');
+            }, 1500);
+        });
     };
 
     return (

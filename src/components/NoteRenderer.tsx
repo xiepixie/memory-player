@@ -10,6 +10,7 @@ import { TableOfContents } from './shared/TableOfContents';
 import { FileTreeView } from './shared/FileTreeView';
 import { useShallow } from 'zustand/react/shallow';
 import { ContentSkeleton } from './skeletons/ContentSkeleton';
+import { isTauri } from '../lib/tauri';
 
 const EditModeLazy = lazy(() => import('./modes/EditMode').then((m) => ({ default: m.EditMode })));
 const ClozeModeLazy = lazy(() => import('./modes/ClozeMode').then((m) => ({ default: m.ClozeMode })));
@@ -23,6 +24,7 @@ export const NoteRenderer = () => {
         sessionTotal,
         sessionIndex,
         closeNote,
+        saveCurrentNote,
         currentFilepath,
         files,
         loadNote,
@@ -33,6 +35,7 @@ export const NoteRenderer = () => {
         queue,
         suspendCard,
         skipCurrentCard,
+        hasUnsavedChanges,
     } = useAppStore(
         useShallow((state) => ({
             viewMode: state.viewMode,
@@ -40,6 +43,7 @@ export const NoteRenderer = () => {
             sessionTotal: state.sessionTotal,
             sessionIndex: state.sessionIndex,
             closeNote: state.closeNote,
+            saveCurrentNote: state.saveCurrentNote,
             currentFilepath: state.currentFilepath,
             files: state.files,
             loadNote: state.loadNote,
@@ -50,11 +54,14 @@ export const NoteRenderer = () => {
             queue: state.queue,
             suspendCard: state.suspendCard,
             skipCurrentCard: state.skipCurrentCard,
+            hasUnsavedChanges: state.hasUnsavedChanges,
         })),
     );
     const [immersive, setImmersive] = useState(false);
     const [isPeeking, setIsPeeking] = useState(false);
     const [stickyOpen, setStickyOpen] = useState(false);
+    const [showExitConfirm, setShowExitConfirm] = useState(false);
+    const [isSavingOnExit, setIsSavingOnExit] = useState(false);
     const addToast = useToastStore((state) => state.addToast);
 
     // Restore note content if we have a filepath but no parsed note yet (e.g. after app restart)
@@ -151,6 +158,50 @@ export const NoteRenderer = () => {
         }
     };
 
+    const handleBackClick = () => {
+        if (!hasUnsavedChanges) {
+            closeNote();
+            return;
+        }
+        setShowExitConfirm(true);
+    };
+
+    const handleDiscardAndExit = () => {
+        setShowExitConfirm(false);
+        closeNote();
+    };
+
+    const handleConfirmSaveAndExit = async () => {
+        // In web preview, saving to disk isn't available
+        if (!isTauri()) {
+            addToast('Saving is only available in desktop app', 'warning');
+            setShowExitConfirm(false);
+            closeNote();
+            return;
+        }
+
+        const textarea = document.getElementById('note-editor') as HTMLTextAreaElement | null;
+        const content = textarea?.value ?? (currentNote as any)?.raw ?? '';
+
+        if (!currentFilepath) {
+            setShowExitConfirm(false);
+            closeNote();
+            return;
+        }
+
+        setIsSavingOnExit(true);
+        try {
+            await saveCurrentNote(content);
+            setIsSavingOnExit(false);
+            setShowExitConfirm(false);
+            closeNote();
+        } catch (e) {
+            console.error('Failed to save note before exit', e);
+            addToast('Failed to save before exit', 'error');
+            setIsSavingOnExit(false);
+        }
+    };
+
     // Left Sidebar with Tree View
     const LeftSidebar = (
         <div className="h-full flex flex-col">
@@ -193,8 +244,8 @@ export const NoteRenderer = () => {
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.9 }}
                         className="btn btn-circle btn-ghost btn-sm"
-                        onClick={closeNote}
-                        title="Back to Library"
+                        onClick={handleBackClick}
+                        title={hasUnsavedChanges ? 'Back to Dashboard (unsaved changes)' : 'Back to Dashboard'}
                     >
                         <ArrowLeft size={18} />
                     </motion.button>
@@ -303,6 +354,41 @@ export const NoteRenderer = () => {
                     </button>
                 </div>
             </motion.div>
+
+            {showExitConfirm && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-base-300/60 backdrop-blur-sm">
+                    <div className="bg-base-100 rounded-2xl shadow-xl border border-base-200 w-full max-w-sm p-6 space-y-4">
+                        <div className="text-sm font-semibold">Leave this note?</div>
+                        <div className="text-xs text-base-content/70">
+                            You have unsaved changes. What would you like to do?
+                        </div>
+                        <div className="flex flex-col gap-2 pt-2">
+                            <button
+                                className="btn btn-primary btn-sm w-full"
+                                onClick={handleConfirmSaveAndExit}
+                                disabled={isSavingOnExit}
+                            >
+                                {isSavingOnExit && <span className="loading loading-spinner loading-xs mr-2" />}
+                                Save &amp; Exit
+                            </button>
+                            <button
+                                className="btn btn-ghost btn-sm w-full"
+                                onClick={handleDiscardAndExit}
+                                disabled={isSavingOnExit}
+                            >
+                                Discard Changes
+                            </button>
+                            <button
+                                className="btn btn-ghost btn-sm w-full"
+                                onClick={() => setShowExitConfirm(false)}
+                                disabled={isSavingOnExit}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Blur Mode Study Hints Overlay */}
             {viewMode === 'master' && hints.length > 0 && (

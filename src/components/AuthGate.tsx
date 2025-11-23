@@ -46,7 +46,19 @@ export const AuthGate = ({ children }: AuthGateProps) => {
         if (cancelled) return;
 
         if (error) {
-          console.warn('[AuthGate] auth check error (expected if not logged in):', error);
+          const name = (error as any)?.name || '';
+          const message = (error as any)?.message || '';
+          const normalizedMessage = typeof message === 'string' ? message.toLowerCase() : '';
+          const isSessionMissing =
+            name === 'AuthSessionMissingError' ||
+            normalizedMessage.includes('auth session missing');
+
+          if (isSessionMissing) {
+            console.info('[AuthGate] No Supabase session found; showing login screen.');
+          } else {
+            console.warn('[AuthGate] auth check error:', error);
+          }
+
           setStatus('needs-login');
           return;
         }
@@ -58,7 +70,19 @@ export const AuthGate = ({ children }: AuthGateProps) => {
           setStatus('needs-login');
         }
       } catch (err) {
-        console.warn('[AuthGate] auth check exception (expected if not logged in):', err);
+        const name = (err as any)?.name || '';
+        const message = (err as any)?.message || '';
+        const normalizedMessage = typeof message === 'string' ? message.toLowerCase() : '';
+        const isSessionMissing =
+          name === 'AuthSessionMissingError' ||
+          normalizedMessage.includes('auth session missing');
+
+        if (isSessionMissing) {
+          console.info('[AuthGate] No Supabase session found (exception); showing login screen.');
+        } else {
+          console.warn('[AuthGate] auth check exception:', err);
+        }
+
         if (!cancelled) {
           setStatus('needs-login');
         }

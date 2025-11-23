@@ -21,7 +21,8 @@ export class FileSystemService {
        });
        return unwatch;
     } catch (error) {
-        console.error(`Failed to watch file ${filepath}:`, error);
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Failed to watch file ${filepath}: ${message}`);
         return () => {};
     }
   }
@@ -71,7 +72,8 @@ export class FileSystemService {
           frontmatter: file.data
       };
     } catch (error) {
-      console.error(`Error processing file ${filepath}:`, error);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error processing file ${filepath}: ${message}`);
       throw error;
     }
   }
