@@ -26,4 +26,22 @@ export class ClozeUtils {
         }
         return `{{c${number}::${text}}}`;
     }
+
+    /**
+     * Finds the cloze ID closest to the cursor position (searching backwards).
+     * Returns null if no preceding cloze is found.
+     */
+    static findPrecedingClozeId(text: string, cursorIndex: number): number | null {
+        const head = text.substring(0, cursorIndex);
+        const regex = /{{c(\d+)::/g;
+        let lastId: number | null = null;
+        
+        for (const match of head.matchAll(regex)) {
+            const num = parseInt(match[1], 10);
+            if (!isNaN(num)) {
+                lastId = num;
+            }
+        }
+        return lastId;
+    }
 }

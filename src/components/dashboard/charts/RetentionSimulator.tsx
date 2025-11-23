@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, MouseEvent } from 'react';
 import { Brain, Info } from 'lucide-react';
 import { DashboardCard } from '../Shared';
 
-export const RetentionSimulator = ({ stabilityList }: { stabilityList: number[] }) => {
+export const RetentionSimulator = ({ stabilityList, reviewDays }: { stabilityList: number[]; reviewDays: number }) => {
     const [hoverDay, setHoverDay] = useState<number | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -61,6 +61,20 @@ export const RetentionSimulator = ({ stabilityList }: { stabilityList: number[] 
         );
     }
 
+    if (reviewDays < 3) {
+        return (
+            <DashboardCard icon={Brain} title="Forgetting Curve" headerColor="text-info">
+                <div className="flex-1 flex flex-col items-center justify-center text-center gap-3 opacity-70 px-4">
+                    <Brain size={32} />
+                    <p className="text-xs">Not enough history yet to build a reliable forgetting curve.</p>
+                    <p className="text-[10px] font-mono opacity-60">
+                        Current sample: {reviewDays} day{reviewDays === 1 ? '' : 's'} of reviews.
+                    </p>
+                </div>
+            </DashboardCard>
+        );
+    }
+
     // Generate SVG Path
     const width = 100;
     const height = 100;
@@ -86,7 +100,15 @@ export const RetentionSimulator = ({ stabilityList }: { stabilityList: number[] 
                 {stats && (
                     <div className="text-[10px] mb-4 px-2 py-1 rounded border bg-info/10 border-info/20 text-info flex items-center gap-2">
                         <Info size={12} />
-                        <span>Retention drops to 80% after <strong>{stats.day80} days</strong>.</span>
+                        {typeof stats.day80 === 'number' ? (
+                            <span>
+                                Retention drops to 80% around <strong>{stats.day80.toFixed(1)} days</strong>.
+                            </span>
+                        ) : (
+                            <span>
+                                Retention stays above 80% for <strong>30+ days</strong> before decaying.
+                            </span>
+                        )}
                     </div>
                 )}
 
@@ -103,7 +125,7 @@ export const RetentionSimulator = ({ stabilityList }: { stabilityList: number[] 
 
                 <div
                     ref={containerRef}
-                    className="h-48 w-full relative cursor-crosshair touch-none flex-1"
+                    className="h-40 md:h-48 w-full relative cursor-crosshair touch-none flex-1"
                     onMouseMove={handleMouseMove}
                     onMouseLeave={() => setHoverDay(null)}
                 >

@@ -108,9 +108,10 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
         dueItems.sort((a, b) => a.due.getTime() - b.due.getTime());
 
         // Streak Calculation
-        let currentStreak = 0;
         const historyDates = reviewHistory.map(r => new Date(r.review).setHours(0, 0, 0, 0)).sort((a, b) => b - a);
         const uniqueDates = Array.from(new Set(historyDates));
+        const reviewDays = uniqueDates.length;
+        let currentStreak = 0;
         if (uniqueDates.length > 0) {
             const today = new Date().setHours(0, 0, 0, 0);
             const yesterday = subDays(new Date(), 1).setHours(0, 0, 0, 0);
@@ -140,7 +141,7 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
         return {
             dueItems, overdueItems, newItems, leeches, futureCounts, stats,
             orphanCount, stabilityList, folderLapses, currentStreak,
-            retentionRate, ratingDist
+            retentionRate, ratingDist, reviewDays
         };
     }, [files, fileMetadatas, reviewHistory]);
 
@@ -232,7 +233,7 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 auto-rows-[minmax(300px,auto)]">
                         {/* Row 1: Retention (Wide) + Vault Health */}
                         <div className="md:col-span-2 h-full">
-                            <RetentionSimulator stabilityList={dashboardData.stabilityList} />
+                            <RetentionSimulator stabilityList={dashboardData.stabilityList} reviewDays={dashboardData.reviewDays} />
                         </div>
                         <div className="md:col-span-1 h-full">
                             <VaultHealth stats={dashboardData.stats} orphanCount={dashboardData.orphanCount} />

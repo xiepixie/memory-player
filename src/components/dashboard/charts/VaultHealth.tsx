@@ -56,7 +56,7 @@ export const VaultHealth = ({ stats, orphanCount }: { stats: { new: number, lear
             <div className="flex flex-col h-full">
                 {/* Insight Banner */}
                 <div className={`text-[10px] mb-4 px-2 py-1 rounded border flex items-center gap-2
-                    ${healthScore < 70 ? 'bg-warning/10 border-warning/20 text-warning-content' : 'bg-base-200/50 border-base-content/10 opacity-70'}`}>
+                    ${healthScore < 70 ? 'bg-warning/10 border-warning/40 text-warning' : 'bg-base-200/50 border-base-content/10 opacity-70'}`}>
                     {healthScore < 70 ? <AlertTriangle size={12} /> : <CheckCircle size={12} />}
                     <span>{advice}</span>
                 </div>

@@ -14,6 +14,7 @@ export const EditMode = () => {
   const addToast = useToastStore((state) => state.addToast);
   const [content, setContent] = useState(currentNote?.raw || '');
   const [isSaving, setIsSaving] = useState(false);
+  const [targetClozeId, setTargetClozeId] = useState<number | null>(null);
 
   // Instead of raw preview content, we parse it to use our renderableContent logic
   // We use a parsed state to hold the result of parseNote
@@ -91,23 +92,32 @@ export const EditMode = () => {
     textarea.scrollTop = Math.max(0, targetTop - clientHeight / 2);
 
     // 2. Scroll Preview (Sync with the specific instance index)
-    const previewElements = document.querySelectorAll(`[data-cloze-id="${id}"]`);
+    const previewElements = document.querySelectorAll(`[data-cloze-id="${id}"]`) as NodeListOf<HTMLElement>;
     const targetEl = previewElements[targetIndex];
     
     if (targetEl) {
       targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
       
       // Reset animation trick
-      targetEl.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
-      void (targetEl as HTMLElement).offsetWidth; // Force reflow
-      targetEl.classList.add('ring-2', 'ring-primary', 'ring-offset-2');
+      previewElements.forEach((el) => {
+        el.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
+      });
+      void targetEl.offsetWidth; // Force reflow
+      previewElements.forEach((el) => {
+        el.classList.add('ring-2', 'ring-primary', 'ring-offset-2');
+      });
       
-      setTimeout(() => targetEl.classList.remove('ring-2', 'ring-primary', 'ring-offset-2'), 2000);
+      setTimeout(() => {
+        previewElements.forEach((el) => {
+          el.classList.remove('ring-2', 'ring-primary', 'ring-offset-2');
+        });
+      }, 4000);
     }
   };
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const stateRef = useRef({ content, currentNote });
+  const lastSelfSaveAtRef = useRef<number | null>(null);
 
   // Update ref for watcher
   useEffect(() => {
@@ -116,6 +126,11 @@ export const EditMode = () => {
 
   // Watch file changes using hook
   useFileWatcher(currentFilepath, async () => {
+    // Ignore file events that are very likely triggered by our own save
+    if (lastSelfSaveAtRef.current && Date.now() - lastSelfSaveAtRef.current < 1500) {
+      return;
+    }
+
     const { content: localContent, currentNote: baseNote } = stateRef.current;
     const isDirty = baseNote && localContent !== baseNote.raw;
 
@@ -153,7 +168,17 @@ export const EditMode = () => {
     setIsSaving(true);
     try {
       if (isTauri()) {
+        // Mark the time of this save so that the file watcher can ignore our own write event
+        lastSelfSaveAtRef.current = Date.now();
+
         await fileSystem.writeNote(currentFilepath, content);
+        
+        // Immediately update in-memory cache and currentNote so other modes (Blur/Cloze)
+        // and global UI see the latest content without waiting for reload
+        useAppStore.setState((state) => ({
+          contentCache: { ...state.contentCache, [currentFilepath]: content },
+          currentNote: parseNote(content),
+        }));
         
         // Sync to Supabase
         const noteId = useAppStore.getState().pathMap[currentFilepath];
@@ -165,7 +190,8 @@ export const EditMode = () => {
         }
 
         addToast('Note saved & synced', 'success');
-        await loadNote(currentFilepath); // Reload to update state
+        // Reload to refresh metadata (cards/due dates) while preserving current cloze focus if any
+        await loadNote(currentFilepath, currentClozeIndex ?? null);
       } else {
         addToast('Saving is only available in desktop app', 'warning');
       }
@@ -218,6 +244,13 @@ export const EditMode = () => {
     }, 0);
   };
 
+  const updateTargetClozeId = () => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      const id = ClozeUtils.findPrecedingClozeId(textarea.value, textarea.selectionStart);
+      setTargetClozeId(id);
+  };
+
   /**
    * Inserts a new cloze with auto-incremented ID (e.g., c1 -> c2)
    */
@@ -236,17 +269,7 @@ export const EditMode = () => {
 
       if (sameId) {
           // Try to reuse the closest previous cloze ID before the cursor
-          const cursorPos = textarea.selectionStart;
-          const head = full.substring(0, cursorPos);
-          const regex = /{{c(\d+)::/g;
-          let prevId: number | null = null;
-
-          for (const match of head.matchAll(regex)) {
-              const num = parseInt(match[1], 10);
-              if (!isNaN(num)) {
-                  prevId = num;
-              }
-          }
+          const prevId = ClozeUtils.findPrecedingClozeId(full, textarea.selectionStart);
 
           if (prevId !== null) {
               targetId = prevId;
@@ -341,7 +364,7 @@ export const EditMode = () => {
             <div className="hidden lg:flex items-center gap-1 mr-2 text-xs">
               {/* Warning for missing IDs */}
               {clozeStats.missingIds.length > 0 && (
-                <div className="tooltip tooltip-bottom tooltip-warning" data-tip="Skipped IDs detected. Check if you deleted a card by mistake.">
+                <div className="tooltip tooltip-bottom tooltip-warning" data-tip="Some cloze IDs are missing. If you deleted a cloze by accident, its review card may also be gone.">
                   <span className="badge badge-warning badge-outline badge-xs gap-1 font-mono mr-1">
                     ⚠ Missing: {clozeStats.missingIds.map(id => `c${id}`).join(', ')}
                   </span>
@@ -361,8 +384,8 @@ export const EditMode = () => {
                         : 'badge-ghost hover:badge-neutral'
                     }`}
                     title={isHighCount 
-                      ? `High count! ${count} occurrences. Consider splitting.` 
-                      : `Jump to c${id} (${count} occurrences)`
+                      ? `High count! ${count} occurrences share ONE review card. Consider splitting.` 
+                      : `Jump to c${id} (${count} occurrences, 1 review card)`
                     }
                   >
                     c{id}
@@ -413,9 +436,10 @@ export const EditMode = () => {
               <button
                 className="btn btn-sm join-item btn-ghost gap-2 text-secondary/70"
                 onClick={() => insertCloze(true)}
-                title="Same Cloze ID (Ctrl+Shift+B)"
+                title={targetClozeId ? `Add to card c${targetClozeId} (reuse same card, Ctrl+Shift+B)` : "Same Cloze ID: place cursor after an existing cloze to reuse its card"}
               >
                 <Copy size={16} />
+                {targetClozeId && <span className="text-[10px] font-mono opacity-60">c{targetClozeId}</span>}
               </button>
           </div>
         </div>
@@ -440,7 +464,12 @@ export const EditMode = () => {
             ref={textareaRef}
             className="flex-1 w-full h-full p-6 resize-none focus:outline-none font-mono text-sm leading-relaxed bg-base-100"
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={(e) => {
+                setContent(e.target.value);
+                updateTargetClozeId();
+            }}
+            onClick={updateTargetClozeId}
+            onSelect={updateTargetClozeId}
             placeholder="Start typing..."
             onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === 'b') {

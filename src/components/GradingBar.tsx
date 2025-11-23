@@ -1,5 +1,4 @@
 import { useAppStore } from '../store/appStore';
-import { useToastStore } from '../store/toastStore';
 import { motion } from 'framer-motion';
 import React, { useCallback } from 'react';
 
@@ -15,7 +14,7 @@ const rightButtons = [
 
 type ButtonConfig = typeof leftButtons[number] | typeof rightButtons[number];
 
-const GradingButton = React.memo(({ btn, isGrading, onRate }: { btn: ButtonConfig, isGrading: boolean, onRate: (rating: number, msg: string, type: any) => void }) => (
+const GradingButton = React.memo(({ btn, isGrading, onRate }: { btn: ButtonConfig, isGrading: boolean, onRate: (rating: number) => void }) => (
     <motion.button
         layout
         key={btn.rating}
@@ -27,7 +26,7 @@ const GradingButton = React.memo(({ btn, isGrading, onRate }: { btn: ButtonConfi
             ${btn.rating <= 2 ? 'flex-row' : 'flex-row-reverse'}
             ${isGrading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
         `}
-        onClick={() => onRate(btn.rating, btn.msg, btn.type)}
+        onClick={() => onRate(btn.rating)}
         title={`Press ${btn.key}`}
     >
         {/* Paper-style Orb Button */}
@@ -69,7 +68,7 @@ const GradingButton = React.memo(({ btn, isGrading, onRate }: { btn: ButtonConfi
     </motion.button>
 ));
 
-const ButtonGroup = React.memo(({ buttons, align, isGrading, onRate }: { buttons: ButtonConfig[], align: 'left' | 'right', isGrading: boolean, onRate: (rating: number, msg: string, type: any) => void }) => (
+const ButtonGroup = React.memo(({ buttons, align, isGrading, onRate }: { buttons: ButtonConfig[], align: 'left' | 'right', isGrading: boolean, onRate: (rating: number) => void }) => (
     <div className={`flex flex-col gap-3 ${align === 'left' ? 'items-start' : 'items-end'}`}>
         {buttons.map((btn) => (
             <GradingButton key={btn.rating} btn={btn} isGrading={isGrading} onRate={onRate} />
@@ -82,16 +81,13 @@ export const GradingBar = () => {
   const currentMetadata = useAppStore(state => state.currentMetadata);
   const isGrading = useAppStore(state => state.isGrading);
 
-  const handleRate = useCallback(async (rating: number, msg: string, type: any) => {
+  const handleRate = useCallback(async (rating: number) => {
       // Use store state directly to avoid stale closure issues if props lag, 
       // though isGrading from store state in hook dependency might be enough.
       // But checking current state is safest for async actions.
       if (useAppStore.getState().isGrading) return;
       
-      const success = await saveReview(rating);
-      if (success) {
-           useToastStore.getState().addToast(msg, type);
-      }
+      await saveReview(rating);
   }, [saveReview]);
 
   if (!currentMetadata) return null;

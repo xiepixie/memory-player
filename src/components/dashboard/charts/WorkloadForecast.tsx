@@ -82,8 +82,8 @@ export const WorkloadForecast = ({ futureCounts }: { futureCounts: Record<string
             <div className="flex flex-col h-full">
                 {/* Insight Banner */}
                 <div className={`text-[10px] mb-4 px-2 py-1 rounded border flex items-center gap-2
-                    ${stats.adviceType === 'warning' ? 'bg-warning/10 border-warning/20 text-warning-content' : 
-                      stats.adviceType === 'success' ? 'bg-success/10 border-success/20 text-success-content' : 
+                    ${stats.adviceType === 'warning' ? 'bg-warning/10 border-warning/40 text-warning' : 
+                      stats.adviceType === 'success' ? 'bg-success/10 border-success/40 text-success' : 
                       'bg-base-200/50 border-base-content/10'}`}>
                     {stats.adviceType === 'warning' ? <TrendingUp size={12} /> : 
                      stats.adviceType === 'success' ? <TrendingDown size={12} /> : 

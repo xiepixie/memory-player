@@ -7,16 +7,25 @@ import { isTauri } from '../lib/tauri';
 import { parseNote, ParsedNote } from '../lib/markdown/parser';
 import { fsrs, createEmptyCard } from 'ts-fsrs';
 import { useToastStore } from './toastStore';
+import { getSupabaseClient } from '../lib/supabaseClient';
+import { formatDistanceToNow } from 'date-fns';
 
 export type ViewMode = 'library' | 'review' | 'test' | 'master' | 'edit' | 'summary';
+
+// Track the most recent locally-initiated review so we can avoid
+// duplicating toasts when the corresponding Supabase realtime
+// update comes back for the same note/cloze.
+let lastLocalReview: { noteId: string; clozeIndex: number; time: number } | null = null;
 
 interface AppState {
   dataService: DataService;
   initDataService: (type: 'mock' | 'supabase') => Promise<void>;
 
   syncMode: 'mock' | 'supabase';
+  currentUser: { id: string; email?: string | null } | null;
   lastSyncAt: Date | null;
   pendingSyncCount: number;
+  signOut: () => Promise<void>;
 
   rootPath: string | null;
   files: string[];
@@ -143,8 +152,10 @@ type ServiceSlice = Pick<
   | 'dataService'
   | 'initDataService'
   | 'syncMode'
+  | 'currentUser'
   | 'lastSyncAt'
   | 'updateLastSync'
+  | 'signOut'
 >;
 
 type SmartQueueSlice = Pick<
@@ -166,22 +177,34 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
   dataService: new MockAdapter(),
 
   syncMode: 'mock',
+  currentUser: null,
   lastSyncAt: null,
 
   initDataService: async (type) => {
     try {
       let service: DataService;
+      let userInfo: { id: string; email?: string | null } | null = null;
       if (type === 'supabase') {
         const { SupabaseAdapter } = await import('../lib/storage/SupabaseAdapter');
-        service = new SupabaseAdapter(
-          import.meta.env.VITE_SUPABASE_URL || '',
-          import.meta.env.VITE_SUPABASE_ANON_KEY || ''
-        );
+        service = new SupabaseAdapter();
       } else {
         service = new MockAdapter();
       }
       await service.init();
-      set({ dataService: service, syncMode: type, lastSyncAt: new Date() });
+      if (type === 'supabase') {
+        const client = getSupabaseClient();
+        if (client) {
+          try {
+            const { data } = await client.auth.getUser();
+            if (data.user) {
+              userInfo = { id: data.user.id, email: data.user.email };
+            }
+          } catch (e) {
+            console.error('Failed to resolve current user after initDataService', e);
+          }
+        }
+      }
+      set({ dataService: service, syncMode: type, currentUser: userInfo, lastSyncAt: new Date() });
       await get().loadVaults();
       await get().loadAllMetadata();
       await get().loadReviewHistory();
@@ -193,6 +216,19 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
 
   updateLastSync: () => {
     set({ lastSyncAt: new Date() });
+  },
+
+  signOut: async () => {
+    try {
+      const client = getSupabaseClient();
+      if (client) {
+        await client.auth.signOut();
+      }
+    } catch (e) {
+      console.error('Failed to sign out from Supabase', e);
+    }
+    // Switch back to local-only mode
+    await get().initDataService('mock');
   },
 });
 
@@ -294,6 +330,8 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
     const meta = fileMetadatas[filepath];
     if (!meta) return;
 
+    const prevCard = meta.cards[row.cloze_index];
+
     // Construct updated card
     const updatedCard = {
       ...createEmptyCard(), // Start with defaults
@@ -307,6 +345,15 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
       lapses: row.lapses,
       last_review: row.last_review ? new Date(row.last_review) : undefined
     };
+
+    const fsrsChanged = !prevCard ||
+      prevCard.state !== updatedCard.state ||
+      prevCard.reps !== updatedCard.reps ||
+      prevCard.lapses !== updatedCard.lapses ||
+      prevCard.stability !== updatedCard.stability ||
+      prevCard.difficulty !== updatedCard.difficulty ||
+      (prevCard.due?.getTime() ?? 0) !== (updatedCard.due?.getTime() ?? 0) ||
+      (prevCard.last_review?.getTime() ?? 0) !== (updatedCard.last_review?.getTime() ?? 0);
 
     const newMeta = {
       ...meta,
@@ -330,7 +377,52 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
     }
 
     set(updates);
-    useToastStore.getState().addToast(`External update: ${filepath.split('/').pop()}`, 'info');
+
+    const isSelfReview = !!(
+      lastLocalReview &&
+      row.note_id === lastLocalReview.noteId &&
+      row.cloze_index === lastLocalReview.clozeIndex &&
+      Date.now() - lastLocalReview.time < 5000
+    );
+
+    // For self-initiated reviews we already showed a detailed toast
+    // when the user graded the card. Still update state, but skip
+    // repeating the FSRS info here.
+    if (isSelfReview) {
+      return;
+    }
+
+    if (fsrsChanged) {
+      const noteName = filepath.split(/[\\/]/).pop() || filepath;
+
+      let dueText: string | null = null;
+      if (row.due) {
+        const dueDate = new Date(row.due);
+        if (!isNaN(dueDate.getTime())) {
+          dueText = formatDistanceToNow(dueDate, { addSuffix: true });
+        }
+      }
+
+      const state = typeof row.state === 'number' ? row.state : undefined;
+      let stateLabel = '';
+      if (state === 0) stateLabel = 'New';
+      else if (state === 1) stateLabel = 'Learning';
+      else if (state === 2) stateLabel = 'Review';
+      else if (state === 3) stateLabel = 'Relearning';
+
+      const parts: string[] = [];
+      parts.push(`${noteName} c${row.cloze_index}`);
+      if (stateLabel) parts.push(stateLabel);
+      if (dueText) parts.push(`next ${dueText}`);
+      if (typeof row.stability === 'number') {
+        parts.push(`stability ${row.stability.toFixed(2)}`);
+      }
+
+      const message = `Review state updated: ${parts.join(' • ')}`;
+      useToastStore.getState().addToast(message, 'info');
+    } else {
+      useToastStore.getState().addToast(`External update: ${filepath.split('/').pop()}`, 'info');
+    }
   },
 });
 
@@ -416,8 +508,38 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
         return false;
       }
 
+      // Immediate FSRS-based feedback (label, next due, stability)
+      let ratingLabel = '';
+      if (rating === 1) ratingLabel = 'Again';
+      else if (rating === 2) ratingLabel = 'Hard';
+      else if (rating === 3) ratingLabel = 'Good';
+      else if (rating === 4) ratingLabel = 'Easy';
+
+      let dueText: string | null = null;
+      const dueDate = record.card.due ? new Date(record.card.due as any) : null;
+      if (dueDate && !isNaN(dueDate.getTime())) {
+        dueText = formatDistanceToNow(dueDate, { addSuffix: true });
+      }
+
+      const feedbackParts: string[] = [];
+      if (ratingLabel) feedbackParts.push(ratingLabel);
+      if (dueText) feedbackParts.push(`next ${dueText}`);
+      if (typeof record.card.stability === 'number') {
+        feedbackParts.push(`stability ${record.card.stability.toFixed(2)}`);
+      }
+
+      if (feedbackParts.length > 0) {
+        const toastType = rating === 1 ? 'error' : rating === 2 ? 'warning' : rating === 3 ? 'info' : 'success';
+        useToastStore.getState().addToast(feedbackParts.join(' • '), toastType as any);
+      }
+
       // Use noteId if available, fallback to filepath
       const noteId = currentMetadata.noteId || currentFilepath;
+
+      // Mark this as the latest local review to avoid duplicate
+      // realtime toasts for the same note/cloze.
+      lastLocalReview = { noteId, clozeIndex: currentClozeIndex, time: Date.now() };
+
       await dataService.saveReview(noteId, currentClozeIndex, record.card, record.log);
 
       const newMetadata: NoteMetadata = {
@@ -454,7 +576,10 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
         if (nextIndex < queue.length) {
           set({ sessionIndex: nextIndex });
           const nextItem = queue[nextIndex];
-          await loadNote(nextItem.filepath, nextItem.clozeIndex);
+          // Fire-and-forget load of the next card to keep grading
+          // flow snappy; loadNote itself will handle errors and
+          // update metadata when ready.
+          loadNote(nextItem.filepath, nextItem.clozeIndex);
         } else {
           // Session Complete
           set({
@@ -488,7 +613,7 @@ const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
 
   loadNote: async (filepath, targetClozeIndex = null) => {
     try {
-      const { contentCache, rootPath } = get();
+      const { contentCache, rootPath, fileMetadatas } = get();
       let content = contentCache[filepath] || '';
       let noteId = get().pathMap[filepath];
 
@@ -572,6 +697,18 @@ $$}}
       }
 
       const parsed = parseNote(content);
+      const { viewMode } = get();
+      const targetMode = ['edit', 'test', 'master'].includes(viewMode) ? viewMode : 'review';
+      const cachedMeta = fileMetadatas[filepath] || null;
+
+      set({
+        currentFilepath: filepath,
+        currentNote: parsed,
+        currentMetadata: cachedMeta,
+        currentClozeIndex: targetClozeIndex, // Set the focus
+        viewMode: targetMode
+      });
+
       // Pass noteId if available, otherwise fallback to filepath
       const metadata = await get().dataService.getMetadata(noteId || '', filepath);
 
@@ -580,27 +717,24 @@ $$}}
         metadata.noteId = noteId;
 
         // Update fileMetadatas with the discovered ID
-        const { fileMetadatas } = get();
-        if (fileMetadatas[filepath]) {
+        const latestMetas = get().fileMetadatas;
+        if (latestMetas[filepath]) {
           set({
             fileMetadatas: {
-              ...fileMetadatas,
-              [filepath]: { ...fileMetadatas[filepath], noteId }
+              ...latestMetas,
+              [filepath]: { ...latestMetas[filepath], noteId }
             }
           });
         }
       }
 
-      const { viewMode } = get();
-      const targetMode = ['edit', 'test', 'master'].includes(viewMode) ? viewMode : 'review';
-
-      set({
-        currentFilepath: filepath,
-        currentNote: parsed,
-        currentMetadata: metadata,
-        currentClozeIndex: targetClozeIndex, // Set the focus
-        viewMode: targetMode
-      });
+      set(state => ({
+        currentMetadata: state.currentFilepath === filepath ? metadata : state.currentMetadata,
+        fileMetadatas: {
+          ...state.fileMetadatas,
+          [filepath]: metadata
+        }
+      }));
     } catch (e) {
       console.error("Failed to load note:", e);
       const errorMessage = e instanceof Error ? e.message : String(e);

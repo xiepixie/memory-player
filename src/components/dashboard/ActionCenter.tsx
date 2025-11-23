@@ -198,7 +198,11 @@ export const ActionCenter = ({
                                     <Layers size={20} />
                                     <span className="font-bold text-lg">Smart Review</span>
                                 </div>
-                                {primaryAction === 'review' && <span className="badge badge-sm bg-white/20 border-0 text-white">Recommended</span>}
+                                {primaryAction === 'review' && (
+                                    <span className="badge badge-sm bg-primary-content/10 border-0 text-primary-content">
+                                        Recommended
+                                    </span>
+                                )}
                             </div>
 
                             <div className="w-full space-y-3 mt-1">
@@ -209,15 +213,21 @@ export const ActionCenter = ({
                                         </span>
                                         <span className="text-xs font-medium opacity-70 mt-1">Cards</span>
                                     </div>
-                                    <div className="flex items-center gap-1 text-xs font-medium opacity-80 bg-black/10 px-2 py-1 rounded">
+                                    <div className="flex items-center gap-1 text-xs font-medium opacity-80 bg-primary-content/10 text-primary-content px-2 py-1 rounded">
                                         <Clock size={12} /> ~{estReviewTime} min
                                     </div>
                                 </div>
 
                                 {/* Mini bar chart for composition */}
-                                <div className="flex h-1.5 w-full bg-black/10 rounded-full overflow-hidden">
-                                    <div className="bg-error h-full" style={{ width: `${dueItems.length > 0 ? (overdueItems.length / dueItems.length) * 100 : 0}%` }} />
-                                    <div className="bg-white/80 h-full" style={{ width: `${dueItems.length > 0 ? 100 - (overdueItems.length / dueItems.length) * 100 : 100}%` }} />
+                                <div className="flex h-1.5 w-full bg-base-100/20 rounded-full overflow-hidden">
+                                    <div
+                                        className="bg-error h-full"
+                                        style={{ width: `${dueItems.length > 0 ? (overdueItems.length / dueItems.length) * 100 : 0}%` }}
+                                    />
+                                    <div
+                                        className="bg-success h-full"
+                                        style={{ width: `${dueItems.length > 0 ? 100 - (overdueItems.length / dueItems.length) * 100 : 100}%` }}
+                                    />
                                 </div>
                                 <div className="flex justify-between text-[10px] font-medium opacity-70">
                                     <span>{overdueItems.length} Overdue</span>
@@ -240,7 +250,11 @@ export const ActionCenter = ({
                                     <GraduationCap size={20} />
                                     <span className="font-bold text-lg">Learn New</span>
                                 </div>
-                                {primaryAction === 'learn' && <span className="badge badge-sm bg-white/20 border-0 text-white">Recommended</span>}
+                                {primaryAction === 'learn' && (
+                                    <span className="badge badge-sm bg-info-content/10 border-0 text-info-content">
+                                        Recommended
+                                    </span>
+                                )}
                             </div>
 
                             <div className="w-full space-y-3 mt-1">
@@ -251,13 +265,13 @@ export const ActionCenter = ({
                                         </span>
                                         <span className="text-xs font-medium opacity-70 mt-1">New Concepts</span>
                                     </div>
-                                    <div className="flex items-center gap-1 text-xs font-medium opacity-80 bg-black/10 px-2 py-1 rounded">
+                                    <div className="flex items-center gap-1 text-xs font-medium opacity-80 bg-info-content/10 text-info-content px-2 py-1 rounded">
                                         <Clock size={12} /> ~{estLearnTime} min
                                     </div>
                                 </div>
 
-                                <div className="w-full h-1.5 bg-black/10 rounded-full overflow-hidden">
-                                    <div className="bg-white/80 h-full w-full" />
+                                <div className="w-full h-1.5 bg-base-100/20 rounded-full overflow-hidden">
+                                    <div className="bg-info-content/80 h-full w-full" />
                                 </div>
                                 <div className="text-[10px] font-medium opacity-70">
                                     Expand your knowledge graph

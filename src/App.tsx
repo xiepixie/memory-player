@@ -1,7 +1,12 @@
 import { Layout } from "./components/Layout";
+import { AuthGate } from "./components/AuthGate";
 
 function App() {
-  return <Layout />;
+  return (
+    <AuthGate>
+      <Layout />
+    </AuthGate>
+  );
 }
 
 export default App;

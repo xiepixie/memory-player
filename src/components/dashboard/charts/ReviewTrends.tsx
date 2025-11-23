@@ -45,8 +45,8 @@ export const ReviewTrends = ({ distribution }: { distribution: Record<number, nu
             <div className="flex flex-col gap-4 h-full">
                  {/* Insight Banner */}
                  <div className={`text-[10px] px-2 py-1 rounded border flex items-center gap-2
-                    ${status === 'warning' ? 'bg-warning/10 border-warning/20 text-warning-content' : 
-                      status === 'success' ? 'bg-success/10 border-success/20 text-success-content' : 
+                    ${status === 'warning' ? 'bg-warning/10 border-warning/40 text-warning' : 
+                      status === 'success' ? 'bg-success/10 border-success/40 text-success' : 
                       'bg-base-200/50 border-base-content/10 opacity-70'}`}>
                     {status === 'warning' ? <AlertCircle size={12} /> : <Check size={12} />}
                     <span>{insight}</span>
@@ -69,7 +69,7 @@ export const ReviewTrends = ({ distribution }: { distribution: Record<number, nu
                                         className={`${s.color} h-full transition-all hover:opacity-80 relative group`}
                                         style={{ width: `${s.pct}%` }}
                                     >
-                                         <div className="opacity-0 group-hover:opacity-100 absolute inset-0 flex items-center justify-center text-[10px] font-bold text-black/50">
+                                         <div className="opacity-0 group-hover:opacity-100 absolute inset-0 flex items-center justify-center text-[10px] font-bold text-base-content/70">
                                             {s.pct.toFixed(0)}%
                                          </div>
                                     </div>

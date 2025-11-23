@@ -6,7 +6,7 @@ import { fileSystem } from '../lib/services/fileSystem';
 import { useToastStore } from '../store/toastStore';
 
 export function useVaultWatcher() {
-    const { rootPath, dataService, updateLastSync, currentVault } = useAppStore();
+    const rootPath = useAppStore((state) => state.rootPath);
     const addToast = useToastStore((state) => state.addToast);
     const watcherRef = useRef<(() => void | Promise<void>) | null>(null);
     const processingRef = useRef<Set<string>>(new Set());
@@ -48,13 +48,15 @@ export function useVaultWatcher() {
                         // We are interested in modifications to .md files
                         if (!event.paths || event.paths.length === 0) return;
 
+                        const { dataService, updateLastSync, currentVault, pathMap } = useAppStore.getState();
+
                         // Handle deletions via soft-delete
                         const kind = (event as any).kind ?? (event as any).type;
                         if (kind === 'remove') {
                             for (const path of event.paths) {
                                 if (!path.endsWith('.md')) continue;
 
-                                const noteId = useAppStore.getState().pathMap[path];
+                                const noteId = pathMap[path];
                                 if (!noteId) continue;
 
                                 try {
@@ -130,5 +132,5 @@ export function useVaultWatcher() {
             cancelled = true;
             cleanupWatcher();
         };
-    }, [rootPath, dataService, currentVault]);
+    }, [rootPath]);
 }

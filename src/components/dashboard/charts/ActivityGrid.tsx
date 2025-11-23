@@ -68,28 +68,35 @@ export const ActivityGrid = () => {
 
     const { weeks, months } = useMemo(() => {
         const today = new Date();
+        const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
         const numWeeks = 20; 
         let current = subDays(today, (numWeeks * 7) - 1);
         current = startOfWeek(current, { weekStartsOn: 1 }); 
 
-        const grid: { date: string; count: number; inFuture: boolean; fullDate: string }[][] = [];
+        const grid: { date: string; count: number; inFuture: boolean; fullDate: string; isToday: boolean }[][] = [];
         const monthLabels: { label: string; col: number }[] = [];
 
         for (let w = 0; w < numWeeks; w++) {
-            const week: { date: string; count: number; inFuture: boolean; fullDate: string }[] = [];
+            const week: { date: string; count: number; inFuture: boolean; fullDate: string; isToday: boolean }[] = [];
             const weekStart = addDays(current, 0);
             if (weekStart.getDate() <= 7) {
-                monthLabels.push({ label: format(weekStart, 'MMM'), col: w });
+                const baseLabel = format(weekStart, 'MMM');
+                const label = monthLabels.length === 0
+                    ? `${baseLabel} ${format(weekStart, 'yyyy')}`
+                    : baseLabel;
+                monthLabels.push({ label, col: w });
             }
 
             for (let d = 0; d < 7; d++) {
                 const date = addDays(current, d);
                 const key = format(date, 'yyyy-MM-dd');
+                const isToday = date.getTime() === todayMidnight.getTime();
                 week.push({
                     date: key,
                     fullDate: format(date, 'MMM d, yyyy'),
                     count: activityMap[key] || 0,
                     inFuture: date > today,
+                    isToday,
                 });
             }
             grid.push(week);
@@ -140,7 +147,11 @@ export const ActivityGrid = () => {
                     {/* Month Labels */}
                     <div className="flex mb-2 text-[10px] opacity-40 font-bold uppercase tracking-wider h-4 relative w-full">
                         {months.map((m, i) => (
-                            <span key={i} style={{ left: `${(m.col / weeks.length) * 100}%` }} className="absolute">
+                            <span
+                                key={i}
+                                style={{ left: `${((m.col + 0.5) / weeks.length) * 100}%` }}
+                                className="absolute -translate-x-1/2"
+                            >
                                 {m.label}
                             </span>
                         ))}
@@ -153,7 +164,7 @@ export const ActivityGrid = () => {
                                     <div
                                         key={day.date}
                                         className={`w-full h-full rounded-[1px] transition-all duration-300 relative group
-                                            ${day.inFuture ? 'opacity-0' : getColor(day.count)}`}
+                                            ${day.inFuture ? 'opacity-0' : getColor(day.count)} ${day.isToday ? 'ring-1 ring-primary/80' : ''}`}
                                     >
                                         {/* Tooltip */}
                                         {!day.inFuture && (

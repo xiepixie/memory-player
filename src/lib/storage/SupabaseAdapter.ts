@@ -1,16 +1,13 @@
 import { Card, ReviewLog, createEmptyCard } from 'ts-fsrs';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient } from '@supabase/supabase-js';
 import { DataService, NoteMetadata, Vault } from './types';
+import { getSupabaseClient } from '../supabaseClient';
 import { MarkdownSplitter } from '../markdown/splitter';
 import { parseNote } from '../markdown/parser';
 
-// Singleton Supabase client to avoid multiple GoTrueClient instances
-let supabaseSingleton: SupabaseClient | null = null;
-
 export class SupabaseAdapter implements DataService {
   private supabase: SupabaseClient | null = null;
-
-  constructor(private supabaseUrl: string, private supabaseKey: string) { }
+  private vaultRootCache = new Map<string, string | null>();
 
   /**
    * Ensures there is at least one vault for the current user and returns its ID.
@@ -57,36 +54,28 @@ export class SupabaseAdapter implements DataService {
   }
 
   async init(): Promise<void> {
-    if (!this.supabaseUrl || !this.supabaseKey) {
+    const client = getSupabaseClient();
+    if (!client) {
       console.warn("Supabase credentials missing. Adapter will not work.");
       return;
     }
-    if (!supabaseSingleton) {
-      // Try to reuse a single client across HMR/dev reloads
-      if (typeof window !== 'undefined') {
-        const anyWindow = window as any;
-        if (anyWindow.__MP_SUPABASE_CLIENT__) {
-          supabaseSingleton = anyWindow.__MP_SUPABASE_CLIENT__ as SupabaseClient;
-        } else {
-          supabaseSingleton = createClient(this.supabaseUrl, this.supabaseKey);
-          anyWindow.__MP_SUPABASE_CLIENT__ = supabaseSingleton;
-        }
-      } else {
-        supabaseSingleton = createClient(this.supabaseUrl, this.supabaseKey);
-      }
-    }
-    this.supabase = supabaseSingleton;
+    this.supabase = client;
   }
 
   // --- Vault Management ---
   async getVaults(): Promise<Vault[]> {
     if (!this.supabase) throw new Error("Supabase not initialized");
-
-    const user = await this.supabase.auth.getUser();
-    if (!user.data.user) {
+    let userId: string | null = null;
+    try {
+      const user = await this.supabase.auth.getUser();
+      if (!user.data.user) {
+        return [];
+      }
+      userId = user.data.user.id;
+    } catch (e) {
+      console.error('Failed to get user for vaults', e);
       return [];
     }
-    const userId = user.data.user.id;
 
     const { data, error } = await this.supabase
       .from('vaults')
@@ -104,11 +93,15 @@ export class SupabaseAdapter implements DataService {
 
   async createVault(name: string, config?: Vault['config']): Promise<Vault | null> {
     if (!this.supabase) throw new Error("Supabase not initialized");
-
-    const user = await this.supabase.auth.getUser();
-    if (!user.data.user) throw new Error("User not logged in");
-
-    const userId = user.data.user.id;
+    let userId: string | null = null;
+    try {
+      const user = await this.supabase.auth.getUser();
+      if (!user.data.user) throw new Error("User not logged in");
+      userId = user.data.user.id;
+    } catch (e) {
+      console.error('Failed to get user for createVault', e);
+      throw e;
+    }
     const now = new Date().toISOString();
 
     const { data, error } = await this.supabase
@@ -187,7 +180,7 @@ export class SupabaseAdapter implements DataService {
 
     const { data, error } = await this.supabase
       .from('notes')
-      .select('id, relative_path')
+      .select('id, relative_path, vault_id')
       .eq('is_deleted', true)
       .eq('user_id', userId);
 
@@ -196,12 +189,19 @@ export class SupabaseAdapter implements DataService {
       return [];
     }
 
-    return (data || []).map((row: any) => ({
-      noteId: row.id,
-      filepath: row.relative_path,
-      cards: {},
-      lastReviews: {},
-    }));
+    const rows = data || [];
+    const results: NoteMetadata[] = [];
+    for (const row of rows as any[]) {
+      const rootPath = await this.getVaultRootPath(row.vault_id as string | null | undefined);
+      const filepath = this.toAbsolutePath(row.relative_path, rootPath);
+      results.push({
+        noteId: row.id,
+        filepath,
+        cards: {},
+        lastReviews: {},
+      });
+    }
+    return results;
   }
 
   async restoreNote(noteId: string): Promise<void> {
@@ -239,6 +239,67 @@ export class SupabaseAdapter implements DataService {
     const dist = this.levenshtein(a, b);
     const maxLength = Math.max(a.length, b.length);
     return 1 - (dist / maxLength);
+  }
+
+  private extractRootPathFromConfig(config: any): string | null {
+    if (!config) return null;
+    const rootPath = (config as any).rootPath;
+    if (typeof rootPath !== 'string') return null;
+    const trimmed = rootPath.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private toRelativePath(filepath: string, rootPath: string | null): string {
+    if (!filepath) return '';
+    const normalizedFile = filepath.replace(/\\/g, '/');
+    if (!rootPath) return normalizedFile;
+    const normalizedRoot = rootPath.replace(/\\/g, '/').replace(/\/+$/, '');
+    if (!normalizedFile.toLowerCase().startsWith(normalizedRoot.toLowerCase())) {
+      return normalizedFile;
+    }
+    let rel = normalizedFile.slice(normalizedRoot.length);
+    rel = rel.replace(/^\/+/, '');
+    return rel;
+  }
+
+  private toAbsolutePath(relativePath: string, rootPath: string | null): string {
+    if (!relativePath) return rootPath || '';
+
+    const normalized = relativePath.replace(/\\/g, '/');
+    if (/^[A-Za-z]:\//.test(normalized) || normalized.startsWith('\\\\') || normalized.startsWith('/')) {
+      return relativePath;
+    }
+
+    if (!rootPath) return relativePath;
+    const hasBackslash = rootPath.includes('\\');
+    const sep = hasBackslash ? '\\' : '/';
+    const root = rootPath.replace(/[\\/]+$/, '');
+    const rel = relativePath.replace(/^[\\/]+/, '');
+    const normalizedRel = hasBackslash ? rel.replace(/\//g, '\\') : rel;
+    return root + sep + normalizedRel;
+  }
+
+  private async getVaultRootPath(vaultId: string | null | undefined): Promise<string | null> {
+    if (!this.supabase) return null;
+    if (!vaultId) return null;
+    if (this.vaultRootCache.has(vaultId)) {
+      return this.vaultRootCache.get(vaultId) || null;
+    }
+    const { data, error } = await this.supabase
+      .from('vaults')
+      .select('config')
+      .eq('id', vaultId)
+      .single();
+
+    if (error) {
+      console.error('Failed to load vault config', error);
+      this.vaultRootCache.set(vaultId, null);
+      return null;
+    }
+
+    const rootPath = this.extractRootPathFromConfig((data as any)?.config);
+    this.vaultRootCache.set(vaultId, rootPath);
+    return rootPath;
   }
 
   /**
@@ -299,6 +360,13 @@ export class SupabaseAdapter implements DataService {
     const parsed = parseNote(content);
     const tags = parsed.frontmatter.tags || [];
 
+    const rootPath = await this.getVaultRootPath(resolvedVaultId);
+    const relativePath = this.toRelativePath(filepath, rootPath);
+    const pathForTitle = relativePath || filepath;
+    const normalizedTitlePath = pathForTitle.replace(/\\/g, '/');
+    const fileName = normalizedTitlePath.split('/').pop() || '';
+    const title = parsed.frontmatter.title || fileName || noteId;
+
     // 2. Upsert Note Record
     const { error: noteError } = await this.supabase
       .from('notes')
@@ -306,8 +374,8 @@ export class SupabaseAdapter implements DataService {
         id: noteId,
         user_id: userId,
         vault_id: resolvedVaultId,
-        relative_path: filepath,
-        title: parsed.frontmatter.title || filepath.split('/').pop(),
+        relative_path: relativePath,
+        title,
         tags,
         content_hash: hash,
         is_deleted: false,
@@ -326,6 +394,42 @@ export class SupabaseAdapter implements DataService {
     // Flatten to DB Rows (One Cloze = One Row)
     const flattenedCards = MarkdownSplitter.flattenToCards(noteId, cardsData);
 
+    const clozeMap = new Map<number, any>();
+    for (const card of flattenedCards) {
+      const existing = clozeMap.get(card.cloze_index);
+      if (!existing) {
+        clozeMap.set(card.cloze_index, card);
+      } else {
+        // MERGE STRATEGY: Concatenate content to support split-context clozes (e.g. {{c1}} in two diff paragraphs).
+        // Since flattenedCards are in document order, we append the new content to the existing one.
+        // We use double newline to preserve paragraph separation.
+        const mergedContent = existing.content_raw + '\n\n' + card.content_raw;
+        
+        const mergedTags = Array.from(
+          new Set([...(existing.tags || []), ...(card.tags || [])])
+        );
+        
+        // We keep the section_path of the *first* occurrence as the primary location anchor
+        // (or we could merge them, but the UI usually just needs one location to jump to).
+        
+        clozeMap.set(card.cloze_index, {
+          ...existing,
+          content_raw: mergedContent,
+          tags: mergedTags,
+        });
+      }
+    }
+
+    const normalizedCards = Array.from(clozeMap.values());
+
+    if (normalizedCards.length < flattenedCards.length) {
+      console.warn('Normalized duplicate cloze indices for note', {
+        noteId,
+        originalCount: flattenedCards.length,
+        normalizedCount: normalizedCards.length,
+      });
+    }
+
     // Fetch existing cards to compare content for stability adjustment
     const { data: existingCards } = await this.supabase
       .from('cards')
@@ -338,7 +442,7 @@ export class SupabaseAdapter implements DataService {
     }
 
     // Prepare Upsert Data
-    const upsertRows = flattenedCards.map(card => {
+    const upsertRows = normalizedCards.map(card => {
       const base = {
         note_id: card.note_id,
         cloze_index: card.cloze_index,
@@ -382,8 +486,8 @@ export class SupabaseAdapter implements DataService {
     }
 
     // Optional: Handle Deletions (Cards that exist in DB but not in current parse)
-    // We can find all cards for this note_id and delete those NOT in flattenedCards IDs.
-    const currentClozeIndices = flattenedCards.map(c => c.cloze_index);
+    // We can find all cards for this note_id and delete those NOT in normalizedCards IDs.
+    const currentClozeIndices = normalizedCards.map(c => c.cloze_index);
 
     if (currentClozeIndices.length > 0) {
       const { error: deleteError } = await this.supabase
@@ -485,10 +589,11 @@ export class SupabaseAdapter implements DataService {
 
     if (data) {
       data.forEach((row: any) => {
+        const baseCard = createEmptyCard();
         cards[row.cloze_index] = {
-          ...createEmptyCard(),
+          ...baseCard,
           state: row.state,
-          due: new Date(row.due),
+          due: row.due ? new Date(row.due) : baseCard.due,
           stability: row.stability,
           difficulty: row.difficulty,
           elapsed_days: row.elapsed_days,
@@ -517,34 +622,52 @@ export class SupabaseAdapter implements DataService {
         *,
         notes (
             relative_path,
-            is_deleted
+            is_deleted,
+            vault_id
         )
       `);
 
     if (error) throw error;
 
-    // Aggregate cards by note_id
+    const rows = data || [];
+    const vaultIds = new Set<string>();
+    (rows as any[]).forEach((row: any) => {
+      if (row.notes && row.notes.vault_id) {
+        vaultIds.add(row.notes.vault_id as string);
+      }
+    });
+
+    const vaultRootMap = new Map<string, string | null>();
+    for (const id of vaultIds) {
+      const rootPath = await this.getVaultRootPath(id);
+      vaultRootMap.set(id, rootPath);
+    }
+
     const map: Record<string, NoteMetadata> = {};
 
-    (data || []).forEach((row: any) => {
+    (rows as any[]).forEach((row: any) => {
       // Skip cards that belong to soft-deleted notes
       if (row.notes && row.notes.is_deleted) {
         return;
       }
       const nid = row.note_id;
       if (!map[nid]) {
+        const vaultId = row.notes ? (row.notes.vault_id as string | null | undefined) : null;
+        const rootPath = vaultId ? vaultRootMap.get(vaultId) || null : null;
+        const filepath = this.toAbsolutePath(row.notes?.relative_path || '', rootPath);
         map[nid] = {
           noteId: nid,
-          filepath: row.notes?.relative_path || '',
+          filepath,
           cards: {},
           lastReviews: {}
         };
       }
 
+      const baseCard = createEmptyCard();
       map[nid].cards[row.cloze_index] = {
-        ...createEmptyCard(),
+        ...baseCard,
         state: row.state,
-        due: new Date(row.due),
+        due: row.due ? new Date(row.due) : baseCard.due,
         stability: row.stability,
         difficulty: row.difficulty,
         elapsed_days: row.elapsed_days,
@@ -627,7 +750,8 @@ export class SupabaseAdapter implements DataService {
         due,
         notes (
           relative_path,
-          is_deleted
+          is_deleted,
+          vault_id
         )
       `)
       .lte('due', new Date().toISOString())
@@ -641,13 +765,32 @@ export class SupabaseAdapter implements DataService {
       return [];
     }
 
-    return (data || []).map((row: any) => ({
-      cardId: row.id,
-      noteId: row.note_id,
-      filepath: row.notes?.relative_path || '',
-      clozeIndex: row.cloze_index,
-      due: new Date(row.due)
-    }));
+    const rows = data || [];
+    const vaultIds = new Set<string>();
+    (rows as any[]).forEach((row: any) => {
+      if (row.notes && row.notes.vault_id) {
+        vaultIds.add(row.notes.vault_id as string);
+      }
+    });
+
+    const vaultRootMap = new Map<string, string | null>();
+    for (const id of vaultIds) {
+      const rootPath = await this.getVaultRootPath(id);
+      vaultRootMap.set(id, rootPath);
+    }
+
+    return (rows as any[]).map((row: any) => {
+      const vaultId = row.notes ? (row.notes.vault_id as string | null | undefined) : null;
+      const rootPath = vaultId ? vaultRootMap.get(vaultId) || null : null;
+      const filepath = this.toAbsolutePath(row.notes?.relative_path || '', rootPath);
+      return {
+        cardId: row.id,
+        noteId: row.note_id,
+        filepath,
+        clozeIndex: row.cloze_index,
+        due: new Date(row.due)
+      };
+    });
   }
 
   async searchCards(query: string): Promise<any[]> {
@@ -660,7 +803,8 @@ export class SupabaseAdapter implements DataService {
         notes (
           relative_path,
           title,
-          is_deleted
+          is_deleted,
+          vault_id
         )
       `)
       .ilike('content_raw', `%${query}%`)
@@ -672,7 +816,26 @@ export class SupabaseAdapter implements DataService {
       return [];
     }
 
-    return data || [];
+    const rows = data || [];
+    const vaultIds = new Set<string>();
+    (rows as any[]).forEach((row: any) => {
+      if (row.notes && row.notes.vault_id) {
+        vaultIds.add(row.notes.vault_id as string);
+      }
+    });
+
+    const vaultRootMap = new Map<string, string | null>();
+    for (const id of vaultIds) {
+      const rootPath = await this.getVaultRootPath(id);
+      vaultRootMap.set(id, rootPath);
+    }
+
+    return (rows as any[]).map((row: any) => {
+      const vaultId = row.notes ? (row.notes.vault_id as string | null | undefined) : null;
+      const rootPath = vaultId ? vaultRootMap.get(vaultId) || null : null;
+      const filepath = this.toAbsolutePath(row.notes?.relative_path || '', rootPath);
+      return { ...row, filepath };
+    });
   }
 
   async suspendCard(cardId: string, isSuspended: boolean): Promise<void> {

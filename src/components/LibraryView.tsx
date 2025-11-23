@@ -24,12 +24,14 @@ export const LibraryView = () => {
     setRootPath,
     setFiles,
     loadNote,
-    initDataService,
     loadSettings,
+    loadVaults,
     recentVaults,
     removeRecentVault,
     syncMode,
     lastSyncAt,
+    currentUser,
+    signOut,
   } = useAppStore(
     useShallow((state) => ({
       rootPath: state.rootPath,
@@ -38,12 +40,14 @@ export const LibraryView = () => {
       setRootPath: state.setRootPath,
       setFiles: state.setFiles,
       loadNote: state.loadNote,
-      initDataService: state.initDataService,
       loadSettings: state.loadSettings,
+      loadVaults: state.loadVaults,
       recentVaults: state.recentVaults,
       removeRecentVault: state.removeRecentVault,
       syncMode: state.syncMode,
       lastSyncAt: state.lastSyncAt,
+      currentUser: state.currentUser,
+      signOut: state.signOut,
     })),
   );
   const addToast = useToastStore((state) => state.addToast);
@@ -57,12 +61,19 @@ export const LibraryView = () => {
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [now, setNow] = useState(new Date());
+  const [isAccountOpen, setIsAccountOpen] = useState(false);
 
   useEffect(() => {
-    const hasSupabase = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
-    initDataService(hasSupabase ? 'supabase' : 'mock');
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    // Whenever we are in Supabase sync mode and the rootPath changes,
+    // refresh vaults from the backend so VaultSelector sees the latest data.
+    if (syncMode === 'supabase') {
+      loadVaults();
+    }
+  }, [syncMode, rootPath, loadVaults]);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 300000);
@@ -212,224 +223,291 @@ export const LibraryView = () => {
   return (
     <div className="h-full flex flex-col bg-transparent">
       {/* Navbar */}
-      <div className="navbar bg-base-100/80 backdrop-blur-md border-b border-base-200 px-4 py-2 shrink-0 sticky top-0 z-20">
-        <div className="flex flex-col gap-2 w-full">
-          <div className="flex items-center justify-between gap-4">
-            <div 
-              className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
-              onClick={() => {
-                  setRootPath(null);
-                  setFiles([]);
-              }}
-              title="Return to Home"
-            >
-               <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
-                  <Brain size={20} />
-               </div>
-               <span className="font-bold text-lg tracking-tight hidden md:inline">Memory Player</span>
+      <div className="navbar h-16 min-h-[4rem] bg-base-100/80 backdrop-blur-md border-b border-base-200 px-4 shrink-0 sticky top-0 z-20 gap-4 justify-between">
+        {/* LEFT: Brand + Vault context */}
+        <div className="flex items-center gap-4 min-w-0">
+          <div
+            className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+            onClick={() => {
+              setRootPath(null);
+              setFiles([]);
+            }}
+            title="Return to Home"
+          >
+            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+              <Brain size={20} />
             </div>
-
-            <div className="flex items-center gap-2">
-              <VaultSelector />
-              {rootPath && (
-                <div className="join bg-base-200/50 p-1 rounded-lg mr-2 border border-base-300/50">
-                  <button
-                    className={`join-item btn btn-xs btn-ghost ${viewType === 'list' ? 'bg-base-100 shadow-sm' : ''}`}
-                    onClick={() => setViewType('list')}
-                    title="List View"
-                  >
-                    <List size={14} />
-                  </button>
-                  <button
-                    className={`join-item btn btn-xs btn-ghost ${viewType === 'grid' ? 'bg-base-100 shadow-sm' : ''}`}
-                    onClick={() => setViewType('grid')}
-                    title="Grid View"
-                  >
-                    <LayoutGrid size={14} />
-                  </button>
-                  <button
-                    className={`join-item btn btn-xs btn-ghost ${viewType === 'tree' ? 'bg-base-100 shadow-sm' : ''}`}
-                    onClick={() => setViewType('tree')}
-                    title="Tree View"
-                  >
-                    <FolderTree size={14} />
-                  </button>
-                </div>
-              )}
-              {rootPath && (
-                <div className="hidden md:flex flex-col items-end text-xs mr-1">
-                  <span className="flex items-center gap-1">
-                    <Cloud
-                      size={14}
-                      className={syncMode === 'supabase' ? 'text-success' : 'text-base-content/40'}
-                    />
-                    <span className="font-medium">{syncLabel}</span>
-                  </span>
-                  <span className="text-[10px] opacity-60">{lastSyncText}</span>
-                </div>
-              )}
-              <ThemeController />
-              {rootPath && (
-                  <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    className="btn btn-sm btn-ghost gap-2"
-                    onClick={handleOpenFolder}
-                    disabled={loading}
-                >
-                    {loading ? <span className="loading loading-spinner loading-xs"></span> : <FolderOpen size={16} />}
-                    Change
-                </motion.button>
-              )}
-            </div>
+            <span className="font-bold text-lg tracking-tight hidden xl:inline">Memory Player</span>
           </div>
 
-          {/* Search Bar */}
           {rootPath && (
-             <div className="relative w-full max-w-2xl mx-auto group">
-                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-base-content/40 group-focus-within:text-primary transition-colors" />
-                 <input 
-                    ref={searchInputRef}
-                    type="text" 
-                    placeholder="Search notes by name or path..." 
-                    className="input input-md input-bordered w-full pl-10 pr-8 bg-base-200/70 focus:bg-base-100 focus:border-primary/60 rounded-full shadow-sm focus:shadow-md transition-all text-sm"
-                    value={searchQuery}
-                    onFocus={() => setIsSearchFocused(true)}
-                    onBlur={() => setTimeout(() => setIsSearchFocused(false), 100)}
-                    onChange={(e) => {
-                      setSearchQuery(e.target.value);
+            <>
+              <div className="h-6 w-px bg-base-300 mx-1 hidden sm:block" />
+              <div className="flex items-center gap-2 min-w-0">
+                <VaultSelector />
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="btn btn-sm btn-square btn-ghost text-base-content/60"
+                  onClick={handleOpenFolder}
+                  disabled={loading}
+                  title="Change folder"
+                >
+                  {loading ? (
+                    <span className="loading loading-spinner loading-xs" />
+                  ) : (
+                    <FolderOpen size={18} />
+                  )}
+                </motion.button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* CENTER: Search */}
+        {rootPath && (
+          <div className="flex-1 max-w-xl mx-auto group relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-base-content/40 group-focus-within:text-primary transition-colors z-10" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder="Search notes..."
+              className="input input-sm h-10 w-full pl-10 pr-8 bg-base-200/50 focus:bg-base-100 border-transparent focus:border-primary/20 rounded-xl transition-all shadow-sm focus:shadow-md text-sm"
+              value={searchQuery}
+              onFocus={() => setIsSearchFocused(true)}
+              onBlur={() => setTimeout(() => setIsSearchFocused(false), 100)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setHistoryIndex(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const trimmed = searchQuery.trim();
+                  if (trimmed) {
+                    setSearchHistoryByVault((prev: Record<string, string[]>) => {
+                      const current = prev[vaultKey] || [];
+                      const next = [trimmed, ...current.filter((item) => item !== trimmed)].slice(0, 10);
+                      return { ...prev, [vaultKey]: next };
+                    });
+                  }
+                  setHistoryIndex(null);
+                  setDraftBeforeHistory('');
+                  if (historyIndex !== null) {
+                    setIsSearchFocused(false);
+                  }
+                }
+
+                if (e.key === 'ArrowUp') {
+                  if (!searchHistory.length) return;
+                  e.preventDefault();
+                  setHistoryIndex((prev) => {
+                    if (searchHistory.length === 0) return prev;
+                    const nextIndex = prev === null ? 0 : Math.min(prev + 1, searchHistory.length - 1);
+                    const nextQuery = searchHistory[nextIndex] || '';
+                    if (prev === null) {
+                      setDraftBeforeHistory(searchQuery);
+                    }
+                    setSearchQuery(nextQuery);
+                    return nextIndex;
+                  });
+                }
+
+                if (e.key === 'ArrowDown') {
+                  if (!searchHistory.length) return;
+                  e.preventDefault();
+                  setHistoryIndex((prev) => {
+                    if (prev === null) return prev;
+                    if (prev === 0) {
+                      setSearchQuery(draftBeforeHistory);
+                      setDraftBeforeHistory('');
+                      return null;
+                    }
+                    const nextIndex = prev - 1;
+                    const nextQuery = searchHistory[nextIndex] || '';
+                    setSearchQuery(nextQuery);
+                    return nextIndex;
+                  });
+                }
+
+                if (e.key === 'Tab' && searchHistory.length > 0) {
+                  e.preventDefault();
+                  setHistoryIndex((prev) => {
+                    if (searchHistory.length === 0) return prev;
+                    let nextIndex: number;
+                    if (prev === null) {
+                      setDraftBeforeHistory(searchQuery);
+                      nextIndex = e.shiftKey ? searchHistory.length - 1 : 0;
+                    } else if (e.shiftKey) {
+                      nextIndex = prev === 0 ? searchHistory.length - 1 : prev - 1;
+                    } else {
+                      nextIndex = prev === searchHistory.length - 1 ? 0 : prev + 1;
+                    }
+                    const nextQuery = searchHistory[nextIndex] || '';
+                    setSearchQuery(nextQuery);
+                    return nextIndex;
+                  });
+                }
+              }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-base-content/70 transition-colors"
+                aria-label="Clear search"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+
+            {isSearchFocused && searchHistory.length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-2 rounded-xl shadow-lg bg-base-100 border border-base-200 overflow-hidden z-30">
+                <div className="flex items-center justify-between px-3 py-1.5 text-[10px] uppercase tracking-wide text-base-content/40 bg-base-100/90">
+                  <span>Recent searches</span>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setSearchHistoryByVault((prev: Record<string, string[]>) => {
+                        const next = { ...prev };
+                        delete next[vaultKey];
+                        return next;
+                      });
                       setHistoryIndex(null);
+                      setDraftBeforeHistory('');
                     }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        const trimmed = searchQuery.trim();
-                        if (trimmed) {
+                    className="text-[10px] font-medium normal-case text-primary hover:text-primary/80"
+                  >
+                    Clear vault history
+                  </button>
+                </div>
+                <ul className="max-h-60 overflow-y-auto py-1 text-sm">
+                  {searchHistory.map((query, index) => (
+                    <li key={`${query}-${index}`}>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setSearchQuery(query);
+                          setIsSearchFocused(false);
                           setSearchHistoryByVault((prev: Record<string, string[]>) => {
                             const current = prev[vaultKey] || [];
-                            const next = [trimmed, ...current.filter((item) => item !== trimmed)].slice(0, 10);
+                            const next = [query, ...current.filter((item) => item !== query)].slice(0, 10);
                             return { ...prev, [vaultKey]: next };
                           });
-                        }
-                        setHistoryIndex(null);
-                        setDraftBeforeHistory('');
-                        if (historyIndex !== null) {
-                          setIsSearchFocused(false);
-                        }
-                      }
+                        }}
+                        className={`flex w-full items-center justify-between px-3 py-1.5 text-left hover:bg-base-200/80 ${historyIndex === index ? 'bg-base-200/80' : ''}`}
+                      >
+                        <span className="truncate">{query}</span>
+                        <span className="ml-2 flex items-center text-base-content/40">
+                          <Clock size={12} />
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
 
-                      if (e.key === 'ArrowUp') {
-                        if (!searchHistory.length) return;
-                        e.preventDefault();
-                        setHistoryIndex(prev => {
-                          if (searchHistory.length === 0) return prev;
-                          const nextIndex = prev === null ? 0 : Math.min(prev + 1, searchHistory.length - 1);
-                          const nextQuery = searchHistory[nextIndex] || '';
-                          if (prev === null) {
-                            setDraftBeforeHistory(searchQuery);
-                          }
-                          setSearchQuery(nextQuery);
-                          return nextIndex;
-                        });
-                      }
+        {/* RIGHT: View toggles + Account/Cloud + Theme */}
+        <div className="flex items-center gap-3 shrink-0">
+          {rootPath && (
+            <>
+              <div className="join bg-base-200/50 p-0.5 rounded-lg hidden lg:flex">
+                <button
+                  className={`join-item btn btn-xs btn-ghost ${viewType === 'list' ? 'bg-base-100 shadow-sm' : ''}`}
+                  onClick={() => setViewType('list')}
+                  title="List View"
+                >
+                  <List size={14} />
+                </button>
+                <button
+                  className={`join-item btn btn-xs btn-ghost ${viewType === 'grid' ? 'bg-base-100 shadow-sm' : ''}`}
+                  onClick={() => setViewType('grid')}
+                  title="Grid View"
+                >
+                  <LayoutGrid size={14} />
+                </button>
+                <button
+                  className={`join-item btn btn-xs btn-ghost ${viewType === 'tree' ? 'bg-base-100 shadow-sm' : ''}`}
+                  onClick={() => setViewType('tree')}
+                  title="Tree View"
+                >
+                  <FolderTree size={14} />
+                </button>
+              </div>
 
-                      if (e.key === 'ArrowDown') {
-                        if (!searchHistory.length) return;
-                        e.preventDefault();
-                        setHistoryIndex(prev => {
-                          if (prev === null) return prev;
-                          if (prev === 0) {
-                            setSearchQuery(draftBeforeHistory);
-                            setDraftBeforeHistory('');
-                            return null;
-                          }
-                          const nextIndex = prev - 1;
-                          const nextQuery = searchHistory[nextIndex] || '';
-                          setSearchQuery(nextQuery);
-                          return nextIndex;
-                        });
-                      }
-
-                      if (e.key === 'Tab' && searchHistory.length > 0) {
-                        e.preventDefault();
-                        setHistoryIndex(prev => {
-                          if (searchHistory.length === 0) return prev;
-                          let nextIndex: number;
-                          if (prev === null) {
-                            setDraftBeforeHistory(searchQuery);
-                            nextIndex = e.shiftKey ? searchHistory.length - 1 : 0;
-                          } else if (e.shiftKey) {
-                            nextIndex = prev === 0 ? searchHistory.length - 1 : prev - 1;
-                          } else {
-                            nextIndex = prev === searchHistory.length - 1 ? 0 : prev + 1;
-                          }
-                          const nextQuery = searchHistory[nextIndex] || '';
-                          setSearchQuery(nextQuery);
-                          return nextIndex;
-                        });
-                      }
-                    }}
-                 />
-                 {searchQuery && (
+              <div className="relative">
+                {syncMode === 'supabase' && currentUser ? (
+                  <div className="flex items-center">
                     <button
                       type="button"
-                      onClick={() => setSearchQuery('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-base-content/70 transition-colors"
-                      aria-label="Clear search"
+                      onClick={() => setIsAccountOpen((open) => !open)}
+                      className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full hover:bg-base-200 transition-colors border border-transparent hover:border-base-300"
                     >
-                      <X className="w-3 h-3" />
+                      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary to-primary-focus text-primary-content flex items-center justify-center text-xs font-bold shadow-sm ring-2 ring-base-100">
+                        {(currentUser.email || '?').slice(0, 1).toUpperCase()}
+                      </div>
+                      <div className="flex flex-col items-start leading-none">
+                        <span className="text-[10px] font-bold opacity-80">My Vault</span>
+                        <span className="text-[9px] font-mono opacity-50 flex items-center gap-1">
+                          <div className="w-1.5 h-1.5 rounded-full bg-success" />
+                          Synced
+                        </span>
+                      </div>
                     </button>
-                 )}
 
-                 {isSearchFocused && searchHistory.length > 0 && (
-                   <div className="absolute left-0 right-0 mt-2 rounded-xl shadow-lg bg-base-100 border border-base-200 overflow-hidden z-20">
-                     <div className="flex items-center justify-between px-3 py-1.5 text-[10px] uppercase tracking-wide text-base-content/40 bg-base-100/90">
-                       <span>Recent searches</span>
-                       <button
-                         type="button"
-                         onMouseDown={(e) => e.preventDefault()}
-                         onClick={() => {
-                           setSearchHistoryByVault((prev: Record<string, string[]>) => {
-                             const next = { ...prev };
-                             delete next[vaultKey];
-                             return next;
-                           });
-                           setHistoryIndex(null);
-                           setDraftBeforeHistory('');
-                         }}
-                         className="text-[10px] font-medium normal-case text-primary hover:text-primary/80"
-                       >
-                         Clear vault history
-                       </button>
-                     </div>
-                     <ul className="max-h-60 overflow-y-auto py-1 text-sm">
-                       {searchHistory.map((query, index) => (
-                         <li key={`${query}-${index}`}>
-                           <button
-                             type="button"
-                             onMouseDown={(e) => e.preventDefault()}
-                             onClick={() => {
-                               setSearchQuery(query);
-                               setIsSearchFocused(false);
-                               setSearchHistoryByVault((prev: Record<string, string[]>) => {
-                                 const current = prev[vaultKey] || [];
-                                 const next = [query, ...current.filter((item) => item !== query)].slice(0, 10);
-                                 return { ...prev, [vaultKey]: next };
-                               });
-                             }}
-                             className={`flex w-full items-center justify-between px-3 py-1.5 text-left hover:bg-base-200/80 ${historyIndex === index ? 'bg-base-200/80' : ''}`}
-                           >
-                             <span className="truncate">{query}</span>
-                             <span className="ml-2 flex items-center text-base-content/40">
-                               <Clock size={12} />
-                             </span>
-                           </button>
-                         </li>
-                       ))}
-                     </ul>
-                   </div>
-                 )}
-             </div>
+                    {isAccountOpen && (
+                      <div className="absolute right-0 top-full mt-2 w-64 bg-base-100 rounded-xl shadow-xl border border-base-200 overflow-hidden z-50">
+                        <div className="p-4 bg-base-200/30 border-b border-base-200">
+                          <div className="text-xs font-bold text-base-content/60 uppercase tracking-wider mb-1">
+                            Signed in as
+                          </div>
+                          <div className="font-bold truncate">{currentUser.email}</div>
+                          <div className="text-xs opacity-50 mt-1 font-mono">{currentUser.id}</div>
+                        </div>
+                        <div className="p-2 space-y-1">
+                          <div className="px-3 py-2 text-xs flex justify-between items-center bg-base-200/50 rounded-lg">
+                            <span className="opacity-70">Cloud Sync</span>
+                            <span className="text-success font-bold flex items-center gap-1.5">
+                              <Cloud size={12} /> Active
+                            </span>
+                          </div>
+                          <div className="px-3 py-1 text-[10px] opacity-40 text-right">{lastSyncText}</div>
+                        </div>
+                        <div className="divider my-0" />
+                        <div className="p-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setIsAccountOpen(false);
+                              await signOut();
+                            }}
+                            className="btn btn-sm btn-ghost w-full text-error justify-start gap-2 hover:bg-error/10"
+                          >
+                            <span className="w-2 h-2 rounded-full bg-error" />
+                            Sign out to local-only mode
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    className="flex items-center gap-2 px-2 py-1 bg-base-200/50 rounded-lg text-xs opacity-60"
+                    title="Cloud sync disabled"
+                  >
+                    <Cloud size={14} />
+                    <span className="hidden sm:inline">{syncLabel}</span>
+                  </div>
+                )}
+              </div>
+            </>
           )}
+
+          <ThemeController />
         </div>
       </div>
 
@@ -686,19 +764,22 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
                                             if (!meta?.cards) return null;
                                             const cards = Object.values(meta.cards) as Card[];
                                             if (cards.length === 0) return null;
-                                            
-                                            // Find the earliest due date
-                                            const earliest = cards.reduce((prev, curr) => {
+
+                                            const scheduled = cards.filter((c) => c.reps > 0 && c.due);
+                                            if (scheduled.length === 0) return null;
+
+                                            const earliest = scheduled.reduce((prev, curr) => {
                                                 return new Date(prev.due) < new Date(curr.due) ? prev : curr;
                                             });
-                                            
-                                            if (!earliest.due) return null;
+
+                                            const earliestDate = new Date(earliest.due);
+                                            if (!earliestDate || isNaN(earliestDate.getTime())) return null;
 
                                             return (
                                                 <div className="text-xs font-mono opacity-50 bg-base-200 px-2 py-1 rounded flex gap-2 items-center">
                                                     <span>{cards.length} cards</span>
                                                     <span>•</span>
-                                                    <span>{formatDistanceToNow(new Date(earliest.due), { addSuffix: true })}</span>
+                                                    <span>{formatDistanceToNow(earliestDate, { addSuffix: true })}</span>
                                                 </div>
                                             );
                                         })()}
@@ -725,12 +806,20 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
                                         const cards = Object.values(meta.cards) as Card[];
                                         const count = cards.length;
                                         if (count === 0) return null;
-                                        
-                                        const earliest = cards.reduce((prev, curr) => new Date(prev.due) < new Date(curr.due) ? prev : curr);
+
+                                        const scheduled = cards.filter((c) => c.reps > 0 && c.due);
+                                        if (scheduled.length === 0) return null;
+
+                                        const earliest = scheduled.reduce((prev, curr) =>
+                                            new Date(prev.due) < new Date(curr.due) ? prev : curr,
+                                        );
+
+                                        const earliestDate = new Date(earliest.due);
+                                        if (!earliestDate || isNaN(earliestDate.getTime())) return null;
 
                                         return (
                                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-base-200 opacity-60`}>
-                                                {formatDistanceToNow(new Date(earliest.due))}
+                                                {formatDistanceToNow(earliestDate)}
                                             </span>
                                         );
                                     })()}
