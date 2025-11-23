@@ -54,6 +54,8 @@ CREATE TABLE public.notes (
 );
 
 CREATE INDEX idx_notes_tags ON public.notes USING GIN(tags);
+-- Index to accelerate vault-scoped queries and soft-delete filtering
+CREATE INDEX idx_notes_vault_id_is_deleted ON public.notes(vault_id, is_deleted);
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Owner manage notes" ON public.notes FOR ALL USING (auth.uid() = user_id);
 
@@ -103,6 +105,9 @@ ON public.cards (note_id, cloze_index)
 WHERE is_deleted = false;
 CREATE INDEX idx_cards_note_id ON public.cards(note_id);
 CREATE INDEX idx_cards_due ON public.cards(due); -- Critical for "Get Due Cards"
+-- Partial index optimized for Smart Queue (active, non-suspended cards)
+CREATE INDEX idx_cards_due_active ON public.cards(due)
+WHERE is_deleted = false AND is_suspended = false;
 CREATE INDEX idx_cards_tags ON public.cards USING GIN(tags); 
 CREATE INDEX idx_cards_content_search ON public.cards USING GIN(content_raw gin_trgm_ops);
 
@@ -165,11 +170,14 @@ BEGIN
     END IF;
 
     -- 2. Find Card ID (Hidden Lookup)
+    -- [Fix]: Must filter by is_deleted = false to avoid targeting soft-deleted rows
+    -- that might share the same note_id/cloze_index due to the partial index constraint.
     SELECT id INTO v_card_id
     FROM public.cards
     WHERE note_id = p_note_id
       AND cloze_index = p_cloze_index
       AND user_id = v_user_id
+      AND is_deleted = false
     LIMIT 1;
 
     IF v_card_id IS NULL THEN
@@ -177,6 +185,7 @@ BEGIN
     END IF;
 
     -- 3. Update Card
+    -- [Optimization]: Removed explicit updated_at = NOW(), relying on the existing Trigger.
     UPDATE public.cards SET
         state = (p_card_update->>'state')::int,
         due = (p_card_update->>'due')::timestamptz,
@@ -187,12 +196,11 @@ BEGIN
         learning_steps = (p_card_update->>'learning_steps')::int,
         reps = (p_card_update->>'reps')::int,
         lapses = (p_card_update->>'lapses')::int,
-        last_review = (p_card_update->>'last_review')::timestamptz,
-        updated_at = NOW()
+        last_review = (p_card_update->>'last_review')::timestamptz
     WHERE id = v_card_id;
 
     -- 4. Insert Log
-    -- FIXED: Read scheduled_days, elapsed_days, last_elapsed_days from p_review_log
+    -- [Optimization]: Added COALESCE for duration_ms for consistency.
     INSERT INTO public.review_logs (
         card_id, user_id, 
         grade, state, due, stability, difficulty, 
@@ -206,10 +214,10 @@ BEGIN
         (p_review_log->>'due')::timestamptz,
         (p_review_log->>'stability')::float,
         (p_review_log->>'difficulty')::float,
-        (p_review_log->>'duration_ms')::int,
+        COALESCE((p_review_log->>'duration_ms')::int, 0),
         (p_review_log->>'reviewed_at')::timestamptz,
         
-        -- Fix: Use log values, fallback to 0/update if missing (though Adapter should provide them now)
+        -- Fix: Use log values, fallback to 0 if missing
         COALESCE((p_review_log->>'scheduled_days')::int, 0),
         COALESCE((p_review_log->>'elapsed_days')::float, 0),
         COALESCE((p_review_log->>'last_elapsed_days')::float, 0),

@@ -244,7 +244,7 @@ export class MockAdapter implements DataService {
     return allCards.sort((a, b) => a.due.getTime() - b.due.getTime()).slice(0, limit);
   }
 
-  async searchCards(_query: string): Promise<any[]> {
+  async searchCards(_query: string, _vaultId?: string): Promise<any[]> {
     // Mock implementation: simple content search is hard without content stored in cards
     // We only store FSRS state in cards in MockAdapter.
     // So we return empty for now, or we could search file content if we had access to it here.

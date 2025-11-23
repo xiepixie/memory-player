@@ -1,6 +1,6 @@
 import { Card, ReviewLog, createEmptyCard } from 'ts-fsrs';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { DataService, NoteMetadata, Vault } from './types';
+import { DataService, NoteMetadata, Vault, QueueItem } from './types';
 import { getSupabaseClient } from '../supabaseClient';
 import { MarkdownSplitter } from '../markdown/splitter';
 import { parseNote } from '../markdown/parser';
@@ -851,10 +851,10 @@ export class SupabaseAdapter implements DataService {
 
   // --- Smart Queue & Actions ---
 
-  async getDueCards(limit: number = 50): Promise<any[]> {
+  async getDueCards(limit: number = 50, vaultId?: string): Promise<QueueItem[]> {
     if (!this.supabase) throw new Error("Supabase not initialized");
 
-    const { data, error } = await this.supabase
+    let query = this.supabase
       .from('cards')
       .select(`
         id,
@@ -870,7 +870,14 @@ export class SupabaseAdapter implements DataService {
       .lte('due', new Date().toISOString())
       .eq('is_suspended', false)
       .eq('is_deleted', false)
-      .eq('notes.is_deleted', false)
+      .eq('notes.is_deleted', false);
+
+    // When a vault is explicitly selected, scope Smart Queue to that vault
+    if (vaultId) {
+      query = query.eq('notes.vault_id', vaultId);
+    }
+
+    const { data, error } = await query
       .order('due', { ascending: true })
       .limit(limit);
 
@@ -879,9 +886,9 @@ export class SupabaseAdapter implements DataService {
       throw error;
     }
 
-    const rows = data || [];
+    const rows = (data || []) as any[];
     const vaultIds = new Set<string>();
-    (rows as any[]).forEach((row: any) => {
+    rows.forEach((row: any) => {
       if (row.notes && row.notes.vault_id) {
         vaultIds.add(row.notes.vault_id as string);
       }
@@ -893,9 +900,9 @@ export class SupabaseAdapter implements DataService {
       vaultRootMap.set(id, rootPath);
     }
 
-    return (rows as any[]).map((row: any) => {
-      const vaultId = row.notes ? (row.notes.vault_id as string | null | undefined) : null;
-      const rootPath = vaultId ? vaultRootMap.get(vaultId) || null : null;
+    return rows.map((row: any) => {
+      const rowVaultId = row.notes ? (row.notes.vault_id as string | null | undefined) : null;
+      const rootPath = rowVaultId ? vaultRootMap.get(rowVaultId) || null : null;
       const filepath = this.toAbsolutePath(row.notes?.relative_path || '', rootPath);
       return {
         cardId: row.id,
@@ -903,14 +910,14 @@ export class SupabaseAdapter implements DataService {
         filepath,
         clozeIndex: row.cloze_index,
         due: new Date(row.due)
-      };
+      } as QueueItem;
     });
   }
 
-  async searchCards(query: string): Promise<any[]> {
+  async searchCards(query: string, vaultId?: string): Promise<any[]> {
     if (!this.supabase) throw new Error("Supabase not initialized");
 
-    const { data, error } = await this.supabase
+    let builder = this.supabase
       .from('cards')
       .select(`
         *,
@@ -923,8 +930,14 @@ export class SupabaseAdapter implements DataService {
       `)
       .ilike('content_raw', `%${query}%`)
       .eq('is_deleted', false)
-      .eq('notes.is_deleted', false)
-      .limit(20);
+      .eq('notes.is_deleted', false);
+
+    // Optionally scope search to a specific vault
+    if (vaultId) {
+      builder = builder.eq('notes.vault_id', vaultId);
+    }
+
+    const { data, error } = await builder.limit(20);
 
     if (error) {
       console.error("Failed to search cards", error);

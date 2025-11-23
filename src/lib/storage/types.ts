@@ -121,8 +121,9 @@ export interface DataService {
   /**
    * Search for cards by content.
    * @param query Search term
+   * @param vaultId Optional vault ID to scope search results
    */
-  searchCards(query: string): Promise<any[]>;
+  searchCards(query: string, vaultId?: string): Promise<any[]>;
 
   /**
    * Suspend or unsuspend a card.

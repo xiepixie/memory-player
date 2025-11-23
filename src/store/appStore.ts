@@ -858,23 +858,11 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
   },
 });
 
-const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
-  currentFilepath: null,
-  currentNote: null,
-  currentMetadata: null,
-  currentClozeIndex: null,
 
-  loadNote: async (filepath, targetClozeIndex = null) => {
-    try {
-      const { contentCache, rootPath, fileMetadatas } = get();
-      let content = contentCache[filepath] || '';
-      let noteId = get().pathMap[filepath];
+// --- loadNote Helpers ---
 
-      if (!content) {
-        if (rootPath === 'DEMO_VAULT') {
-          // Generate demo content
-          const fileName = filepath.split('/').pop() || 'Demo';
-          content = `---
+function getDemoContent(fileName: string): string {
+  return `---
 title: ${fileName.replace('.md', '')}
 tags: [demo, spaced-repetition]
 ---
@@ -926,86 +914,144 @@ $$}}
 *This is a demo note. Start by grading your recall of the information above!*
 
 `;
-        } else {
-          // Check if we're in Tauri environment
-          if (!isTauri()) {
-            useToastStore.getState().addToast("File system access is only available in the desktop app", 'error');
-            return;
-          }
+}
 
-          // Use FileSystemService to ensure ID exists and read content
-          const result = await fileSystem.ensureNoteId(filepath);
-          content = result.content;
-          noteId = result.id;
+async function loadContentFromSource(
+  state: AppState, 
+  filepath: string
+): Promise<{ content: string; noteId: string | null; isNewId: boolean }> {
+  const { contentCache, rootPath, pathMap } = state;
+  
+  // 1. Check Cache
+  if (contentCache[filepath]) {
+    return { content: contentCache[filepath], noteId: pathMap[filepath] || null, isNewId: false };
+  }
 
-          // Update ID maps
-          set(state => ({
-            idMap: { ...state.idMap, [noteId!]: filepath },
-            pathMap: { ...state.pathMap, [filepath]: noteId! }
-          }));
-        }
+  // 2. Check Demo Vault
+  if (rootPath === 'DEMO_VAULT') {
+    const fileName = filepath.split('/').pop() || 'Demo';
+    const noteId = pathMap[filepath] || null;
+    return { content: getDemoContent(fileName), noteId, isNewId: false };
+  }
 
-        // Update cache
-        set(state => {
-          const existing = { ...state.contentCache };
-          delete existing[filepath];
-          const next = { ...existing, [filepath]: content };
-          const keys = Object.keys(next);
-          if (keys.length > MAX_CONTENT_CACHE_ENTRIES) {
-            const overflow = keys.length - MAX_CONTENT_CACHE_ENTRIES;
-            for (let i = 0; i < overflow; i++) {
-              delete next[keys[i]];
-            }
-          }
-          return { contentCache: next };
-        });
+  // 3. Check Filesystem (Desktop Only)
+  if (!isTauri()) {
+    throw new Error("File system access is only available in the desktop app");
+  }
+
+  const result = await fileSystem.ensureNoteId(filepath);
+  const existingId = pathMap[filepath];
+  const isNewId = !!(result.id && result.id !== existingId);
+  
+  return { content: result.content, noteId: result.id, isNewId };
+}
+
+function updateCacheAndIds(
+  set: (fn: (state: AppState) => Partial<AppState>) => void, 
+  filepath: string, 
+  content: string, 
+  noteId: string | null,
+  isNewId: boolean
+) {
+  set(state => {
+    const updates: Partial<AppState> = {};
+    
+    // Update ID Maps if needed
+    if (isNewId && noteId) {
+      updates.idMap = { ...state.idMap, [noteId]: filepath };
+      updates.pathMap = { ...state.pathMap, [filepath]: noteId };
+    }
+
+    // Update Cache (LRU)
+    const existing = { ...state.contentCache };
+    delete existing[filepath]; 
+    const next = { ...existing, [filepath]: content };
+    const keys = Object.keys(next);
+    if (keys.length > MAX_CONTENT_CACHE_ENTRIES) {
+      const overflow = keys.length - MAX_CONTENT_CACHE_ENTRIES;
+      for (let i = 0; i < overflow; i++) {
+        delete next[keys[i]];
       }
+    }
+    updates.contentCache = next;
 
+    return updates;
+  });
+}
+
+async function syncNoteMetadata(
+  set: (fn: (state: AppState) => Partial<AppState>) => void, 
+  get: () => AppState, 
+  filepath: string, 
+  noteId: string | null
+) {
+  // Pass noteId if available, otherwise fallback to filepath logic inside getMetadata
+  const metadata = await get().dataService.getMetadata(noteId || '', filepath);
+
+  // Inject the real ID if we have it (and it wasn't in the metadata returned?)
+  // Actually dataService.getMetadata usually returns what it found.
+  if (noteId) {
+    metadata.noteId = noteId;
+  }
+
+  set(state => {
+    // If metadata found a noteId that we didn't know, update map? 
+    // (The original logic did `if (noteId) { metadata.noteId = noteId; update fileMetadatas... }`)
+    
+    const nextMetas = { ...state.fileMetadatas, [filepath]: metadata };
+    
+    // If this is still the current file, update currentMetadata
+    const updates: Partial<AppState> = {
+        fileMetadatas: nextMetas
+    };
+
+    if (state.currentFilepath === filepath) {
+        updates.currentMetadata = metadata;
+    }
+
+    return updates;
+  });
+}
+
+const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
+  currentFilepath: null,
+  currentNote: null,
+  currentMetadata: null,
+  currentClozeIndex: null,
+
+  loadNote: async (filepath, targetClozeIndex = null) => {
+    try {
+      // 1. Load Content (Cache -> Demo -> FS)
+      const { content, noteId, isNewId } = await loadContentFromSource(get(), filepath);
+
+      // 2. Update Cache & ID Maps
+      // We only need to update cache/IDs if we actually loaded from FS or it's new
+      // But calling this always is safe and ensures LRU is updated (cache promotion)
+      updateCacheAndIds(set, filepath, content, noteId, isNewId);
+
+      // 3. Parse & Update View State
       const parsed = parseNote(content);
-      const { viewMode } = get();
+      const { viewMode, fileMetadatas } = get();
       const targetMode = ['edit', 'test', 'master'].includes(viewMode) ? viewMode : 'review';
-      const cachedMeta = fileMetadatas[filepath] || null;
-
+      
       set({
         currentFilepath: filepath,
         currentNote: parsed,
-        currentMetadata: cachedMeta,
-        currentClozeIndex: targetClozeIndex, // Set the focus
+        currentMetadata: fileMetadatas[filepath] || null,
+        currentClozeIndex: targetClozeIndex,
         viewMode: targetMode
       });
 
+      // Update review timer
       if (targetClozeIndex !== null && (targetMode === 'test' || targetMode === 'review')) {
         currentReviewStartTime = Date.now();
       } else {
         currentReviewStartTime = null;
       }
 
-      // Pass noteId if available, otherwise fallback to filepath
-      const metadata = await get().dataService.getMetadata(noteId || '', filepath);
+      // 4. Fetch & Sync Metadata (Async)
+      await syncNoteMetadata(set, get, filepath, noteId);
 
-      // Inject the real ID if we have it
-      if (noteId) {
-        metadata.noteId = noteId;
-
-        // Update fileMetadatas with the discovered ID
-        const latestMetas = get().fileMetadatas;
-        if (latestMetas[filepath]) {
-          set({
-            fileMetadatas: {
-              ...latestMetas,
-              [filepath]: { ...latestMetas[filepath], noteId }
-            }
-          });
-        }
-      }
-
-      set(state => ({
-        currentMetadata: state.currentFilepath === filepath ? metadata : state.currentMetadata,
-        fileMetadatas: {
-          ...state.fileMetadatas,
-          [filepath]: metadata
-        }
-      }));
     } catch (e) {
       console.error("Failed to load note:", e);
       const errorMessage = e instanceof Error ? e.message : String(e);
@@ -1045,8 +1091,9 @@ const createSmartQueueSlice: AppStateCreator<SmartQueueSlice> = (set, get) => ({
 
   searchCards: async (query) => {
     try {
-      const { dataService } = get();
-      return await dataService.searchCards(query);
+      const { dataService, currentVault } = get();
+      const vaultId = currentVault?.id;
+      return await dataService.searchCards(query, vaultId);
     } catch (e) {
       console.error("Failed to search cards", e);
       return [];

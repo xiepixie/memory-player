@@ -857,6 +857,48 @@ export const EditMode = () => {
       }
   };
 
+  const handleMetadataChange = (newContent: string) => {
+      const textarea = textareaRef.current;
+
+      if (!textarea) {
+          setContent(newContent);
+          return;
+      }
+
+      const previousContent = content;
+      const savedStart = textarea.selectionStart;
+      const savedScroll = textarea.scrollTop;
+
+      let targetPos = savedStart;
+
+      try {
+          const prevParsed = matter(previousContent);
+          const nextParsed = matter(newContent);
+
+          const prevBodyIndex = previousContent.indexOf(prevParsed.content);
+          const nextBodyIndex = newContent.indexOf(nextParsed.content);
+
+          if (prevBodyIndex !== -1 && nextBodyIndex !== -1 && savedStart >= prevBodyIndex) {
+              const delta = nextBodyIndex - prevBodyIndex;
+              targetPos = savedStart + delta;
+          }
+      } catch {
+      }
+
+      setContent(newContent);
+
+      setTimeout(() => {
+          const current = textareaRef.current;
+          if (!current) return;
+          try {
+              const clampedStart = Math.min(targetPos, current.value.length);
+              current.setSelectionRange(clampedStart, clampedStart);
+              current.scrollTop = savedScroll;
+          } catch {
+          }
+      }, 0);
+  };
+
   const handleJumpToUnclosed = () => {
       const unclosed = clozeStats.unclosed;
       if (unclosed.length === 0) return;
@@ -1273,7 +1315,7 @@ export const EditMode = () => {
       <div className="flex-1 flex overflow-hidden relative">
         {/* Editor Pane */}
         <div className="flex-1 flex flex-col min-w-[300px] border-r border-base-200 bg-base-100 relative group/editor">
-             <MetadataEditor content={content} onChange={setContent} />
+             <MetadataEditor content={content} onChange={handleMetadataChange} />
              
              {/* Pane Header - Removed as it is redundant with MetadataEditor header area */}
              {/* <div className="h-8 min-h-[2rem] border-b border-base-200 bg-base-100/50 flex items-center px-4 justify-between select-none">
