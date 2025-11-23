@@ -9,6 +9,23 @@ import { motion } from 'framer-motion';
 import { QueueItem } from '../../lib/storage/types';
 import { CardHeader } from './Shared';
 
+const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: {
+        opacity: 1,
+        transition: { staggerChildren: 0.1 }
+    }
+};
+
+const itemVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: { 
+        opacity: 1, 
+        y: 0,
+        transition: { type: "spring" as const, stiffness: 300, damping: 24 }
+    }
+};
+
 export const ActionCenter = ({
     dueItems,
     newItems,
@@ -57,6 +74,7 @@ export const ActionCenter = ({
 
         return (
             <motion.div
+                key="session-active"
                 layout
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -102,8 +120,10 @@ export const ActionCenter = ({
     if (primaryAction === 'chill' && overdueItems.length === 0) {
         return (
             <motion.div
-                initial={{ scale: 0.98, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
+                key="chill-mode"
+                initial={{ scale: 0.95, opacity: 0, y: 10 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                transition={{ type: "spring", duration: 0.6 }}
                 className="card bg-gradient-to-br from-success/5 via-base-100 to-base-100 border border-success/10 shadow-lg relative overflow-hidden"
             >
                 <div className="absolute -right-10 -top-10 text-success/5 rotate-12">
@@ -112,7 +132,7 @@ export const ActionCenter = ({
                 <div className="card-body items-center text-center py-12 relative z-10">
                     <motion.div
                         initial={{ scale: 0 }} animate={{ scale: 1 }}
-                        transition={{ type: "spring", duration: 0.6 }}
+                        transition={{ type: "spring", duration: 0.6, delay: 0.2 }}
                         className="w-20 h-20 bg-gradient-to-br from-success/20 to-success/5 rounded-full flex items-center justify-center mb-6 text-success ring-4 ring-success/10"
                     >
                         <CheckCircle size={40} className="drop-shadow-md" />
@@ -138,9 +158,15 @@ export const ActionCenter = ({
     }
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <motion.div 
+            key="action-grid"
+            variants={containerVariants}
+            initial="hidden"
+            animate="visible"
+            className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+        >
             {/* Main Action Card - Takes 2/3 width */}
-            <div className="card bg-base-100 shadow-xl border border-base-200 col-span-1 lg:col-span-2 relative overflow-hidden group">
+            <motion.div variants={itemVariants} className="card bg-base-100 shadow-xl border border-base-200 col-span-1 lg:col-span-2 relative overflow-hidden group">
                 {/* Background decoration */}
                 <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-bl from-primary/5 via-primary/2 to-transparent rounded-bl-[100px] -mr-10 -mt-10 transition-all group-hover:scale-105 duration-700" />
 
@@ -280,10 +306,10 @@ export const ActionCenter = ({
                         </button>
                     </div>
                 </div>
-            </div>
+            </motion.div>
 
             {/* Side Stats Card */}
-            <div className="card bg-base-100 shadow-xl border border-base-200 flex flex-col relative overflow-hidden">
+            <motion.div variants={itemVariants} className="card bg-base-100 shadow-xl border border-base-200 flex flex-col relative overflow-hidden">
                 <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMSIgY3k9IjEiIHI9IjEiIGZpbGw9InJnYmEoMCwwLDAsMC4wNSkiLz48L3N2Zz4=')] opacity-50" />
 
                 <div className="card-body p-6 flex-1 z-10">
@@ -335,7 +361,7 @@ export const ActionCenter = ({
                         </div>
                     </div>
                 </div>
-            </div>
-        </div>
+            </motion.div>
+        </motion.div>
     );
 };

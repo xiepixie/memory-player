@@ -1,17 +1,35 @@
 import { useAppStore } from '../../store/appStore';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { MarkdownContent } from '../shared/MarkdownContent';
 import { ModeActionHint } from '../shared/ModeActionHint';
 import confetti from 'canvas-confetti';
 import clsx from 'clsx';
 import { getThemeColors } from '../../lib/themeUtils';
 import { MathClozeBlock } from '../shared/MathClozeBlock';
+import { motion } from 'framer-motion';
 
 export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
   const currentNote = useAppStore((state) => state.currentNote);
   const currentClozeIndex = useAppStore((state) => state.currentClozeIndex);
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  const clozeCountsRef = useRef<Record<number, number>>({});
+
+  // Reset per-render occurrence counters so that text and math clozes share
+  // a consistent id+occurrenceIndex scheme aligned with parser order.
+  clozeCountsRef.current = {};
+
+  const allClozeKeys = useMemo(() => {
+    if (!currentNote || !currentNote.clozes || currentNote.clozes.length === 0) {
+      return [] as string[];
+    }
+    const counts: Record<number, number> = {};
+    return currentNote.clozes.map((c) => {
+      const count = counts[c.id] || 0;
+      counts[c.id] = count + 1;
+      return `${c.id}-${count}`;
+    });
+  }, [currentNote]);
 
   // Reset revealed state when note changes
   useEffect(() => {
@@ -35,25 +53,66 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
   // Listen for global shortcut events
   useEffect(() => {
     const handleShortcut = () => {
-        if (currentClozeIndex !== null) {
-            // In focused mode, reveal the current cloze
-            toggleReveal(currentClozeIndex.toString());
-        } else {
-            revealAll();
-        }
+        // Unified three-state toggle-all based on current mode
+        toggleAll();
     };
     window.addEventListener('shortcut-reveal', handleShortcut);
     return () => window.removeEventListener('shortcut-reveal', handleShortcut);
-  }, [currentNote, currentClozeIndex]); 
+  }, [currentNote]); 
 
   if (!currentNote) return null;
 
-  const toggleReveal = (id: string) => {
-    if (!revealed[id]) {
-      setRevealed(prev => ({ ...prev, [id]: true }));
+  const focusNextOccurrence = (currentKey: string) => {
+    if (currentClozeIndex === null) return;
+
+    // Find all occurrences for the current cloze id in document order
+    const targetKeys = allClozeKeys.filter((key) => {
+      const [idStr] = key.split('-');
+      const id = parseInt(idStr, 10);
+      return !Number.isNaN(id) && id === currentClozeIndex;
+    });
+
+    if (targetKeys.length <= 1) return;
+
+    const index = targetKeys.indexOf(currentKey);
+    if (index === -1 || index === targetKeys.length - 1) return;
+
+    const nextKey = targetKeys[index + 1];
+    const nextEl = document.querySelector<HTMLElement>(`[data-cloze-key="${nextKey}"]`);
+    if (!nextEl) return;
+
+    const rect = nextEl.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    const margin = 96; // leave some breathing room around the target
+    const isInView = rect.top >= margin && rect.bottom <= viewportHeight - margin;
+
+    if (!isInView) {
+      nextEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    // Reuse TOC target highlight pattern for cloze guidance
+    document.querySelectorAll('.toc-target-highlight').forEach((el) => {
+      el.classList.remove('toc-target-highlight');
+    });
+
+    // Force reflow to allow restarting animation on repeated focus
+    void nextEl.offsetWidth;
+
+    nextEl.classList.add('toc-target-highlight');
+
+    setTimeout(() => {
+      nextEl.classList.remove('toc-target-highlight');
+    }, 1500);
+  };
+
+  const toggleReveal = (key: string) => {
+    if (!revealed[key]) {
+      setRevealed(prev => ({ ...prev, [key]: true }));
       
       // Confetti only for the active target or in free mode
-      if (currentClozeIndex === null || id === currentClozeIndex.toString()) {
+      const [idStr] = key.split('-');
+      const id = parseInt(idStr, 10);
+      if (currentClozeIndex === null || (!Number.isNaN(id) && id === currentClozeIndex)) {
           const themeColors = getThemeColors();
           confetti({
             particleCount: 30,
@@ -62,25 +121,61 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
             colors: themeColors.length > 0 ? themeColors : ['#a864fd', '#29cdff', '#78ff44', '#ff718d', '#fdff6a']
           });
       }
+
+      // Queue mode guidance: after revealing one occurrence, hint the next one
+      if (currentClozeIndex !== null) {
+        focusNextOccurrence(key);
+      }
     }
   };
 
-  const revealAll = () => {
-    if (!currentNote) return;
-    const allIds: Record<string, boolean> = {};
-    currentNote.clozes.forEach(c => allIds[c.id] = true);
-    setRevealed(prev => ({ ...prev, ...allIds }));
-  };
-
-  const isAllRevealed = currentNote && currentNote.clozes.length > 0 && 
-    currentNote.clozes.every(c => revealed[c.id]);
+  const isAllRevealed = allClozeKeys.length > 0 && 
+    allClozeKeys.every(key => revealed[key]);
 
   const toggleAll = () => {
-    if (isAllRevealed) {
-        setRevealed({});
-    } else {
-        revealAll();
-    }
+    if (allClozeKeys.length === 0) return;
+
+    setRevealed(prev => {
+      // Free / preview mode: operate on all occurrences
+      if (currentClozeIndex === null) {
+        const allRevealedNow = allClozeKeys.every((key) => prev[key]);
+        if (allRevealedNow) {
+          return {};
+        }
+        const next: Record<string, boolean> = { ...prev };
+        allClozeKeys.forEach((key) => {
+          next[key] = true;
+        });
+        return next;
+      }
+
+      // Queue mode: only operate on occurrences of the current cloze id
+      const targetKeys = allClozeKeys.filter((key) => {
+        const [idStr] = key.split('-');
+        const id = parseInt(idStr, 10);
+        return !Number.isNaN(id) && id === currentClozeIndex;
+      });
+
+      if (targetKeys.length === 0) return prev;
+
+      const allTargetRevealed = targetKeys.every((key) => prev[key]);
+      const next: Record<string, boolean> = { ...prev };
+
+      if (allTargetRevealed) {
+        // Clear only the current cloze id occurrences; keep other ids as-is
+        targetKeys.forEach((key) => {
+          delete next[key];
+        });
+        return next;
+      }
+
+      // Reveal all occurrences of the current cloze id
+      targetKeys.forEach((key) => {
+        next[key] = true;
+      });
+
+      return next;
+    });
   };
 
   return (
@@ -133,44 +228,70 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
                 //   - Show as HIDDEN (unless revealed)
                 
                 const isTarget = currentClozeIndex !== null ? id === currentClozeIndex : true;
-                const isRevealed = revealed[idStr] || !isTarget;
                 const isContext = !isTarget;
+
+                let occurrenceIndex = 0;
+                if (!Number.isNaN(id)) {
+                  const current = clozeCountsRef.current[id] ?? 0;
+                  occurrenceIndex = current;
+                  clozeCountsRef.current[id] = current + 1;
+                }
+                const key = `${id}-${occurrenceIndex}`;
+
+                const baseRevealed = !!revealed[key];
+                const isRevealed = currentClozeIndex !== null
+                  ? (isTarget ? baseRevealed : true) // Queue mode: context always revealed / locked open
+                  : baseRevealed; // Free mode: all ids respect per-occurrence revealed state
 
                 const hint = hintStr || title;
 
                 return (
-                  <span id={`cloze-${id}`} className="inline-flex items-center gap-1 align-middle mx-1">
+                  <span id={`cloze-${id}`} data-cloze-key={key} className="inline-flex items-center gap-1 align-baseline mx-1">
                     {/* ID Badge */}
                     <span className={`text-[10px] font-mono font-bold select-none px-1 rounded border transition-colors ${
                         isTarget 
                             ? 'text-primary bg-primary/10 border-primary/20' 
-                            : 'text-base-content/20 bg-base-200 border-base-content/5'
+                            : 'text-base-content/40 bg-transparent border-transparent'
                     }`}>
                         {id}
                     </span>
 
-                    <span
+                    <motion.span
                       className={clsx(
-                        "px-2 py-0.5 rounded cursor-pointer transition-all duration-200 border-b-2",
+                        "font-medium px-1 rounded transition-all duration-300 ease-out border-b-2 -translate-y-0.5",
+                        isTarget ? "cursor-pointer" : "cursor-default",
                         isContext 
-                            ? "bg-base-200 border-transparent text-base-content/50" // Context Style
+                            ? "bg-primary/5 border-primary/25 text-base-content/90" // Context Style: soft primary chip
                             : isRevealed
-                                ? "bg-success/20 border-success text-success font-bold" // Revealed Target
-                                : "bg-base-300 border-base-content/20 text-transparent min-w-[60px] hover:bg-base-content/10 select-none relative overflow-hidden" // Hidden Target
+                                ? "bg-success/20 border-success text-success font-bold" // Revealed Target chip
+                                : "bg-base-300 border-base-content/20 text-transparent min-w-[60px] hover:bg-base-content/10 select-none relative overflow-hidden" // Hidden Target chip
                       )}
                       onClick={(e) => {
                         e.preventDefault();
-                        if (isTarget) toggleReveal(idStr);
+                        // Free mode: any cloze is clickable; queue mode: only current id
+                        const canToggle = currentClozeIndex === null || isTarget;
+                        if (canToggle) toggleReveal(key);
                       }}
                       title={hint || "Click to reveal"}
+                      initial={false}
+                      animate={
+                        isContext
+                          ? { opacity: 0.9, scale: 1 }
+                          : isRevealed
+                              ? { opacity: 1, scale: 1 }
+                              : { opacity: 0.9, scale: 0.97 }
+                      }
+                      whileHover={isTarget ? { scale: 1.03 } : undefined}
+                      whileTap={isTarget ? { scale: 0.97 } : undefined}
+                      transition={{ type: "spring", stiffness: 260, damping: 20, mass: 0.4 }}
                     >
-                      {!isRevealed && !isContext && hint && (
+                      {!isRevealed && hint && (
                           <span className="absolute inset-0 flex items-center justify-center text-xs text-base-content/40 font-mono uppercase tracking-wide">
                               {hint}
                           </span>
                       )}
-                      <span className={!isRevealed && !isContext ? "invisible" : ""}>{children}</span>
-                    </span>
+                      <span className={!isRevealed ? "invisible" : ""}>{children}</span>
+                    </motion.span>
                   </span>
                 );
               }
@@ -187,17 +308,28 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
                 const latex = String(children).trim();
 
                 const isTarget = currentClozeIndex !== null ? id === currentClozeIndex : true;
-                const isRevealed = revealed[idStr] || !isTarget;
                 const isContext = !isTarget;
 
+                let occurrenceIndex = 0;
+                if (!Number.isNaN(id)) {
+                  const current = clozeCountsRef.current[id] ?? 0;
+                  occurrenceIndex = current;
+                  clozeCountsRef.current[id] = current + 1;
+                }
+                const key = `${id}-${occurrenceIndex}`;
+
+                const baseRevealed = !!revealed[key];
+                const isRevealed = currentClozeIndex !== null
+                  ? (isTarget ? baseRevealed : true)
+                  : baseRevealed;
+
                 const handleToggle = () => {
-                  if (isTarget) {
-                    toggleReveal(idStr);
-                  }
+                  const canToggle = currentClozeIndex === null || isTarget;
+                  if (canToggle) toggleReveal(key);
                 };
 
                 return (
-                  <div id={`cloze-${id}`} className="my-6">
+                  <div id={`cloze-${id}`} data-cloze-key={key} className="my-6">
                     <MathClozeBlock
                       id={Number.isNaN(id) ? 0 : id}
                       latex={latex}

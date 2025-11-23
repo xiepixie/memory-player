@@ -24,7 +24,12 @@ export const ThreeColumnLayout = ({ left, center, right, immersive = false, full
         <div className="flex h-full w-full overflow-hidden bg-base-100 relative">
             {/* Center Content - Always Full Width/Centered */}
             <div className="absolute inset-0 flex flex-col items-center justify-center z-0">
-                <div className={`w-full h-full relative ${fullWidth ? '' : 'max-w-3xl'}`}>
+                <div 
+                    className="w-full h-full relative transition-all duration-300 ease-in-out"
+                    style={{ 
+                        maxWidth: fullWidth ? "100%" : "48rem"
+                    }}
+                >
                     {center}
                 </div>
             </div>

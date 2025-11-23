@@ -48,7 +48,7 @@ export function useVaultWatcher() {
                         // We are interested in modifications to .md files
                         if (!event.paths || event.paths.length === 0) return;
 
-                        const { dataService, updateLastSync, currentVault, pathMap } = useAppStore.getState();
+                        const { dataService, updateLastSync, currentVault, pathMap, refreshMetadata } = useAppStore.getState();
 
                         // Handle deletions via soft-delete
                         const kind = (event as any).kind ?? (event as any).type;
@@ -88,8 +88,15 @@ export function useVaultWatcher() {
                                 // 2. Sync to Backend (pass current vault if available)
                                 await dataService.syncNote(path, content, id, currentVault?.id);
 
-                                // 3. Update UI state
+                                // 3. Update sync timestamp
                                 updateLastSync();
+
+                                // 4. Refresh local metadata and mappings via global store helper
+                                try {
+                                    await refreshMetadata(path, id);
+                                } catch (metaError) {
+                                    console.error(`[VaultWatcher] Failed to refresh metadata for ${path}`, metaError);
+                                }
 
                             } catch (e) {
                                 console.error(`[VaultWatcher] Failed to sync ${path}`, e);

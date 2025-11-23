@@ -37,19 +37,20 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
             return;
         }
 
+        let loadedNotes: StickyNoteData[] = [];
         const raw = localStorage.getItem(storageKey);
+        
         if (raw) {
             try {
-                const loadedNotes: StickyNoteData[] = JSON.parse(raw);
+                loadedNotes = JSON.parse(raw);
                 // Normalize z-indices on load to ensure they are above UI elements
-                const normalizedNotes = loadedNotes.map(n => ({
+                loadedNotes = loadedNotes.map(n => ({
                     ...n,
                     zIndex: Math.max(n.zIndex || 0, BASE_Z_INDEX)
                 }));
-                setNotes(normalizedNotes);
             } catch (e) {
                 console.error("Failed to parse sticky notes", e);
-                setNotes([]);
+                loadedNotes = [];
             }
         } else if (oldStorageKey) {
             // Migration from v1
@@ -58,7 +59,7 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
                 try {
                     const parsed = JSON.parse(oldRaw);
                     if (parsed.content) {
-                        const migratedNote: StickyNoteData = {
+                        loadedNotes = [{
                             id: crypto.randomUUID(),
                             content: parsed.content,
                             x: parsed.x || 100,
@@ -68,13 +69,33 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
                             color: 'yellow',
                             isMinimized: false,
                             zIndex: BASE_Z_INDEX + 1
-                        };
-                        setNotes([migratedNote]);
+                        }];
                     }
                 } catch {}
             }
         }
-    }, [storageKey, oldStorageKey]);
+
+        // Deep UX: If the board is open (user clicked button) but no notes exist,
+        // automatically create one so the user isn't staring at an empty screen.
+        if (isOpen && loadedNotes.length === 0) {
+            const defaultWidth = 320;
+            const defaultHeight = 300;
+            const newNote: StickyNoteData = {
+                id: crypto.randomUUID(),
+                content: '',
+                x: window.innerWidth / 2 - defaultWidth / 2,
+                y: window.innerHeight / 2 - defaultHeight / 2,
+                width: defaultWidth,
+                height: defaultHeight,
+                color: 'primary',
+                isMinimized: false,
+                zIndex: BASE_Z_INDEX + 1
+            };
+            loadedNotes = [newNote];
+        }
+
+        setNotes(loadedNotes);
+    }, [storageKey, oldStorageKey, isOpen]);
 
     // Save notes
     useEffect(() => {
@@ -87,7 +108,7 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
     }, [notes, storageKey]);
 
     const addNote = () => {
-        const defaultWidth = 360;
+        const defaultWidth = 320;
         const defaultHeight = 300;
 
         const newNote: StickyNoteData = {
@@ -97,7 +118,7 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
             y: window.innerHeight / 2 - defaultHeight / 2,
             width: defaultWidth,
             height: defaultHeight,
-            color: 'yellow',
+            color: 'primary',
             isMinimized: false,
             zIndex: getMaxZIndex() + 1
         };

@@ -1,2 +1,82 @@
 @import "tailwindcss";
 @plugin "daisyui" { themes: winter, night --default, pastel, autumn, dim, sunset };
+
+@keyframes toc-highlight {
+  0% {
+    /* 统一覆盖整行标题，避免中心比边缘更深 */
+    background-color: color-mix(in srgb, var(--color-primary) 10%, transparent);
+    transform: scale(1.01);
+  }
+  40% {
+    /* 平滑减弱到更浅的统一色，而不是靠阴影制造光圈 */
+    background-color: color-mix(in srgb, var(--color-primary) 4%, transparent);
+    transform: scale(1.01);
+  }
+  100% {
+    background-color: transparent;
+    transform: scale(1);
+  }
+}
+
+.toc-target-highlight {
+  animation: toc-highlight 2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  border-radius: 6px;
+  transform-origin: left center;
+}
+
+@keyframes cloze-flash {
+  0% {
+    border-color: transparent;
+    box-shadow: 0 0 0 2px transparent;
+    transform: scale(1);
+  }
+  20% {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px var(--color-primary);
+    transform: scale(1.02);
+  }
+  80% {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px var(--color-primary);
+    transform: scale(1.02);
+  }
+  100% {
+    border-color: transparent;
+    box-shadow: 0 0 0 2px transparent;
+    transform: scale(1);
+  }
+}
+
+.cloze-target-highlight {
+    animation: cloze-flash 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    border-radius: 4px;
+    border: 1px solid transparent; /* Base border */
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-base-content) 10%, transparent);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-base-content) 20%, transparent);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.mask-linear-fade {
+  mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
+}

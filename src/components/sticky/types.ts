@@ -5,16 +5,40 @@ export interface StickyNoteData {
     y: number;
     width: number;
     height: number;
-    color: 'yellow' | 'blue' | 'green' | 'pink' | 'purple' | 'gray';
+    color: 'primary' | 'yellow' | 'blue' | 'green' | 'plum' | 'graphite';
     isMinimized: boolean;
     zIndex: number;
 }
 
 export const NOTE_COLORS = {
-    yellow: { bg: 'bg-[#fff7d1] dark:bg-yellow-900/80', border: 'border-yellow-200/50 dark:border-yellow-700/30', text: 'text-gray-800 dark:text-yellow-50' },
-    blue: { bg: 'bg-[#e0f2fe] dark:bg-blue-900/80', border: 'border-blue-200/50 dark:border-blue-700/30', text: 'text-blue-900 dark:text-blue-50' },
-    green: { bg: 'bg-[#dcfce7] dark:bg-green-900/80', border: 'border-green-200/50 dark:border-green-700/30', text: 'text-green-900 dark:text-green-50' },
-    pink: { bg: 'bg-[#fce7f3] dark:bg-pink-900/80', border: 'border-pink-200/50 dark:border-pink-700/30', text: 'text-pink-900 dark:text-pink-50' },
-    purple: { bg: 'bg-[#f3e8ff] dark:bg-purple-900/80', border: 'border-purple-200/50 dark:border-purple-700/30', text: 'text-purple-900 dark:text-purple-50' },
-    gray: { bg: 'bg-base-200/90 dark:bg-base-300/80', border: 'border-base-300/50 dark:border-base-content/10', text: 'text-base-content' },
-};
+    primary: {
+        bg: 'bg-primary/10 dark:bg-primary/25',
+        border: 'border-primary/30 dark:border-primary/40',
+        text: 'text-base-content',
+    },
+    yellow: {
+        bg: 'bg-[#fff7d1] dark:bg-amber-900/80',
+        border: 'border-amber-200/70 dark:border-amber-700/40',
+        text: 'text-[#4a3b16] dark:text-amber-50',
+    },
+    blue: {
+        bg: 'bg-sky-50 dark:bg-sky-900/70',
+        border: 'border-sky-200/70 dark:border-sky-700/40',
+        text: 'text-sky-900 dark:text-sky-50',
+    },
+    green: {
+        bg: 'bg-emerald-50 dark:bg-emerald-900/70',
+        border: 'border-emerald-200/70 dark:border-emerald-700/40',
+        text: 'text-emerald-900 dark:text-emerald-50',
+    },
+    plum: {
+        bg: 'bg-rose-900/80',
+        border: 'border-rose-700/60',
+        text: 'text-rose-50',
+    },
+    graphite: {
+        bg: 'bg-neutral-900/90',
+        border: 'border-neutral-700/70',
+        text: 'text-neutral-50',
+    },
+} as const;

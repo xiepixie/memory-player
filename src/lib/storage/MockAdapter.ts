@@ -177,7 +177,7 @@ export class MockAdapter implements DataService {
     };
   }
 
-  async getAllMetadata(): Promise<NoteMetadata[]> {
+  async getAllMetadata(_vaultId?: string): Promise<NoteMetadata[]> {
     // Expose proper filepath for each note so that Library/Dashboard can
     // aggregate by real file path just like the Supabase adapter.
     return Object.entries(this.data)

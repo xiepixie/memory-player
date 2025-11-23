@@ -1,112 +1,117 @@
 import { useAppStore } from '../store/appStore';
 import { motion } from 'framer-motion';
-import React, { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-const leftButtons = [
-  { label: 'Again', rating: 1, color: 'hover:bg-error/20 hover:text-error', key: '1', type: 'error' as const, msg: 'Forgot?|Review scheduled soon' },
-  { label: 'Hard', rating: 2, color: 'hover:bg-warning/20 hover:text-warning', key: '2', type: 'warning' as const, msg: 'Hard|Review scheduled later' },
+interface GradeOption {
+  label: string;
+  rating: 1 | 2 | 3 | 4;
+  key: string;
+  colorClass: string;
+  tooltip: string;
+}
+
+const gradeOptions: GradeOption[] = [
+  { label: 'Again', rating: 1, key: '1', colorClass: 'text-error hover:bg-error/10', tooltip: 'Forgot completely' },
+  { label: 'Hard', rating: 2, key: '2', colorClass: 'text-warning hover:bg-warning/10', tooltip: 'Remembered with effort' },
+  { label: 'Good', rating: 3, key: '3', colorClass: 'text-info hover:bg-info/10', tooltip: 'Correct response' },
+  { label: 'Easy', rating: 4, key: '4', colorClass: 'text-success hover:bg-success/10', tooltip: 'Perfect recall' },
 ];
-
-const rightButtons = [
-  { label: 'Good', rating: 3, color: 'hover:bg-info/20 hover:text-info', key: '3', type: 'info' as const, msg: 'Good|Progress recorded' },
-  { label: 'Easy', rating: 4, color: 'hover:bg-success/20 hover:text-success', key: '4', type: 'success' as const, msg: 'Easy|Mastered!' },
-];
-
-type ButtonConfig = typeof leftButtons[number] | typeof rightButtons[number];
-
-const GradingButton = React.memo(({ btn, isGrading, onRate }: { btn: ButtonConfig, isGrading: boolean, onRate: (rating: number) => void }) => (
-    <motion.button
-        layout
-        key={btn.rating}
-        whileHover={{ scale: isGrading ? 1 : 1.1, x: isGrading ? 0 : (btn.rating <= 2 ? -5 : 5) }}
-        whileTap={{ scale: isGrading ? 1 : 0.95 }}
-        disabled={isGrading}
-        className={`
-            group relative flex items-center
-            ${btn.rating <= 2 ? 'flex-row' : 'flex-row-reverse'}
-            ${isGrading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
-        `}
-        onClick={() => onRate(btn.rating)}
-        title={`Press ${btn.key}`}
-    >
-        {/* Paper-style Orb Button */}
-        <div className={`
-            w-10 h-10 rounded-full flex items-center justify-center
-            shadow-md border border-base-300 bg-base-100
-            transition-all duration-200
-            ${!isGrading && 'hover:shadow-lg hover:border-base-content/20'}
-            ${!isGrading && (btn.type === 'error' ? 'hover:text-error hover:border-error/30' :
-              btn.type === 'warning' ? 'hover:text-warning hover:border-warning/30' :
-              btn.type === 'info' ? 'hover:text-info hover:border-info/30' : 
-              'hover:text-success hover:border-success/30')}
-        `}>
-             {isGrading ? (
-                <span className="loading loading-spinner loading-xs opacity-50"></span>
-             ) : (
-                <span className="text-sm font-bold font-mono opacity-60 group-hover:opacity-100 transition-opacity">
-                    {btn.key}
-                </span>
-             )}
-        </div>
-
-        {/* Floating Label */}
-        <div className={`
-            absolute ${btn.rating <= 2 ? 'left-12' : 'right-12'}
-            opacity-0 group-hover:opacity-100 transition-all duration-200
-            bg-base-100 border border-base-200 px-3 py-1.5 rounded-lg shadow-lg
-            whitespace-nowrap pointer-events-none z-50
-            flex items-center gap-2
-        `}>
-             <span className={`text-xs font-bold uppercase tracking-wider ${
-                btn.type === 'error' ? 'text-error' :
-                btn.type === 'warning' ? 'text-warning' :
-                btn.type === 'info' ? 'text-info' : 'text-success'
-             }`}>
-                {btn.label}
-             </span>
-        </div>
-    </motion.button>
-));
-
-const ButtonGroup = React.memo(({ buttons, align, isGrading, onRate }: { buttons: ButtonConfig[], align: 'left' | 'right', isGrading: boolean, onRate: (rating: number) => void }) => (
-    <div className={`flex flex-col gap-3 ${align === 'left' ? 'items-start' : 'items-end'}`}>
-        {buttons.map((btn) => (
-            <GradingButton key={btn.rating} btn={btn} isGrading={isGrading} onRate={onRate} />
-        ))}
-    </div>
-));
 
 export const GradingBar = () => {
   const saveReview = useAppStore(state => state.saveReview);
   const currentMetadata = useAppStore(state => state.currentMetadata);
   const isGrading = useAppStore(state => state.isGrading);
+  const getSchedulingPreview = useAppStore(state => state.getSchedulingPreview);
+  
+  // Local state to store the preview intervals
+  const [previews, setPreviews] = useState<Record<number, { interval: string }>>({});
+
+  // Load previews whenever the card changes
+  useEffect(() => {
+    if (currentMetadata) {
+      setPreviews(getSchedulingPreview());
+    }
+  }, [currentMetadata, getSchedulingPreview]);
 
   const handleRate = useCallback(async (rating: number) => {
-      // Use store state directly to avoid stale closure issues if props lag, 
-      // though isGrading from store state in hook dependency might be enough.
-      // But checking current state is safest for async actions.
       if (useAppStore.getState().isGrading) return;
-      
       await saveReview(rating);
   }, [saveReview]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isGrading || !currentMetadata) return;
+      
+      // Only handle 1-4 keys if no modifier keys are pressed (to avoid conflicts)
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+
+      switch (e.key) {
+        case '1': handleRate(1); break;
+        case '2': handleRate(2); break;
+        case '3': handleRate(3); break;
+        case '4': handleRate(4); break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleRate, isGrading, currentMetadata]);
 
   if (!currentMetadata) return null;
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="w-full flex justify-between pointer-events-none"
-    >
-      {/* Left Controls - Negative Offset to hang outside column */}
-      <div className="pointer-events-auto -translate-x-16">
-        <ButtonGroup buttons={leftButtons} align="left" isGrading={isGrading} onRate={handleRate} />
-      </div>
+    <div className="fixed bottom-8 left-0 right-0 flex justify-center z-50 pointer-events-none">
+      <motion.div
+        initial={{ y: 50, opacity: 0, scale: 0.95 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        className="pointer-events-auto"
+      >
+        {/* Glassmorphism Capsule */}
+        <div className="flex items-center p-1.5 gap-1 bg-base-100/90 backdrop-blur-md border border-base-200 shadow-2xl rounded-full">
+            {gradeOptions.map((opt) => {
+                const preview = previews[opt.rating];
+                
+                return (
+                    <button
+                        key={opt.rating}
+                        onClick={() => handleRate(opt.rating)}
+                        disabled={isGrading}
+                        className={`
+                            relative group flex flex-col items-center justify-center
+                            w-24 h-14 rounded-2xl transition-all duration-200
+                            disabled:opacity-50 disabled:cursor-not-allowed
+                            ${opt.colorClass}
+                            ${isGrading ? '' : 'hover:scale-105 active:scale-95'}
+                        `}
+                        title={`${opt.tooltip} (Press ${opt.key})`}
+                    >
+                        {/* Rating Label */}
+                        <span className="font-bold text-sm uppercase tracking-wider">
+                            {opt.label}
+                        </span>
 
-      {/* Right Controls - Positive Offset to hang outside column */}
-      <div className="pointer-events-auto translate-x-16">
-        <ButtonGroup buttons={rightButtons} align="right" isGrading={isGrading} onRate={handleRate} />
-      </div>
-    </motion.div>
+                        {/* Interval Preview */}
+                        <span className="text-xs opacity-60 font-mono mt-0.5">
+                            {preview ? preview.interval : '-'}
+                        </span>
+
+                        {/* Key Hint (Top Right) */}
+                        <div className="absolute top-1 right-1 w-4 h-4 rounded-full bg-base-200/50 text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            {opt.key}
+                        </div>
+                        
+                        {/* Loading State Override */}
+                        {isGrading && (
+                             <div className="absolute inset-0 flex items-center justify-center bg-base-100/50 rounded-2xl">
+                                <span className="loading loading-spinner loading-xs"></span>
+                             </div>
+                        )}
+                    </button>
+                );
+            })}
+        </div>
+      </motion.div>
+    </div>
   );
 };

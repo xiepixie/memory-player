@@ -21,6 +21,7 @@ export const useKeyboardShortcuts = () => {
             }
 
             if (e.code === 'Space') {
+                if (e.repeat) return;
                 e.preventDefault();
                 // Dispatch custom event for ClozeMode
                 window.dispatchEvent(new CustomEvent('shortcut-reveal'));

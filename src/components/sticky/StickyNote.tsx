@@ -50,7 +50,7 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
     // Scale effect on drag
     const scale = useSpring(1, { damping: 20, stiffness: 300 });
 
-    const theme = NOTE_COLORS[note.color];
+    const theme = NOTE_COLORS[note.color] ?? NOTE_COLORS.primary;
 
     // Optimized font stack
     const fontStyle = {
@@ -242,6 +242,8 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
                         {isEditing ? (
                             <textarea
                                 autoFocus
+                                id={`sticky-note-${note.id}`}
+                                name="stickyNoteContent"
                                 className={`
                                     w-full h-full bg-transparent resize-none p-4 
                                     text-sm leading-relaxed focus:outline-none 
@@ -265,8 +267,8 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
                             <div 
                                 className={`
                                     w-full h-full p-4 overflow-y-auto custom-scrollbar 
-                                    cursor-text prose prose-sm max-w-none 
-                                    prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0 break-words whitespace-pre-wrap
+                                    cursor-text text-[13px] leading-relaxed
+                                    space-y-1 break-words whitespace-pre-wrap
                                     selection:bg-black/10 dark:selection:bg-white/20
                                 `}
                                 style={fontStyle}
@@ -279,9 +281,12 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
                                         components={{
                                             a: ({node, ...props}) => <a {...props} className="underline decoration-dotted hover:decoration-solid cursor-pointer" target="_blank" rel="noopener noreferrer" />,
                                             code: ({node, ...props}) => <code {...props} className="bg-black/5 dark:bg-white/10 rounded px-1 py-0.5 text-xs font-mono" />,
-                                            h1: ({node, ...props}) => <h1 {...props} className="text-sm font-semibold mb-1 leading-snug" />,
-                                            h2: ({node, ...props}) => <h2 {...props} className="text-[13px] font-semibold mb-1 leading-snug opacity-90" />,
-                                            h3: ({node, ...props}) => <h3 {...props} className="text-[12px] font-semibold mb-1 leading-snug opacity-80" />,
+                                            h1: ({node, ...props}) => <h1 {...props} className="text-[18px] font-semibold mb-1 leading-snug" />,
+                                            h2: ({node, ...props}) => <h2 {...props} className="text-[16px] font-semibold mb-1 leading-snug" />,
+                                            h3: ({node, ...props}) => <h3 {...props} className="text-[13px] font-semibold mb-1 leading-snug" />,
+                                            h4: ({node, ...props}) => <h4 {...props} className="text-[13px] font-semibold mb-1 leading-snug" />,
+                                            h5: ({node, ...props}) => <h5 {...props} className="text-[13px] font-semibold mb-1 leading-snug" />,
+                                            h6: ({node, ...props}) => <h6 {...props} className="text-[13px] font-semibold mb-1 leading-snug" />,
                                             li: ({node, ...props}) => <li {...props} className="my-0.5" />,
                                         }}
                                     >

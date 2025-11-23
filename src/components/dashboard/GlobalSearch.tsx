@@ -86,6 +86,8 @@ export const GlobalSearch: React.FC = () => {
                 </div>
                 <input
                     type="text"
+                    id="global-card-search"
+                    name="globalCardSearch"
                     className="input input-bordered w-full pl-10 bg-base-200/50 focus:bg-base-100 transition-colors"
                     placeholder="Search cards..."
                     value={query}

@@ -29,10 +29,29 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
   }
 
   const clozes: ClozeItem[] = [];
-  
+
+  // Before parsing clozes, pre-mark any dangling closing braces `}}` that
+  // are not part of valid/malformed cloze patterns. This keeps the
+  // rendering and toolbar statistics in sync because both rely on
+  // ClozeUtils.findDanglingClosers with the same ordering.
+  const dangling = ClozeUtils.findDanglingClosers(content);
+  let renderSource = content;
+
+  if (dangling.length > 0) {
+    let built = '';
+    let last = 0;
+    dangling.forEach((entry, idx) => {
+      built += content.slice(last, entry.index);
+      built += `[}}](#error-dangling-${idx})`;
+      last = entry.index + 2; // skip the original '}}'
+    });
+    built += content.slice(last);
+    renderSource = built;
+  }
+
   // 1. Parse Anki-style clozes: {{c1::Answer::Hint}}
   // We replace them in renderableContent with a special link format for ReactMarkdown
-  let renderableContent = content.replace(ClozeUtils.CLOZE_REGEX, (match, idStr, answer, hint) => {
+  let renderableContent = renderSource.replace(ClozeUtils.CLOZE_REGEX, (match, idStr, answer, hint) => {
     const id = parseInt(idStr, 10);
     clozes.push({
       id,
@@ -59,7 +78,29 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
     return `[${answer}](${hash})`;
   });
 
-  // 2. Parse Legacy Highlighting: ==Answer==
+  // We also want to surface broken clozes in the preview and be able to
+  // map each error back to a specific occurrence in the editor.
+  // To do that, we encode an ordinal index into the hash so the
+  // EditMode can use the same ordering when scanning the raw text.
+
+  let unclosedErrorIndex = 0;
+  let malformedErrorIndex = 0;
+
+  // 2. Highlight Unclosed Clozes (Leftover opening tags)
+  // Any {{cN:: that remains is unclosed because the main regex matches balanced pairs
+  renderableContent = renderableContent.replace(/{{c(\d+)::/g, (match) => {
+      const idx = unclosedErrorIndex++;
+      return `[${match}](#error-unclosed-${idx})`;
+  });
+
+  // 3. Highlight Malformed Clozes (e.g. {{c1:Answer}} missing double colon)
+  // We look for {{c followed by digits but NOT followed by ::
+  renderableContent = renderableContent.replace(/{{c(\d+)(?![::])([^}]*)}}/g, (match) => {
+       const idx = malformedErrorIndex++;
+       return `[${match}](#error-malformed-${idx})`;
+  });
+
+  // 4. Parse Legacy Highlighting: ==Answer==
   // Render as visual highlight only (no additional cloze IDs)
   const highlightRegex = /==(.*?)==/g;
   renderableContent = renderableContent.replace(highlightRegex, (_match, answer) => {

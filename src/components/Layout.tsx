@@ -6,6 +6,7 @@ import { useKeyboardShortcuts } from './shared/useKeyboardShortcuts';
 import { ToastContainer } from './shared/ToastContainer';
 import { useVaultWatcher } from '../hooks/useVaultWatcher';
 import { useEffect } from 'react';
+import { NoteSkeleton } from './skeletons/NoteSkeleton';
 
 const LibraryViewLazy = lazy(() => import('./LibraryView').then((m) => ({ default: m.LibraryView })));
 const NoteRendererLazy = lazy(() => import('./NoteRenderer').then((m) => ({ default: m.NoteRenderer })));
@@ -43,9 +44,9 @@ export const Layout = () => {
         {viewMode === 'library' ? (
           <motion.div
             key="library"
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
             className="w-full h-full"
           >
             <Suspense fallback={<div className="w-full h-full flex items-center justify-center" />}>
@@ -55,12 +56,13 @@ export const Layout = () => {
         ) : (
           <motion.div
             key="player"
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
             className="w-full h-full relative"
           >
-            <Suspense fallback={<div className="w-full h-full flex items-center justify-center" />}>
+            <Suspense fallback={<NoteSkeleton />}>
               <NoteRendererLazy />
             </Suspense>
           </motion.div>

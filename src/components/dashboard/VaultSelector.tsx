@@ -179,6 +179,8 @@ export const VaultSelector = () => {
                   <input
                     ref={inputRef}
                     type="text"
+                    id="vault-name-input"
+                    name="vaultName"
                     className="input input-xs input-bordered flex-1 bg-base-100"
                     placeholder="Vault Name..."
                     value={newVaultName}

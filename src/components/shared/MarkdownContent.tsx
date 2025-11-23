@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import rehypeRaw from 'rehype-raw';
 import { useRef } from 'react';
 
 import { generateSlug } from '../../lib/stringUtils';
@@ -15,6 +16,8 @@ interface MarkdownContentProps {
     className?: string;
     disableIds?: boolean;
     onClozeClick?: (id: number, occurrenceIndex: number, target: HTMLElement) => void;
+    onClozeContextMenu?: (id: number, occurrenceIndex: number, target: HTMLElement, event: React.MouseEvent) => void;
+    onErrorLinkClick?: (kind: 'unclosed' | 'malformed' | 'dangling', occurrenceIndex: number, target?: HTMLElement) => void;
 }
 
 const extractText = (children: any): string => {
@@ -25,7 +28,7 @@ const extractText = (children: any): string => {
     return '';
 };
 
-export const MarkdownContent = ({ content, components, className, disableIds = false, onClozeClick }: MarkdownContentProps) => {
+export const MarkdownContent = ({ content, components, className, disableIds = false, onClozeClick, onClozeContextMenu, onErrorLinkClick }: MarkdownContentProps) => {
     const slugCounts = useRef<Record<string, number>>({});
     const clozeCounts = useRef<Record<number, number>>({});
     
@@ -51,7 +54,7 @@ export const MarkdownContent = ({ content, components, className, disableIds = f
         <div className={clsx("font-sans leading-loose text-lg text-base-content/90", className)}>
             <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkMath]}
-                rehypePlugins={[rehypeKatex]}
+                rehypePlugins={[rehypeKatex, rehypeRaw]}
                 components={{
                     img: MarkdownImage,
                     table: ({ children }) => (
@@ -129,6 +132,66 @@ export const MarkdownContent = ({ content, components, className, disableIds = f
                         );
                     },
                     a: ({ href, children }) => {
+                        // Error anchors for broken clozes
+                        if (href?.startsWith('#error-unclosed') || href?.startsWith('#error-malformed') || href?.startsWith('#error-dangling')) {
+                            const isUnclosed = href.startsWith('#error-unclosed');
+                            const isMalformed = href.startsWith('#error-malformed');
+                            const kind: 'unclosed' | 'malformed' | 'dangling' = isUnclosed
+                                ? 'unclosed'
+                                : isMalformed
+                                    ? 'malformed'
+                                    : 'dangling';
+
+                            const parts = href.split('-');
+                            const occurrenceIndex = parts.length >= 3 ? Number.parseInt(parts[2], 10) || 0 : 0;
+
+                            const handleClick = (e: any) => {
+                                if (!onErrorLinkClick) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                onErrorLinkClick(kind, occurrenceIndex, e.currentTarget);
+                            };
+
+                            if (kind === 'unclosed') {
+                                return (
+                                    <span
+                                        className="inline-flex align-middle items-center gap-1 px-1.5 py-0 rounded bg-error/10 text-error border border-error/20 font-mono text-sm cursor-pointer h-[1.5em]"
+                                        title="Unclosed Cloze (missing '}}')"
+                                        onClick={onErrorLinkClick ? handleClick : undefined}
+                                    >
+                                        <span className="i-lucide-alert-triangle text-xs" />
+                                        {children}
+                                        <span className="opacity-50">...{'}}'}?</span>
+                                    </span>
+                                );
+                            }
+
+                            if (kind === 'malformed') {
+                                return (
+                                    <span
+                                        className="inline-flex align-middle items-center gap-1 px-1.5 py-0 rounded bg-warning/10 text-warning-content border border-warning/20 font-mono text-sm cursor-pointer h-[1.5em]"
+                                        title="Malformed Cloze (syntax error)"
+                                        onClick={onErrorLinkClick ? handleClick : undefined}
+                                    >
+                                        <span className="i-lucide-alert-circle text-xs" />
+                                        {children}
+                                    </span>
+                                );
+                            }
+
+                            // Dangling closing braces: treat as hard error (red), but without extra text suffix
+                            return (
+                                <span
+                                    className="inline-flex align-middle items-center gap-1 px-1.5 py-0 rounded bg-error/10 text-error border border-error/20 font-mono text-sm cursor-pointer h-[1.5em]"
+                                    title="Dangling cloze closer (extra '}}' without opening)"
+                                    onClick={onErrorLinkClick ? handleClick : undefined}
+                                >
+                                    <span className="i-lucide-alert-triangle text-xs" />
+                                    {children}
+                                </span>
+                            );
+                        }
+
                         if (href?.startsWith('#cloze-')) {
                             // Parse format: #cloze-1-Hint%20Text or #cloze-1
                             const parts = href.replace('#cloze-', '').split('-');
@@ -158,12 +221,19 @@ export const MarkdownContent = ({ content, components, className, disableIds = f
                                             onClozeClick(numId, occurrenceIndex, e.currentTarget);
                                         }
                                     }}
+                                    onContextMenu={(e) => {
+                                        if (onClozeContextMenu && !isNaN(numId)) {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            onClozeContextMenu(numId, occurrenceIndex, e.currentTarget, e);
+                                        }
+                                    }}
                                 >
                                     <span className="badge badge-neutral badge-sm font-mono font-bold h-5 px-1.5 rounded text-[10px] text-neutral-content/80">
                                         {id}
                                     </span>
                                     <span className={clsx(
-                                        "font-medium px-1 rounded transition-colors border-b-2 border-transparent",
+                                        "font-medium px-1 rounded transition-colors border-b-2 border-transparent -translate-y-0.5",
                                         "bg-primary/10 text-primary hover:bg-primary/20 border-primary/20",
                                         onClozeClick && "group-hover:bg-primary/30 group-hover:border-primary/40"
                                     )}>

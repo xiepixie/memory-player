@@ -88,7 +88,7 @@ export interface DataService {
   /**
    * Get all tracked notes metadata
    */
-  getAllMetadata(): Promise<NoteMetadata[]>;
+  getAllMetadata(vaultId?: string): Promise<NoteMetadata[]>;
 
   /**
    * Get review history within a date range
@@ -107,8 +107,9 @@ export interface DataService {
    * Get due cards for the "Smart Queue".
    * Filters by due date <= now and is_suspended = false.
    * @param limit Max number of cards to fetch (default 50)
+   * @param vaultId Optional vault ID to filter by
    */
-  getDueCards(limit?: number): Promise<QueueItem[]>;
+  getDueCards(limit?: number, vaultId?: string): Promise<QueueItem[]>;
 
   /**
    * Search for cards by content.

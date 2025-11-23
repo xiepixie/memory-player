@@ -148,7 +148,7 @@ export class SupabaseAdapter implements DataService {
 
     if (error) {
       console.error('Failed to update vault', error);
-      return null;
+      throw error;
     }
 
     return data as Vault;
@@ -310,9 +310,14 @@ export class SupabaseAdapter implements DataService {
    * - Applies stability penalty if content changes significantly
    */
   async syncNote(filepath: string, content: string, noteId: string, vaultId?: string): Promise<void> {
-    if (!this.supabase) return;
+    if (!this.supabase) {
+      throw new Error("Supabase not initialized");
+    }
+
     const user = await this.supabase.auth.getUser();
-    if (!user.data.user) return;
+    if (!user.data.user) {
+      throw new Error("User not logged in");
+    }
     const userId = user.data.user.id;
 
     // Resolve vault: prefer explicit vaultId, fallback to default vault
@@ -383,9 +388,8 @@ export class SupabaseAdapter implements DataService {
       }, { onConflict: 'id' });
 
     if (noteError) {
-      // If vault FK fails, we might need to create a default vault first.
-      // Ignoring for now, assume setup is done.
       console.error('Sync Note Error', noteError);
+      throw noteError;
     }
 
     // 3. Split & Sync Cards
@@ -456,19 +460,35 @@ export class SupabaseAdapter implements DataService {
 
       // Check for significant content change
       const existing = existingMap.get(card.cloze_index);
-      if (existing && existing.content_raw !== card.content_raw) {
-        const similarity = this.calculateSimilarity(existing.content_raw, card.content_raw);
-        // Threshold for "significant": similarity < 0.60 (more than 40% changed)
-        if (similarity < 0.60) {
-          const newStability = (existing.stability || 0) * 0.75;
-          // Include stability in update to apply penalty
-          return { ...base, stability: newStability };
+      if (existing) {
+        if (existing.content_raw !== card.content_raw) {
+          const similarity = this.calculateSimilarity(existing.content_raw, card.content_raw);
+          // Threshold for "significant": similarity < 0.60 (more than 40% changed)
+          if (similarity < 0.60) {
+            const newStability = (existing.stability || 0) * 0.75;
+            // Include stability in update to apply penalty
+            return { ...base, stability: newStability };
+          }
         }
+        // Existing card: preserve state (don't include state/due/etc in update)
+        return base;
+      } else {
+        // New Card: Must provide initial FSRS state
+        // defaults: state=0 (New), due=Now
+        return {
+          ...base,
+          state: 0,
+          due: new Date().toISOString(),
+          stability: 0,
+          difficulty: 0,
+          elapsed_days: 0,
+          scheduled_days: 0,
+          learning_steps: 0,
+          reps: 0,
+          lapses: 0,
+          last_review: null
+        };
       }
-
-      // Default: do NOT overwrite state/reps/etc on sync,
-      // Supabase `onConflict` will preserve existing values for missing columns.
-      return base;
     });
 
     if (upsertRows.length > 0) {
@@ -482,6 +502,7 @@ export class SupabaseAdapter implements DataService {
 
       if (cardError) {
         console.error('Sync Cards Error', cardError);
+        throw cardError;
       }
     }
 
@@ -613,19 +634,28 @@ export class SupabaseAdapter implements DataService {
     };
   }
 
-  async getAllMetadata(): Promise<NoteMetadata[]> {
+  async getAllMetadata(vaultId?: string): Promise<NoteMetadata[]> {
     if (!this.supabase) throw new Error("Supabase not initialized");
 
-    const { data, error } = await this.supabase
+    // Use strict inner join if filtering by vault, otherwise default left join
+    const notesJoin = vaultId ? 'notes!inner' : 'notes';
+
+    let query = this.supabase
       .from('cards')
       .select(`
         *,
-        notes (
+        ${notesJoin} (
             relative_path,
             is_deleted,
             vault_id
         )
       `);
+
+    if (vaultId) {
+      query = query.eq('notes.vault_id', vaultId);
+    }
+
+    const { data, error } = await query;
 
     if (error) throw error;
 
@@ -762,7 +792,7 @@ export class SupabaseAdapter implements DataService {
 
     if (error) {
       console.error("Failed to fetch due cards", error);
-      return [];
+      throw error;
     }
 
     const rows = data || [];

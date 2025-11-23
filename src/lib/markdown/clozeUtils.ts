@@ -1,5 +1,9 @@
 export class ClozeUtils {
-    static readonly CLOZE_REGEX = /{{c(\d+)::([\s\S]*?)(?:::(.*?))?}}/g;
+    // Regex to match Anki-style clozes.
+    // Crucially, we disallow nested '{{' inside the content to prevent greedy matching
+    // from swallowing subsequent clozes when a closing brace is missing.
+    // e.g. "{{c1::A {{c2::B}}" should NOT match as one cloze.
+    static readonly CLOZE_REGEX = /{{c(\d+)::((?:(?!{{)[\s\S])*?)(?:::(.*?))?}}/g;
 
     /**
      * Scans the text to find the highest cloze number used so far.
@@ -163,6 +167,64 @@ export class ClozeUtils {
         }
 
         return unclosed;
+    }
+
+    /**
+     * Detects malformed clozes that superficially look like {{c...}} but
+     * do not match the strict CLOZE_REGEX used for valid clozes.
+     *
+     * This mirrors the malformed pattern used in parser.ts so that the
+     * toolbar stats and preview rendering stay in sync.
+     */
+    static findMalformedClozes(text: string): { index: number; raw: string }[] {
+        const malformed: { index: number; raw: string }[] = [];
+        const regex = /{{c(\d+)(?![::])([^}]*)}}/g;
+        let match: RegExpExecArray | null;
+
+        while ((match = regex.exec(text)) !== null) {
+            malformed.push({ index: match.index!, raw: match[0] });
+        }
+
+        return malformed;
+    }
+
+    /**
+     * Detects dangling closing braces `}}` that are not part of any
+     * recognized cloze pattern (valid or malformed). This lets the UI
+     * highlight stray `}}` that often appear after editing or pasting.
+     */
+    static findDanglingClosers(text: string): { index: number }[] {
+        const usedCloserIndices = new Set<number>();
+
+        // 1) Mark the closing braces that belong to valid clozes
+        for (const match of text.matchAll(ClozeUtils.CLOZE_REGEX)) {
+            const start = match.index!;
+            const full = match[0];
+            const closeIndex = start + full.length - 2; // position of the '}}'
+            usedCloserIndices.add(closeIndex);
+        }
+
+        // 2) Mark the closing braces that belong to malformed clozes
+        const malformedRegex = /{{c(\d+)(?![::])([^}]*)}}/g;
+        let malformedMatch: RegExpExecArray | null;
+        while ((malformedMatch = malformedRegex.exec(text)) !== null) {
+            const start = malformedMatch.index!;
+            const full = malformedMatch[0];
+            const closeIndex = start + full.length - 2;
+            usedCloserIndices.add(closeIndex);
+        }
+
+        // 3) Any remaining `}}` is considered dangling
+        const dangling: { index: number }[] = [];
+        let idx = text.indexOf('}}');
+        while (idx !== -1) {
+            if (!usedCloserIndices.has(idx)) {
+                dangling.push({ index: idx });
+            }
+            idx = text.indexOf('}}', idx + 2);
+        }
+
+        return dangling;
     }
 
     /**

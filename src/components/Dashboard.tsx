@@ -92,9 +92,20 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
 
                 if (card.lapses > 5) leeches.push(item);
 
+                const isDueOrPast = due <= now;
+
                 if (card.state === 0) {
                     newItems.push(item);
-                } else if (due <= now) {
+
+                    if (isDueOrPast) {
+                        dueItems.push(item);
+                        if (differenceInDays(now, due) >= 1) overdueItems.push(item);
+                        futureCounts[todayKey] = (futureCounts[todayKey] || 0) + 1;
+                    } else {
+                        const dateKey = format(due, 'yyyy-MM-dd');
+                        futureCounts[dateKey] = (futureCounts[dateKey] || 0) + 1;
+                    }
+                } else if (isDueOrPast) {
                     dueItems.push(item);
                     if (differenceInDays(now, due) >= 1) overdueItems.push(item);
                     futureCounts[todayKey] = (futureCounts[todayKey] || 0) + 1;

@@ -31,7 +31,11 @@ export const SessionSummary = () => {
         return () => clearInterval(interval);
     }, []);
 
-    const totalSeconds = Math.floor((Date.now() - sessionStats.timeStarted) / 1000);
+    const now = Date.now();
+    const hasValidStart = sessionStats.timeStarted > 0 && sessionStats.timeStarted <= now;
+    const totalSeconds = hasValidStart
+        ? Math.floor((now - sessionStats.timeStarted) / 1000)
+        : 0;
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
 

@@ -8,6 +8,18 @@ interface Header {
     level: number;
 }
 
+const headersAreEqual = (a: Header[], b: Header[]) => {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        const prev = a[i];
+        const next = b[i];
+        if (prev.id !== next.id || prev.level !== next.level || prev.text !== next.text) {
+            return false;
+        }
+    }
+    return true;
+};
+
 export const TableOfContents = () => {
     const currentNote = useAppStore((state) => state.currentNote);
     const viewMode = useAppStore((state) => state.viewMode);
@@ -26,29 +38,56 @@ export const TableOfContents = () => {
             return;
         }
 
-        const headingElements = container.querySelectorAll<HTMLHeadingElement>('h1[id], h2[id], h3[id], h4[id]');
-        const extracted: Header[] = [];
+        let rafId: number | null = null;
 
-        headingElements.forEach((el) => {
-            // Ignore headings that are inside aria-hidden containers
-            if (el.closest('[aria-hidden="true"]')) return;
+        const collectHeaders = () => {
+            const headingElements = container.querySelectorAll<HTMLHeadingElement>('h1[id], h2[id], h3[id], h4[id]');
+            const extracted: Header[] = [];
 
-            const level = Number(el.tagName.substring(1));
-            if (!level || level < 1 || level > 4) return;
+            headingElements.forEach((el) => {
+                // Ignore headings that are inside aria-hidden containers
+                if (el.closest('[aria-hidden="true"]')) return;
 
-            const text = el.textContent?.trim() || '';
-            if (!text) return;
+                const level = Number(el.tagName.substring(1));
+                if (!level || level < 1 || level > 4) return;
 
-            if (!el.id) return;
+                const text = el.textContent?.trim() || '';
+                if (!text) return;
 
-            extracted.push({
-                id: el.id,
-                text,
-                level,
+                if (!el.id) return;
+
+                extracted.push({
+                    id: el.id,
+                    text,
+                    level,
+                });
             });
+
+            const nextHeaders = extracted;
+
+            // Debug: trace header collection for TOC
+            console.debug('[TableOfContents] collectHeaders', {
+                count: nextHeaders.length,
+                ids: nextHeaders.map(h => h.id),
+                levels: nextHeaders.map(h => h.level),
+            });
+
+            setHeaders((prev) => (headersAreEqual(prev, nextHeaders) ? prev : nextHeaders));
+        };
+
+        collectHeaders();
+
+        const observer = new MutationObserver(() => {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(collectHeaders);
         });
 
-        setHeaders(extracted);
+        observer.observe(container, { childList: true, subtree: true });
+
+        return () => {
+            if (rafId) cancelAnimationFrame(rafId);
+            observer.disconnect();
+        };
     }, [currentNote, viewMode]);
 
     useEffect(() => {
@@ -79,23 +118,51 @@ export const TableOfContents = () => {
 
     const scrollToHeader = (id: string) => {
         const container = document.getElementById('note-scroll-container');
-        const element = document.getElementById(id);
+        if (!container) {
+            console.warn(`[TableOfContents] Scroll container not found when trying to scroll to id "${id}"`);
+            return;
+        }
 
-        if (!container || !element) {
+        // 1) Prefer the DOM element with this id that actually lives inside the scroll container
+        let element = document.getElementById(id) as HTMLElement | null;
+        if (!element || !container.contains(element)) {
+            const candidates = Array.from(container.querySelectorAll<HTMLElement>('[id]'));
+            element = candidates.find((el) => el.id === id) ?? null;
+        }
+
+        const foundInsideContainer = !!element && container.contains(element);
+
+        if (!element) {
             console.warn(`[TableOfContents] Scroll target not found for id "${id}"`);
             return;
         }
 
-        const containerRect = container.getBoundingClientRect();
-        const elementRect = element.getBoundingClientRect();
-        const currentScroll = container.scrollTop;
-        const offset = 80;
-        const targetScrollTop = currentScroll + (elementRect.top - containerRect.top) - offset;
-
-        container.scrollTo({
-            top: Math.max(targetScrollTop, 0),
-            behavior: 'smooth',
+        console.debug('[TableOfContents] scrollToHeader', {
+            id,
+            hasContainer: !!container,
+            foundInsideContainer,
         });
+
+        // Let the browser find the nearest scroll container and respect `scroll-margin-top` (scroll-mt-20)
+        element.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start',
+        });
+
+        // UX: Highlight the target heading to assist visual scanning
+        document.querySelectorAll('.toc-target-highlight').forEach(el => {
+            el.classList.remove('toc-target-highlight');
+        });
+
+        // Force reflow to allow restarting animation if clicking same link
+        void element.offsetWidth;
+
+        element.classList.add('toc-target-highlight');
+
+        // Clean up after animation
+        setTimeout(() => {
+            element.classList.remove('toc-target-highlight');
+        }, 1500);
     };
 
     return (

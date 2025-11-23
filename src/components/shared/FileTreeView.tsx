@@ -10,8 +10,13 @@ export interface TreeNode {
 }
 
 export const FileTreeView = ({ files, rootPath, loadNote, metadatas, className }: { files: string[], rootPath: string | null, loadNote: (path: string) => void, metadatas: Record<string, any>, className?: string }) => {
+    const rootName = useMemo(() => {
+        if (!rootPath) return 'Vault';
+        return rootPath.split(/[/\\]/).pop() || 'Vault';
+    }, [rootPath]);
+
     const tree = useMemo(() => {
-        const root: TreeNode = { name: 'root', children: {} };
+        const root: TreeNode = { name: rootName, children: {} }; // Use real root name
         files.forEach(file => {
             // Remove rootPath from file path to get relative path
             const relative = rootPath ? file.replace(rootPath, '') : file;
@@ -30,18 +35,30 @@ export const FileTreeView = ({ files, rootPath, loadNote, metadatas, className }
             });
         });
         return root;
-    }, [files, rootPath]);
+    }, [files, rootPath, rootName]);
 
     return (
         <div className={`bg-transparent p-2 ${className || ''}`}>
-            <TreeItem node={tree} depth={0} loadNote={loadNote} isRoot={true} metadatas={metadatas} />
+             {/* We pass isRoot=false (default) so it renders the node itself, depth -1 effectively so children start at 0 visual indent if we wanted, 
+                 but here we want the root to be visible. Let's treat it as depth 0. 
+                 We manually create the "root" visual behavior by ensuring it's expanded. 
+             */}
+            <TreeItem 
+                node={tree} 
+                depth={0} 
+                loadNote={loadNote} 
+                metadatas={metadatas} 
+                forcedOpen={true} // New prop to force root open
+            />
         </div>
     );
 };
 
-const TreeItem = ({ node, depth, loadNote, isRoot = false, metadatas }: { node: TreeNode, depth: number, loadNote: (path: string) => void, isRoot?: boolean, metadatas: Record<string, any> }) => {
-    const [isOpen, setIsOpen] = useState(isRoot || depth < 1);
+const TreeItem = ({ node, depth, loadNote, metadatas, forcedOpen = false }: { node: TreeNode, depth: number, loadNote: (path: string) => void, metadatas: Record<string, any>, forcedOpen?: boolean }) => {
+    const [isOpen, setIsOpen] = useState(forcedOpen || depth < 1);
     const hasChildren = node.children && Object.keys(node.children).length > 0;
+    
+    // ... rest of component ...
 
     // Determine status color if it's a file
     let statusColor = '';
@@ -62,16 +79,6 @@ const TreeItem = ({ node, depth, loadNote, isRoot = false, metadatas }: { node: 
             statusColor = 'text-warning';
             statusIcon = <div className="w-2 h-2 rounded-full bg-warning" title="Due Today" />;
         }
-    }
-
-    if (isRoot && node.children) {
-        return (
-            <div className="flex flex-col gap-1">
-                {Object.values(node.children).map((child) => (
-                    <TreeItem key={child.path || child.name} node={child} depth={depth} loadNote={loadNote} metadatas={metadatas} />
-                ))}
-            </div>
-        );
     }
 
     return (

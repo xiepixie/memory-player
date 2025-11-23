@@ -12,6 +12,8 @@ import { formatDistanceToNow } from 'date-fns';
 
 export type ViewMode = 'library' | 'review' | 'test' | 'master' | 'edit' | 'summary';
 
+export const MAX_CONTENT_CACHE_ENTRIES = 200;
+
 // Track the most recent locally-initiated review so we can avoid
 // duplicating toasts when the corresponding Supabase realtime
 // update comes back for the same note/cloze.
@@ -24,6 +26,10 @@ interface AppState {
   syncMode: 'mock' | 'supabase';
   currentUser: { id: string; email?: string | null } | null;
   lastSyncAt: Date | null;
+  pendingNoteSyncs: Record<string, true>;
+  markNoteSyncPending: (filepath: string) => void;
+  markNoteSynced: (filepath: string) => void;
+  clearAllPendingNoteSyncs: () => void;
   pendingSyncCount: number;
   signOut: () => Promise<void>;
   authCheckCounter: number;
@@ -38,6 +44,7 @@ interface AppState {
   recentVaults: string[];
   removeRecentVault: (path: string) => void;
   handleExternalCardUpdate: (row: any) => void;
+  refreshMetadata: (filepath: string, noteIdOverride?: string) => Promise<void>;
 
   setRootPath: (path: string | null) => void;
   setFiles: (files: string[]) => void;
@@ -63,6 +70,7 @@ interface AppState {
   currentClozeIndex: number | null;
 
   isGrading: boolean;
+  getSchedulingPreview: () => Record<number, { due: Date; interval: string }>;
 
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
@@ -105,6 +113,7 @@ type VaultSlice = Pick<
   | 'setRootPath'
   | 'setFiles'
   | 'loadAllMetadata'
+  | 'refreshMetadata'
   | 'loadSettings'
   | 'removeRecentVault'
   | 'handleExternalCardUpdate'
@@ -129,6 +138,7 @@ type SessionSlice = Pick<
   | 'startSession'
   | 'saveReview'
   | 'isGrading'
+  | 'getSchedulingPreview'
 >;
 
 type NoteSlice = Pick<
@@ -156,6 +166,10 @@ type ServiceSlice = Pick<
   | 'syncMode'
   | 'currentUser'
   | 'lastSyncAt'
+  | 'pendingNoteSyncs'
+  | 'markNoteSyncPending'
+  | 'markNoteSynced'
+  | 'clearAllPendingNoteSyncs'
   | 'updateLastSync'
   | 'signOut'
   | 'authCheckCounter'
@@ -183,6 +197,7 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
   syncMode: 'mock',
   currentUser: null,
   lastSyncAt: null,
+  pendingNoteSyncs: {},
   authCheckCounter: 0,
 
   initDataService: async (type) => {
@@ -210,9 +225,17 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
         }
       }
       set({ dataService: service, syncMode: type, currentUser: userInfo, lastSyncAt: new Date() });
+      
+      // Parallelize initial data fetching
+      // Review history is independent of vault, so we can fetch it immediately
+      const historyPromise = get().loadReviewHistory();
+      
       await get().loadVaults();
-      await get().loadAllMetadata();
-      await get().loadReviewHistory();
+      if (get().currentVault) {
+        await get().loadAllMetadata();
+      }
+      
+      await historyPromise;
     } catch (e) {
       console.error("Failed to initialize data service", e);
       useToastStore.getState().addToast("Failed to initialize sync service", 'error');
@@ -221,6 +244,27 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
 
   updateLastSync: () => {
     set({ lastSyncAt: new Date() });
+  },
+
+  markNoteSyncPending: (filepath: string) => {
+    const { syncMode } = get();
+    if (syncMode !== 'supabase') return;
+    set((state) => ({
+      pendingNoteSyncs: { ...state.pendingNoteSyncs, [filepath]: true },
+    }));
+  },
+
+  markNoteSynced: (filepath: string) => {
+    set((state) => {
+      if (!state.pendingNoteSyncs[filepath]) return state;
+      const next = { ...state.pendingNoteSyncs };
+      delete next[filepath];
+      return { pendingNoteSyncs: next } as Partial<AppState>;
+    });
+  },
+
+  clearAllPendingNoteSyncs: () => {
+    set({ pendingNoteSyncs: {} });
   },
 
   signOut: async () => {
@@ -311,14 +355,61 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
 
   loadAllMetadata: async () => {
     try {
-      const { dataService } = get();
-      const allTracked = await dataService.getAllMetadata();
+      const { dataService, currentVault } = get();
+      // If no vault selected, skip loading metadata to avoid full-table scan
+      if (!currentVault) return;
+
+      const allTracked = await dataService.getAllMetadata(currentVault.id);
       const map: Record<string, NoteMetadata> = {};
       allTracked.forEach(m => { map[m.filepath] = m; });
       set({ fileMetadatas: map });
     } catch (e) {
       console.error("Failed to load metadata", e);
       useToastStore.getState().addToast("Failed to load metadata", 'error');
+    }
+  },
+
+  refreshMetadata: async (filepath, noteIdOverride) => {
+    try {
+      const { dataService, pathMap, fileMetadatas } = get();
+      const existingMeta = fileMetadatas[filepath];
+      const inferredNoteId =
+        noteIdOverride ||
+        pathMap[filepath] ||
+        existingMeta?.noteId ||
+        '';
+
+      const meta = await dataService.getMetadata(inferredNoteId, filepath);
+      const finalNoteId = meta.noteId || inferredNoteId;
+
+      set((state) => {
+        const files = state.files.includes(filepath)
+          ? state.files
+          : [...state.files, filepath];
+
+        const nextIdMap = { ...state.idMap };
+        const nextPathMap = { ...state.pathMap };
+
+        if (finalNoteId) {
+          nextIdMap[finalNoteId] = filepath;
+          nextPathMap[filepath] = finalNoteId;
+        }
+
+        return {
+          files,
+          idMap: nextIdMap,
+          pathMap: nextPathMap,
+          fileMetadatas: {
+            ...state.fileMetadatas,
+            [filepath]: {
+              ...meta,
+              noteId: finalNoteId || meta.noteId,
+            },
+          },
+        };
+      });
+    } catch (e) {
+      console.error(`Failed to refresh metadata for ${filepath}`, e);
     }
   },
 
@@ -344,7 +435,7 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
   },
 
   handleExternalCardUpdate: (row: any) => {
-    const { idMap, fileMetadatas, currentFilepath } = get();
+    const { idMap, fileMetadatas, currentFilepath, viewMode } = get();
     const filepath = idMap[row.note_id];
 
     if (!filepath) return; // Note not loaded or unknown
@@ -399,6 +490,14 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
     }
 
     set(updates);
+
+    // In Edit mode we still want fresh FSRS state in the store,
+    // but showing detailed review toasts for every external update
+    // becomes noisy (e.g. after saving a note and syncing).
+    // Quietly return in that case.
+    if (viewMode === 'edit') {
+      return;
+    }
 
     const isSelfReview = !!(
       lastLocalReview &&
@@ -478,6 +577,52 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
   sessionStats: { timeStarted: 0, reviewedCount: 0, ratings: {}, skippedCount: 0 },
   isGrading: false,
 
+  getSchedulingPreview: () => {
+    const { currentMetadata, currentClozeIndex, currentVault } = get();
+    if (!currentMetadata || currentClozeIndex === null) return {};
+
+    try {
+      const currentCard = currentMetadata.cards[currentClozeIndex] || createEmptyCard();
+      const params = currentVault?.config?.fsrsParams; // Use vault-specific params if available
+      const f = fsrs(params);
+      
+      const now = new Date();
+      const scheduling_cards = f.repeat(currentCard, now);
+      
+      const result: Record<number, { due: Date; interval: string }> = {};
+      
+      ([1, 2, 3, 4] as const).forEach((rating) => {
+        const record = scheduling_cards[rating];
+        if (record) {
+           const dueDate = new Date(record.card.due);
+           // Calculate human-readable interval
+           let interval = formatDistanceToNow(dueDate);
+           // Shorten for UI (e.g., "3 days" -> "3d", "less than a minute" -> "now")
+           interval = interval
+             .replace('less than a minute', 'now')
+             .replace(' minutes', 'm')
+             .replace(' minute', 'm')
+             .replace(' hours', 'h')
+             .replace(' hour', 'h')
+             .replace(' days', 'd')
+             .replace(' day', 'd')
+             .replace(' months', 'mo')
+             .replace(' month', 'mo')
+             .replace(' years', 'y')
+             .replace(' year', 'y')
+             .replace('about ', '');
+             
+           result[rating] = { due: dueDate, interval };
+        }
+      });
+      
+      return result;
+    } catch (e) {
+      console.error("Failed to calculate scheduling preview", e);
+      return {};
+    }
+  },
+
   setQueue: (queue) => set({ queue }),
 
   startSession: () => {
@@ -501,7 +646,7 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
   },
 
   saveReview: async (rating) => {
-    const { currentFilepath, currentMetadata, currentClozeIndex, dataService, queue, loadNote, fileMetadatas, sessionStats, isGrading, sessionIndex } = get();
+    const { currentFilepath, currentMetadata, currentClozeIndex, dataService, queue, loadNote, fileMetadatas, sessionStats, isGrading, sessionIndex, currentVault } = get();
     if (!currentFilepath || !currentMetadata || isGrading) return false;
 
     // Allow rating only if we have a specific cloze in focus
@@ -519,7 +664,8 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
     set({ isGrading: true });
 
     try {
-      const f = fsrs();
+      const params = currentVault?.config?.fsrsParams;
+      const f = fsrs(params);
       // Get current card state or default to empty/new
       const currentCard = currentMetadata.cards[currentClozeIndex] || createEmptyCard();
       const scheduling_cards = f.repeat(currentCard, new Date());
@@ -562,8 +708,6 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
       // realtime toasts for the same note/cloze.
       lastLocalReview = { noteId, clozeIndex: currentClozeIndex, time: Date.now() };
 
-      await dataService.saveReview(noteId, currentClozeIndex, record.card, record.log);
-
       const newMetadata: NoteMetadata = {
         ...currentMetadata,
         cards: {
@@ -576,7 +720,7 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
         }
       };
 
-      // Optimistic update of metadata map
+      // Optimistic update of metadata map - Perform State Update IMMEDIATELY
       set({
         sessionStats: {
           ...sessionStats,
@@ -591,16 +735,23 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
         lastSyncAt: new Date(),
       });
 
+      // Background Network Call (Fire-and-forget)
+      dataService.saveReview(noteId, currentClozeIndex, record.card, record.log)
+        .catch(e => {
+           console.error("Background save review failed", e);
+           useToastStore.getState().addToast("Review sync failed (saved locally)", 'warning');
+        });
+
       // Navigation Logic
-      if (queue.length > 0) {
+      const inSession = sessionStats.timeStarted > 0;
+
+      if (inSession && queue.length > 0) {
         const nextIndex = sessionIndex + 1;
 
         if (nextIndex < queue.length) {
           set({ sessionIndex: nextIndex });
           const nextItem = queue[nextIndex];
-          // Fire-and-forget load of the next card to keep grading
-          // flow snappy; loadNote itself will handle errors and
-          // update metadata when ready.
+          // Fire-and-forget load of the next card
           loadNote(nextItem.filepath, nextItem.clozeIndex);
         } else {
           // Session Complete
@@ -608,12 +759,12 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
             currentFilepath: null,
             currentNote: null,
             viewMode: 'summary',
-            sessionIndex: queue.length // Ensure it shows 100% or complete
+            sessionIndex: queue.length 
           });
           useToastStore.getState().addToast("Session Complete!", 'success');
         }
       } else {
-        // If not in a session (e.g. grading manually in Library mode), just stay or toast
+        // If not in an active session (e.g. grading manually in Library mode), just stay or toast
         useToastStore.getState().addToast("Review saved", 'success');
       }
       return true;
@@ -715,7 +866,19 @@ $$}}
         }
 
         // Update cache
-        set(state => ({ contentCache: { ...state.contentCache, [filepath]: content } }));
+        set(state => {
+          const existing = { ...state.contentCache };
+          delete existing[filepath];
+          const next = { ...existing, [filepath]: content };
+          const keys = Object.keys(next);
+          if (keys.length > MAX_CONTENT_CACHE_ENTRIES) {
+            const overflow = keys.length - MAX_CONTENT_CACHE_ENTRIES;
+            for (let i = 0; i < overflow; i++) {
+              delete next[keys[i]];
+            }
+          }
+          return { contentCache: next };
+        });
       }
 
       const parsed = parseNote(content);
@@ -778,8 +941,9 @@ const createUISlice: AppStateCreator<UISlice> = (set) => ({
 const createSmartQueueSlice: AppStateCreator<SmartQueueSlice> = (set, get) => ({
   fetchDueCards: async (limit = 50) => {
     try {
-      const { dataService } = get();
-      const dueCards = await dataService.getDueCards(limit);
+      const { dataService, currentVault } = get();
+      const vaultId = currentVault?.id;
+      const dueCards = await dataService.getDueCards(limit, vaultId);
       set({ queue: dueCards });
       useToastStore.getState().addToast(`Loaded ${dueCards.length} due cards`, 'success');
     } catch (e) {
