@@ -18,6 +18,7 @@ export const MAX_CONTENT_CACHE_ENTRIES = 200;
 // duplicating toasts when the corresponding Supabase realtime
 // update comes back for the same note/cloze.
 let lastLocalReview: { noteId: string; clozeIndex: number; time: number } | null = null;
+let currentReviewStartTime: number | null = null;
 
 interface AppState {
   dataService: DataService;
@@ -779,9 +780,13 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
       // Use noteId if available, fallback to filepath
       const noteId = currentMetadata.noteId || currentFilepath;
 
+      const now = Date.now();
+      const reviewStart = currentReviewStartTime || sessionStats.timeStarted || now;
+      const durationMs = Math.max(0, now - reviewStart);
+
       // Mark this as the latest local review to avoid duplicate
       // realtime toasts for the same note/cloze.
-      lastLocalReview = { noteId, clozeIndex: currentClozeIndex, time: Date.now() };
+      lastLocalReview = { noteId, clozeIndex: currentClozeIndex, time: now };
 
       const newMetadata: NoteMetadata = {
         ...currentMetadata,
@@ -811,7 +816,7 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
       });
 
       // Background Network Call (Fire-and-forget)
-      dataService.saveReview(noteId, currentClozeIndex, record.card, record.log)
+      dataService.saveReview(noteId, currentClozeIndex, record.card, record.log, durationMs)
         .catch(e => {
            console.error("Background save review failed", e);
            useToastStore.getState().addToast("Review sync failed (saved locally)", 'warning');
@@ -968,6 +973,12 @@ $$}}
         currentClozeIndex: targetClozeIndex, // Set the focus
         viewMode: targetMode
       });
+
+      if (targetClozeIndex !== null && (targetMode === 'test' || targetMode === 'review')) {
+        currentReviewStartTime = Date.now();
+      } else {
+        currentReviewStartTime = null;
+      }
 
       // Pass noteId if available, otherwise fallback to filepath
       const metadata = await get().dataService.getMetadata(noteId || '', filepath);

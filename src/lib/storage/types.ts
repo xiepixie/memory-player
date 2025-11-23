@@ -79,7 +79,7 @@ export interface DataService {
    * @param log The review log entry
    * @throws Error if save fails
    */
-  saveReview(noteId: string, clozeIndex: number, card: Card, log: ReviewLog): Promise<void>;
+  saveReview(noteId: string, clozeIndex: number, card: Card, log: ReviewLog, durationMs?: number): Promise<void>;
 
   /**
    * Get the metadata (FSRS state) for a note.

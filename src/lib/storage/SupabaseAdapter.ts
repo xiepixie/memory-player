@@ -557,7 +557,7 @@ export class SupabaseAdapter implements DataService {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   }
 
-  async saveReview(noteId: string, clozeIndex: number, card: Card, log: ReviewLog): Promise<void> {
+  async saveReview(noteId: string, clozeIndex: number, card: Card, log: ReviewLog, durationMs?: number): Promise<void> {
     if (!this.supabase) throw new Error("Supabase not initialized");
 
     // If we don't have a noteId (e.g. Demo Vault), skip remote save
@@ -592,7 +592,11 @@ export class SupabaseAdapter implements DataService {
         due: log.due,
         stability: log.stability,
         difficulty: log.difficulty,
-        duration_ms: log.elapsed_days * 24 * 60 * 60 * 1000, // approx
+        elapsed_days: log.elapsed_days,
+        scheduled_days: log.scheduled_days,
+        last_elapsed_days: (log as any).last_elapsed_days || 0, // Use if available
+        learning_steps: 0, // Not tracked in log yet
+        duration_ms: typeof durationMs === 'number' ? Math.max(0, Math.round(durationMs)) : 0, // Duration in ms from frontend (fallback to 0)
         reviewed_at: log.review
       }
     });
@@ -652,6 +656,25 @@ export class SupabaseAdapter implements DataService {
     };
   }
 
+  private async getServerNow(): Promise<string> {
+    if (!this.supabase) {
+      throw new Error("Supabase not initialized");
+    }
+
+    try {
+      const { data, error } = await this.supabase.rpc('server_now');
+      if (error || !data) {
+        return new Date().toISOString();
+      }
+      if (typeof data === 'string') {
+        return data;
+      }
+      return new Date(data as any).toISOString();
+    } catch {
+      return new Date().toISOString();
+    }
+  }
+
   async getAllMetadata(vaultId?: string, after?: string | Date | null): Promise<{ items: NoteMetadata[], serverNow: string }> {
     if (!this.supabase) throw new Error("Supabase not initialized");
 
@@ -692,16 +715,17 @@ export class SupabaseAdapter implements DataService {
 
     const rows = data || [];
     
-    // Calculate max updated_at to use as new cursor
-    // Fallback to client time if no rows, though this is still subject to drift.
-    // Ideally we would fetch server time separately or have it in response.
-    let maxUpdatedAt = new Date().toISOString();
+    // Calculate max updated_at to use as new cursor.
+    // When there are no rows, fall back to a server-side now() via RPC to avoid
+    // relying on the client clock for the incremental sync cursor.
+    let maxUpdatedAt: string;
     if (rows.length > 0) {
-        // Find max updated_at in rows
         const maxRow = rows.reduce((prev, current) => {
             return (prev.updated_at > current.updated_at) ? prev : current;
         });
         maxUpdatedAt = maxRow.updated_at;
+    } else {
+        maxUpdatedAt = await this.getServerNow();
     }
 
     const vaultIds = new Set<string>();
@@ -786,17 +810,17 @@ export class SupabaseAdapter implements DataService {
     }
 
     return (data || []).map((row: any) => {
-      const elapsedDays = row.duration_ms / (24 * 60 * 60 * 1000);
       return {
         rating: row.grade,
         state: row.state,
         due: new Date(row.due),
         stability: row.stability,
         difficulty: row.difficulty,
-        elapsed_days: elapsedDays, // approx reverse
-        last_elapsed_days: elapsedDays,
-        scheduled_days: 0,
-        learning_steps: 0,
+        // Use the explicit FSRS fields stored in review_logs
+        elapsed_days: typeof row.elapsed_days === 'number' ? row.elapsed_days : 0,
+        last_elapsed_days: typeof row.last_elapsed_days === 'number' ? row.last_elapsed_days : (row.elapsed_days ?? 0),
+        scheduled_days: typeof row.scheduled_days === 'number' ? row.scheduled_days : 0,
+        learning_steps: typeof row.learning_steps === 'number' ? row.learning_steps : 0,
         review: new Date(row.reviewed_at)
       };
     });

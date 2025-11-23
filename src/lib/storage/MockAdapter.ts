@@ -136,7 +136,7 @@ export class MockAdapter implements DataService {
     console.log(`[Mock] Syncing note: ${filepath} (${noteId})`);
   }
 
-  async saveReview(noteId: string, clozeIndex: number, card: Card, log: ReviewLog): Promise<void> {
+  async saveReview(noteId: string, clozeIndex: number, card: Card, log: ReviewLog, _durationMs?: number): Promise<void> {
     // Use noteId as the stable key in mock mode; filepath is stored inside entry
     if (!noteId) {
       console.warn('Mock saveReview skipped: missing noteId');

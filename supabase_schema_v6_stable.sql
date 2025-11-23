@@ -192,6 +192,7 @@ BEGIN
     WHERE id = v_card_id;
 
     -- 4. Insert Log
+    -- FIXED: Read scheduled_days, elapsed_days, last_elapsed_days from p_review_log
     INSERT INTO public.review_logs (
         card_id, user_id, 
         grade, state, due, stability, difficulty, 
@@ -207,12 +208,22 @@ BEGIN
         (p_review_log->>'difficulty')::float,
         (p_review_log->>'duration_ms')::int,
         (p_review_log->>'reviewed_at')::timestamptz,
-        (p_card_update->>'scheduled_days')::int,
-        (p_card_update->>'elapsed_days')::float,
-        (p_card_update->>'elapsed_days')::float, -- Simplify: use current elapsed as last_elapsed approximation if not tracked separately
-        (p_card_update->>'learning_steps')::int
+        
+        -- Fix: Use log values, fallback to 0/update if missing (though Adapter should provide them now)
+        COALESCE((p_review_log->>'scheduled_days')::int, 0),
+        COALESCE((p_review_log->>'elapsed_days')::float, 0),
+        COALESCE((p_review_log->>'last_elapsed_days')::float, 0),
+        COALESCE((p_review_log->>'learning_steps')::int, 0)
     );
 END;
+$$;
+
+CREATE OR REPLACE FUNCTION server_now()
+RETURNS timestamptz
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT now();
 $$;
 
 -- ------------------------------------------------------------------------------
