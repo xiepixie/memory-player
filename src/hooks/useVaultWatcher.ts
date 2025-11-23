@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { watch } from '@tauri-apps/plugin-fs';
 import { isTauri } from '../lib/tauri';
-import { useAppStore } from '../store/appStore';
+import { useAppStore, syncNoteFromFilesystem, softDeleteNoteForPath } from '../store/appStore';
 import { fileSystem } from '../lib/services/fileSystem';
 import { useToastStore } from '../store/toastStore';
 
@@ -37,9 +37,6 @@ export function useVaultWatcher() {
         const startWatching = async () => {
             // Ensure any previous watcher is fully cleaned up before starting a new one
             cleanupWatcher();
-
-            console.log(`[VaultWatcher] Starting watch on: ${rootPath}`);
-
             try {
                 const unwatch = await watch(
                     rootPath,
@@ -48,21 +45,13 @@ export function useVaultWatcher() {
                         // We are interested in modifications to .md files
                         if (!event.paths || event.paths.length === 0) return;
 
-                        const { dataService, updateLastSync, currentVault, pathMap, refreshMetadata } = useAppStore.getState();
-
                         // Handle deletions via soft-delete
                         const kind = (event as any).kind ?? (event as any).type;
                         if (kind === 'remove') {
                             for (const path of event.paths) {
                                 if (!path.endsWith('.md')) continue;
-
-                                const noteId = pathMap[path];
-                                if (!noteId) continue;
-
                                 try {
-                                    console.log(`[VaultWatcher] File removed, soft-deleting note: ${path}`);
-                                    await dataService.softDeleteNote(noteId);
-                                    updateLastSync();
+                                    await softDeleteNoteForPath(path);
                                 } catch (e) {
                                     console.error(`[VaultWatcher] Failed to soft-delete note for ${path}`, e);
                                     addToast('Failed to soft-delete note for removed file', 'error');
@@ -77,26 +66,14 @@ export function useVaultWatcher() {
                             // Avoid double-processing if we just wrote to this file (e.g. ensureNoteId)
                             // This is a simple debounce/lock mechanism
                             if (processingRef.current.has(path)) continue;
-
-                            console.log(`[VaultWatcher] File changed: ${path}`);
                             processingRef.current.add(path);
 
                             try {
                                 // 1. Ensure ID and get content
                                 const { id, content } = await fileSystem.ensureNoteId(path);
 
-                                // 2. Sync to Backend (pass current vault if available)
-                                await dataService.syncNote(path, content, id, currentVault?.id);
-
-                                // 3. Update sync timestamp
-                                updateLastSync();
-
-                                // 4. Refresh local metadata and mappings via global store helper
-                                try {
-                                    await refreshMetadata(path, id);
-                                } catch (metaError) {
-                                    console.error(`[VaultWatcher] Failed to refresh metadata for ${path}`, metaError);
-                                }
+                                // 2. Delegate sync + metadata refresh to centralized store action
+                                await syncNoteFromFilesystem(path, content, id);
 
                             } catch (e) {
                                 console.error(`[VaultWatcher] Failed to sync ${path}`, e);

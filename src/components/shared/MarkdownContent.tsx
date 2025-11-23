@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
-import { useRef } from 'react';
+import { useRef, memo } from 'react';
 
 import { generateSlug } from '../../lib/stringUtils';
 
@@ -28,7 +28,7 @@ const extractText = (children: any): string => {
     return '';
 };
 
-export const MarkdownContent = ({ content, components, className, disableIds = false, onClozeClick, onClozeContextMenu, onErrorLinkClick }: MarkdownContentProps) => {
+export const MarkdownContent = memo(({ content, components, className, disableIds = false, onClozeClick, onClozeContextMenu, onErrorLinkClick }: MarkdownContentProps) => {
     const slugCounts = useRef<Record<string, number>>({});
     const clozeCounts = useRef<Record<number, number>>({});
     
@@ -265,4 +265,4 @@ export const MarkdownContent = ({ content, components, className, disableIds = f
             </ReactMarkdown>
         </div>
     );
-};
+});

@@ -132,8 +132,6 @@ export class MockAdapter implements DataService {
       this.data[key] = { filepath, cards: {}, history: [] };
       this.persist();
     }
-
-    console.log(`[Mock] Syncing note: ${filepath} (${noteId})`);
   }
 
   async saveReview(noteId: string, clozeIndex: number, card: Card, log: ReviewLog, _durationMs?: number): Promise<void> {
@@ -253,11 +251,9 @@ export class MockAdapter implements DataService {
 
   async suspendCard(_cardId: string, _isSuspended: boolean): Promise<void> {
     // Mock: no-op or could implement if we added isSuspended to mock schema
-    console.log('[Mock] suspendCard', _cardId, _isSuspended);
   }
 
   async resetCard(_cardId: string): Promise<void> {
     // Mock: no-op
-    console.log('[Mock] resetCard', _cardId);
   }
 }

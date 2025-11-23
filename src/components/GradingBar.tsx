@@ -34,9 +34,9 @@ export const GradingBar = () => {
   }, [currentMetadata, getSchedulingPreview]);
 
   const handleRate = useCallback(async (rating: number) => {
-      if (useAppStore.getState().isGrading) return;
-      await saveReview(rating);
-  }, [saveReview]);
+    if (isGrading) return;
+    await saveReview(rating);
+  }, [saveReview, isGrading]);
 
   // Keyboard shortcuts
   useEffect(() => {

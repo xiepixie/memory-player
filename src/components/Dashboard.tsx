@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import { useAppStore } from '../store/appStore';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -30,6 +30,7 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
         loadNote,
         setViewMode,
         reviewHistory,
+        loadReviewHistory,
     } = useAppStore(
         useShallow((state) => ({
             files: state.files,
@@ -41,9 +42,17 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
             loadNote: state.loadNote,
             setViewMode: state.setViewMode,
             reviewHistory: state.reviewHistory,
+            loadReviewHistory: state.loadReviewHistory,
         })),
     );
 
+    // Lazy load history when entering dashboard
+    useEffect(() => {
+        if (reviewHistory.length === 0) {
+            loadReviewHistory();
+        }
+    }, [reviewHistory.length, loadReviewHistory]);
+    
     // Data Aggregation
     const dashboardData = useMemo(() => {
         const now = new Date();

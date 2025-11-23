@@ -214,18 +214,45 @@ export class ClozeUtils {
             usedCloserIndices.add(closeIndex);
         }
 
-        // 3) Any remaining `}}` is considered dangling
+        // 3) Identify "safe ranges" (Math blocks, Code blocks) where }} should be ignored
+        const safeRanges = ClozeUtils.getSafeRanges(text);
+
+        // 4) Any remaining `}}` is considered dangling unless it's in a safe range
         const dangling: { index: number }[] = [];
         let idx = text.indexOf('}}');
         while (idx !== -1) {
             if (!usedCloserIndices.has(idx)) {
-                dangling.push({ index: idx });
+                // Check if inside any safe range
+                const isSafe = safeRanges.some(range => idx >= range.start && idx < range.end);
+                if (!isSafe) {
+                    dangling.push({ index: idx });
+                }
             }
             idx = text.indexOf('}}', idx + 2);
         }
 
         return dangling;
     }
+
+    /**
+     * Returns an array of ranges for Code blocks/spans and Math blocks/spans.
+     * Used to prevent false positives when detecting dangling syntax.
+     */
+    private static getSafeRanges(text: string): { start: number; end: number }[] {
+        const ranges: { start: number; end: number }[] = [];
+        // Regex for:
+        // 1. Code blocks/spans: (`+)([\s\S]*?)\1
+        // 2. Math Block: \$\$[\s\S]*?\$\$
+        // 3. Inline Math: \$((?:[^$\\]|\\.)+)\$
+        const regex = /(`+)([\s\S]*?)\1|(\$\$[\s\S]*?\$\$)|(\$((?:[^$\\]|\\.)+)\$)/g;
+        
+        let match;
+        while ((match = regex.exec(text)) !== null) {
+            ranges.push({ start: match.index, end: match.index + match[0].length });
+        }
+        return ranges;
+    }
+
 
     /**
      * Attempts to clean invalid cloze syntax like {{c1 Answer}} (missing colons) or {{c::Answer}} (missing id).

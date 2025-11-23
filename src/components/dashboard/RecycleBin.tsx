@@ -8,6 +8,7 @@ import { CardHeader } from './Shared';
 
 export const RecycleBin = () => {
   const dataService = useAppStore((state) => state.dataService);
+  const restoreNote = useAppStore((state) => state.restoreNote);
   const addToast = useToastStore((state) => state.addToast);
   const [items, setItems] = useState<NoteMetadata[]>([]);
   const [isLoading, setIsLoading] = useState(false);

@@ -32,6 +32,7 @@ export const NoteRenderer = () => {
         currentMetadata,
         queue,
         suspendCard,
+        skipCurrentCard,
     } = useAppStore(
         useShallow((state) => ({
             viewMode: state.viewMode,
@@ -48,6 +49,7 @@ export const NoteRenderer = () => {
             currentMetadata: state.currentMetadata,
             queue: state.queue,
             suspendCard: state.suspendCard,
+            skipCurrentCard: state.skipCurrentCard,
         })),
     );
     const [immersive, setImmersive] = useState(false);
@@ -135,36 +137,7 @@ export const NoteRenderer = () => {
 
         try {
             await suspendCard(currentQueueItem.cardId, true);
-            const { queue, sessionIndex } = useAppStore.getState();
-
-            if (queue.length === 0) {
-                return;
-            }
-
-            const nextIndex = sessionIndex + 1;
-
-            // Increment skipped count for this session
-            useAppStore.setState((state) => ({
-                sessionStats: {
-                    ...state.sessionStats,
-                    skippedCount: (state.sessionStats.skippedCount || 0) + 1,
-                },
-            }));
-
-            if (nextIndex < queue.length) {
-                const nextItem = queue[nextIndex];
-                useAppStore.setState({ sessionIndex: nextIndex });
-                await useAppStore.getState().loadNote(nextItem.filepath, nextItem.clozeIndex);
-            } else {
-                // No more cards in this session: show summary
-                useAppStore.setState({
-                    currentFilepath: null,
-                    currentNote: null,
-                    viewMode: 'summary',
-                    sessionIndex: queue.length,
-                });
-                useToastStore.getState().addToast('Session Complete!', 'success');
-            }
+            await skipCurrentCard();
         } catch (e) {
             console.error('Failed to suspend card', e);
             addToast('Failed to suspend card', 'error');
@@ -377,7 +350,7 @@ export const NoteRenderer = () => {
                     >
                         <div className="w-full h-full">
                             <Suspense fallback={<ContentSkeleton />}>
-                                <EditModeLazy />
+                                <EditModeLazy active={viewMode === 'edit'} />
                             </Suspense>
                         </div>
                     </motion.div>

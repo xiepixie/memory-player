@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../../store/appStore';
+import { useShallow } from 'zustand/react/shallow';
 import { Search, FileText, Loader2 } from 'lucide-react';
 
 function useDebounce<T>(value: T, delay: number): T {
@@ -27,7 +28,13 @@ export const GlobalSearch: React.FC = () => {
     const [openMode, setOpenMode] = useState<'edit' | 'test'>('test');
     const searchRef = useRef<HTMLDivElement>(null);
 
-    const { searchCards, loadNote, setViewMode } = useAppStore();
+    const { searchCards, loadNote, setViewMode } = useAppStore(
+        useShallow((state) => ({
+            searchCards: state.searchCards,
+            loadNote: state.loadNote,
+            setViewMode: state.setViewMode,
+        })),
+    );
 
     useEffect(() => {
         const performSearch = async () => {

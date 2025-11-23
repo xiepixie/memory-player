@@ -1,10 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore } from '../../store/appStore';
+import { useShallow } from 'zustand/react/shallow';
 import { Play, Clock, CheckCircle, RefreshCw } from 'lucide-react';
 
 export const SmartQueue: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
-    const { queue, fetchDueCards, startSession, sessionStats } = useAppStore();
+    const { queue, fetchDueCards, startSession, sessionStats } = useAppStore(
+        useShallow((state) => ({
+            queue: state.queue,
+            fetchDueCards: state.fetchDueCards,
+            startSession: state.startSession,
+            sessionStats: state.sessionStats,
+        })),
+    );
 
     useEffect(() => {
         // Initial fetch if queue is empty

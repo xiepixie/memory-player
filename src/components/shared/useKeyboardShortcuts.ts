@@ -4,6 +4,7 @@ import { useAppStore } from '../../store/appStore';
 export const useKeyboardShortcuts = () => {
     const viewMode = useAppStore((state) => state.viewMode);
     const saveReview = useAppStore((state) => state.saveReview);
+    const isGrading = useAppStore((state) => state.isGrading);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -29,7 +30,7 @@ export const useKeyboardShortcuts = () => {
 
             if (['review', 'test', 'master'].includes(viewMode)) {
                 // Check for grading lock
-                if (useAppStore.getState().isGrading) return;
+                if (isGrading) return;
                 if (e.repeat) return;
 
                 switch (e.key) {
@@ -51,5 +52,5 @@ export const useKeyboardShortcuts = () => {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [viewMode, saveReview]);
+    }, [viewMode, saveReview, isGrading]);
 };

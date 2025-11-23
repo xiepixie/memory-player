@@ -46,7 +46,7 @@ export const AuthGate = ({ children }: AuthGateProps) => {
         if (cancelled) return;
 
         if (error) {
-          console.log('[AuthGate] auth check error (expected if not logged in):', error);
+          console.warn('[AuthGate] auth check error (expected if not logged in):', error);
           setStatus('needs-login');
           return;
         }
@@ -58,7 +58,7 @@ export const AuthGate = ({ children }: AuthGateProps) => {
           setStatus('needs-login');
         }
       } catch (err) {
-        console.log('[AuthGate] auth check exception (expected if not logged in):', err);
+        console.warn('[AuthGate] auth check exception (expected if not logged in):', err);
         if (!cancelled) {
           setStatus('needs-login');
         }

@@ -12,7 +12,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useToastStore } from '../store/toastStore';
 import { FileTreeView } from './shared/FileTreeView';
 import { Card } from 'ts-fsrs';
-import { fileSystem } from '../lib/services/fileSystem';
 
 const DashboardLazy = lazy(() => import('./Dashboard').then((m) => ({ default: m.Dashboard })));
 
@@ -34,7 +33,10 @@ export const LibraryView = () => {
     signOut,
     vaults,
     setCurrentVault,
-    updateLastSync
+    updateLastSync,
+    loadAllMetadata,
+    fetchDueCards,
+    manualSyncPendingNotes,
   } = useAppStore(
     useShallow((state) => ({
       rootPath: state.rootPath,
@@ -53,7 +55,10 @@ export const LibraryView = () => {
       signOut: state.signOut,
       vaults: state.vaults,
       setCurrentVault: state.setCurrentVault,
-      updateLastSync: state.updateLastSync
+      updateLastSync: state.updateLastSync,
+      loadAllMetadata: state.loadAllMetadata,
+      fetchDueCards: state.fetchDueCards,
+      manualSyncPendingNotes: state.manualSyncPendingNotes,
     })),
   );
   const dataService = useAppStore((state) => state.dataService);
@@ -66,6 +71,7 @@ export const LibraryView = () => {
   const [searchHistoryByVault, setSearchHistoryByVault] = useState<Record<string, string[]>>({});
   const [vaultOnboarded, setVaultOnboarded] = useState(false);
   const [vaultOnboardingBusy, setVaultOnboardingBusy] = useState(false);
+  const [studyResourcesPrefetched, setStudyResourcesPrefetched] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -97,6 +103,32 @@ export const LibraryView = () => {
       scanFiles(rootPath);
     }
   }, [rootPath, files.length]);
+
+  useEffect(() => {
+    if (studyResourcesPrefetched) return;
+    if (!rootPath) return;
+    if (files.length === 0) return;
+
+    setStudyResourcesPrefetched(true);
+
+    // Fire-and-forget: warm up heavy, soon-to-be-used resources
+    (async () => {
+      try {
+        await Promise.allSettled([
+          import('./NoteRenderer'),
+          import('./modes/ClozeMode'),
+          import('./modes/BlurMode'),
+          import('./modes/EditMode'),
+          import('./sticky/StickyBoard'),
+          import('./shared/MathClozeBlock'),
+          import('katex'),
+          import('canvas-confetti'),
+        ]);
+      } catch (e) {
+        console.debug('Prefetch study resources failed', e);
+      }
+    })();
+  }, [studyResourcesPrefetched, rootPath, files.length]);
 
   useEffect(() => {
     const handleFocusSearch = () => {
@@ -307,67 +339,44 @@ export const LibraryView = () => {
   };
 
   const handleManualSync = async () => {
-      if (syncMode !== 'supabase' || !dataService) return;
+    if (syncMode !== 'supabase' || !dataService) return;
 
-      if (syncing) return;
+    if (syncing) return;
 
-      setSyncing(true);
-      addToast('Starting cloud sync...', 'info');
-      
-      let retriedCount = 0;
-      let errorCount = 0;
-      
+    setSyncing(true);
+    addToast('Starting cloud sync...', 'info');
+    
+    try {
+      const { retriedCount, errorCount } = await manualSyncPendingNotes();
+
+      // Always refresh cloud-derived state after sync attempts
       try {
-         const storeState = useAppStore.getState();
-         const { pendingNoteSyncs, pathMap, currentVault } = storeState;
-
-         const filesToRetry = Object.keys(pendingNoteSyncs || {});
-
-         if (filesToRetry.length > 0) {
-           for (const filepath of filesToRetry) {
-             try {
-               const noteId = pathMap[filepath];
-               if (!noteId) continue;
-
-               const content = await fileSystem.readNote(filepath);
-               await dataService.syncNote(filepath, content, noteId, currentVault?.id);
-               storeState.markNoteSynced(filepath);
-               retriedCount++;
-             } catch (e) {
-               console.error(`Failed to sync ${filepath}`, e);
-               errorCount++;
-             }
-           }
-         }
-
-         // Always refresh cloud-derived state after sync attempts
-         try {
-           await storeState.loadAllMetadata();
-         } catch (e) {
-           console.error('Failed to refresh metadata after sync', e);
-         }
-
-         try {
-           await storeState.fetchDueCards(50);
-         } catch (e) {
-           console.error('Failed to refresh due cards after sync', e);
-         }
-
-         updateLastSync();
-
-         if (errorCount > 0) {
-             addToast(`Sync complete. ${retriedCount} notes synced, ${errorCount} failed.`, 'warning');
-         } else if (retriedCount > 0) {
-             addToast(`Sync complete. ${retriedCount} notes synced.`, 'success');
-         } else {
-             addToast('Cloud state refreshed.', 'success');
-         }
-      } catch (err) {
-          console.error('Manual sync error', err);
-          addToast('Sync failed', 'error');
-      } finally {
-          setSyncing(false);
+        await loadAllMetadata();
+      } catch (e) {
+        console.error('Failed to refresh metadata after sync', e);
       }
+
+      try {
+        await fetchDueCards(50);
+      } catch (e) {
+        console.error('Failed to refresh due cards after sync', e);
+      }
+
+      updateLastSync();
+
+      if (errorCount > 0) {
+        addToast(`Sync complete. ${retriedCount} notes synced, ${errorCount} failed.`, 'warning');
+      } else if (retriedCount > 0) {
+        addToast(`Sync complete. ${retriedCount} notes synced.`, 'success');
+      } else {
+        addToast('Cloud state refreshed.', 'success');
+      }
+    } catch (err) {
+      console.error('Manual sync error', err);
+      addToast('Sync failed', 'error');
+    } finally {
+      setSyncing(false);
+    }
   };
 
   return (

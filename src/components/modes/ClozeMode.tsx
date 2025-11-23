@@ -115,10 +115,12 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
       if (currentClozeIndex === null || (!Number.isNaN(id) && id === currentClozeIndex)) {
           const themeColors = getThemeColors();
           confetti({
-            particleCount: 30,
-            spread: 50,
+            particleCount: 60,
+            spread: 70,
             origin: { y: 0.6 },
-            colors: themeColors.length > 0 ? themeColors : ['#a864fd', '#29cdff', '#78ff44', '#ff718d', '#fdff6a']
+            colors: themeColors.length > 0 ? themeColors : ['#a864fd', '#29cdff', '#78ff44', '#ff718d', '#fdff6a'],
+            zIndex: 10000,
+            disableForReducedMotion: true
           });
       }
 

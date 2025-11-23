@@ -65,6 +65,7 @@ interface AppState {
   };
   setQueue: (items: QueueItem[]) => void;
   startSession: () => void;
+  skipCurrentCard: () => Promise<void>;
 
   currentFilepath: string | null;
   currentNote: ParsedNote | null;
@@ -83,11 +84,14 @@ interface AppState {
   contentCache: Record<string, string>;
 
   loadNote: (filepath: string, targetClozeIndex?: number | null) => Promise<void>;
+  saveCurrentNote: (content: string) => Promise<void>;
+  syncNoteFromFilesystem: (filepath: string, content: string, noteId: string) => Promise<void>;
   saveReview: (rating: number) => Promise<boolean>;
   closeNote: () => void;
 
   loadSettings: () => void;
   updateLastSync: () => void;
+  manualSyncPendingNotes: () => Promise<{ retriedCount: number; errorCount: number }>;
 
   // --- Smart Queue & Actions ---
   fetchDueCards: (limit?: number) => Promise<void>;
@@ -99,6 +103,10 @@ interface AppState {
   currentVault: Vault | null;
   loadVaults: () => Promise<void>;
   setCurrentVault: (vault: Vault | null) => void;
+  
+  // Actions
+  restoreNote: (noteId: string) => Promise<void>;
+  createVault: (name: string, config?: any) => Promise<Vault | null>;
 }
 
 type VaultSlice = Pick<
@@ -116,11 +124,15 @@ type VaultSlice = Pick<
   | 'setFiles'
   | 'loadAllMetadata'
   | 'refreshMetadata'
+  | 'syncNoteFromFilesystem'
   | 'loadSettings'
   | 'removeRecentVault'
   | 'handleExternalCardUpdate'
   | 'loadVaults'
   | 'setCurrentVault'
+  | 'restoreNote'
+  | 'createVault'
+  | 'updateVault'
 >;
 
 type HistorySlice = Pick<
@@ -141,6 +153,7 @@ type SessionSlice = Pick<
   | 'saveReview'
   | 'isGrading'
   | 'getSchedulingPreview'
+  | 'skipCurrentCard'
 >;
 
 type NoteSlice = Pick<
@@ -150,6 +163,7 @@ type NoteSlice = Pick<
   | 'currentMetadata'
   | 'currentClozeIndex'
   | 'loadNote'
+  | 'saveCurrentNote'
   | 'closeNote'
 >;
 
@@ -174,6 +188,7 @@ type ServiceSlice = Pick<
   | 'markNoteSynced'
   | 'clearAllPendingNoteSyncs'
   | 'updateLastSync'
+  | 'manualSyncPendingNotes'
   | 'signOut'
   | 'authCheckCounter'
   | 'triggerAuthCheck'
@@ -230,11 +245,7 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
       }
       set({ dataService: service, syncMode: type, currentUser: userInfo, lastSyncAt: new Date() });
       
-      // Parallelize initial data fetching
-      // Review history is independent of vault, so we can fetch it immediately
-      const historyPromise = get().loadReviewHistory();
-
-      // Optimistic UI: If we have a session, assume we are logged in and load data
+      // Optimistic UI: If we have a session, assume we are logged in
       if (type === 'supabase' && userInfo) {
          // Background verification
          getSupabaseClient()?.auth.getUser().then(({ data, error }) => {
@@ -248,12 +259,9 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
          });
       }
       
-      await get().loadVaults();
-      if (get().currentVault) {
-        await get().loadAllMetadata();
-      }
+      // NOTE: Heavy data loading (vaults, metadata, history) is intentionally removed from here
+      // to prevent blocking the UI startup. These should be called lazily by the views that need them.
       
-      await historyPromise;
     } catch (e) {
       console.error("Failed to initialize data service", e);
       useToastStore.getState().addToast("Failed to initialize sync service", 'error');
@@ -283,6 +291,71 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
 
   clearAllPendingNoteSyncs: () => {
     set({ pendingNoteSyncs: {} });
+  },
+
+  manualSyncPendingNotes: async () => {
+    const {
+      syncMode,
+      dataService,
+      pendingNoteSyncs,
+      pathMap,
+      currentVault,
+      loadAllMetadata,
+      fetchDueCards,
+      updateLastSync,
+      markNoteSynced,
+    } = get();
+
+    let retriedCount = 0;
+    let errorCount = 0;
+
+    if (!dataService) {
+      return { retriedCount, errorCount };
+    }
+
+    try {
+      const filesToRetry = Object.keys(pendingNoteSyncs || {});
+
+      if (syncMode === 'supabase' && filesToRetry.length > 0) {
+        for (const filepath of filesToRetry) {
+          try {
+            const noteId = pathMap[filepath];
+            if (!noteId) continue;
+
+            const content = await fileSystem.readNote(filepath);
+            await dataService.syncNote(filepath, content, noteId, currentVault?.id);
+            markNoteSynced(filepath);
+            retriedCount++;
+          } catch (err) {
+            console.error(`Failed to sync ${filepath}`, err);
+            errorCount++;
+          }
+        }
+      }
+
+      // Always refresh cloud-derived state after sync attempts
+      try {
+        await loadAllMetadata();
+      } catch (err) {
+        console.error('Failed to refresh metadata after sync', err);
+      }
+
+      try {
+        await fetchDueCards(50);
+      } catch (err) {
+        console.error('Failed to refresh due cards after sync', err);
+      }
+
+      updateLastSync();
+
+      return { retriedCount, errorCount };
+    } catch (err) {
+      console.error('Manual sync failed', err);
+      if (errorCount === 0) {
+        errorCount = 1;
+      }
+      return { retriedCount, errorCount };
+    }
   },
 
   signOut: async () => {
@@ -315,6 +388,21 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
     set((state) => ({ authCheckCounter: state.authCheckCounter + 1 }));
   },
 });
+
+// --- Module-level helpers for filesystem-driven note updates ---
+
+export const syncNoteFromFilesystem = async (filepath: string, content: string, noteId: string) => {
+  await useAppStore.getState().syncNoteFromFilesystem(filepath, content, noteId);
+};
+
+export const softDeleteNoteForPath = async (filepath: string) => {
+  const { pathMap, dataService, updateLastSync } = useAppStore.getState();
+  const noteId = pathMap[filepath];
+  if (!noteId) return;
+
+  await dataService.softDeleteNote(noteId);
+  updateLastSync();
+};
 
 const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
   rootPath: null,
@@ -485,6 +573,41 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
     }
   },
 
+  syncNoteFromFilesystem: async (filepath, content, noteId) => {
+    try {
+      const {
+        dataService,
+        currentVault,
+        updateLastSync,
+        markNoteSynced,
+      } = get();
+
+      // 1. Update cache and ID mappings for this note (LRU behavior included)
+      updateCacheAndIds(set, filepath, content, noteId);
+
+      // 2. Sync to backend (pass current vault if available)
+      await dataService.syncNote(filepath, content, noteId, currentVault?.id);
+
+      // 3. Update sync timestamp and pending sync flags
+      updateLastSync();
+      markNoteSynced(filepath);
+
+      // 4. Refresh local metadata and mappings via existing helper
+      try {
+        await get().refreshMetadata(filepath, noteId);
+      } catch (metaError) {
+        console.error(`[VaultSlice] Failed to refresh metadata for ${filepath} after sync`, metaError);
+      }
+    } catch (e) {
+      console.error(`[VaultSlice] Failed to sync note from filesystem: ${filepath}`, e);
+      try {
+        get().markNoteSyncPending(filepath);
+      } catch (flagError) {
+        console.error('[VaultSlice] Failed to mark note as pending sync', flagError);
+      }
+    }
+  },
+
   loadVaults: async () => {
     try {
       const { dataService, rootPath } = get();
@@ -497,6 +620,9 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
         currentVault = vaults[0];
       }
       set({ vaults, currentVault });
+      if (currentVault) {
+        get().loadAllMetadata();
+      }
     } catch (e) {
       console.error("Failed to load vaults", e);
       if ((e as any)?.status === 401 || (e as any)?.code === 'PGRST301') {
@@ -508,6 +634,9 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
 
   setCurrentVault: (vault) => {
     set({ currentVault: vault });
+    if (vault) {
+        get().loadAllMetadata();
+    }
   },
 
   handleExternalCardUpdate: (row: any) => {
@@ -856,8 +985,37 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
       set({ isGrading: false });
     }
   },
-});
 
+  skipCurrentCard: async () => {
+    const { queue, sessionIndex, sessionStats, loadNote } = get();
+    if (queue.length === 0) return;
+
+    const nextIndex = sessionIndex + 1;
+
+    // Increment skipped count for this session
+    set({
+      sessionStats: {
+        ...sessionStats,
+        skippedCount: (sessionStats.skippedCount || 0) + 1,
+      },
+    });
+
+    if (nextIndex < queue.length) {
+      set({ sessionIndex: nextIndex });
+      const nextItem = queue[nextIndex];
+      await loadNote(nextItem.filepath, nextItem.clozeIndex);
+    } else {
+      // No more cards in this session: show summary
+      set({
+        currentFilepath: null,
+        currentNote: null,
+        viewMode: 'summary',
+        sessionIndex: queue.length,
+      });
+      useToastStore.getState().addToast('Session Complete!', 'success');
+    }
+  },
+});
 
 // --- loadNote Helpers ---
 
@@ -1053,6 +1211,66 @@ const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
       console.error("Failed to load note:", e);
       const errorMessage = e instanceof Error ? e.message : String(e);
       useToastStore.getState().addToast(`Failed to load note: ${filepath}\n${errorMessage}`, 'error');
+    }
+  },
+
+  saveCurrentNote: async (content) => {
+    const {
+      currentFilepath,
+      dataService,
+      currentVault,
+      pathMap,
+      updateLastSync,
+      markNoteSynced,
+      markNoteSyncPending,
+      refreshMetadata,
+    } = get();
+    
+    if (!currentFilepath) {
+      return;
+    }
+
+    if (!isTauri()) {
+      return;
+    }
+
+    await fileSystem.writeNote(currentFilepath, content);
+
+    set((state) => {
+      const existing = { ...state.contentCache };
+      delete existing[currentFilepath];
+      const next = { ...existing, [currentFilepath]: content };
+      const keys = Object.keys(next);
+      if (keys.length > MAX_CONTENT_CACHE_ENTRIES) {
+        const overflow = keys.length - MAX_CONTENT_CACHE_ENTRIES;
+        for (let i = 0; i < overflow; i++) {
+          delete next[keys[i]];
+        }
+      }
+      return {
+        contentCache: next,
+        currentNote: parseNote(content),
+      } as Partial<AppState>;
+    });
+
+    const noteId = pathMap[currentFilepath];
+    if (noteId && dataService) {
+      dataService
+        .syncNote(currentFilepath, content, noteId, currentVault?.id)
+        .then(async () => {
+          updateLastSync();
+          markNoteSynced(currentFilepath);
+          try {
+            await refreshMetadata(currentFilepath, noteId);
+          } catch (e) {
+            console.error('Failed to refresh metadata after saveCurrentNote', e);
+          }
+        })
+        .catch((e) => {
+          console.error('Failed to sync note in saveCurrentNote', e);
+          markNoteSyncPending(currentFilepath);
+          useToastStore.getState().addToast('Cloud sync failed (saved locally)', 'warning');
+        });
     }
   },
 

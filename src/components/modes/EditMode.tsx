@@ -1,9 +1,8 @@
-import { MAX_CONTENT_CACHE_ENTRIES, useAppStore } from '../../store/appStore';
+import { useAppStore } from '../../store/appStore';
 import { isTauri } from '../../lib/tauri';
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { MarkdownContent } from '../shared/MarkdownContent';
 import { Save, Type, Bold, Italic, List, Heading1, Copy, Eraser, RefreshCw, AlertTriangle, Wand2, Trash2, X, Clipboard, Keyboard, ChevronRight, ChevronDown, Tag } from 'lucide-react';
-import { fileSystem } from '../../lib/services/fileSystem';
 import { useToastStore } from '../../store/toastStore';
 import { ClozeUtils } from '../../lib/markdown/clozeUtils';
 import { parseNote } from '../../lib/markdown/parser';
@@ -130,8 +129,11 @@ const MetadataEditor = ({ content, onChange }: { content: string; onChange: (new
     );
 };
 
-export const EditMode = () => {
-  const { currentNote, currentFilepath, loadNote, dataService, updateLastSync, currentVault } = useAppStore();
+export const EditMode = ({ active = true }: { active?: boolean }) => {
+  const currentNote = useAppStore((state) => state.currentNote);
+  const currentFilepath = useAppStore((state) => state.currentFilepath);
+  const loadNote = useAppStore((state) => state.loadNote);
+  const saveCurrentNote = useAppStore((state) => state.saveCurrentNote);
   const addToast = useToastStore((state) => state.addToast);
   const [content, setContent] = useState(currentNote?.raw || '');
   const [isSaving, setIsSaving] = useState(false);
@@ -154,6 +156,7 @@ export const EditMode = () => {
 
   // Instead of raw preview content, we parse it to use our renderableContent logic
   // We use a parsed state to hold the result of parseNote
+  const [debouncedContent, setDebouncedContent] = useState(content);
   const [parsedPreview, setParsedPreview] = useState(() => parseNote(content));
   const isDirty = content !== (currentNote?.raw ?? '');
   const clozeStats = useMemo(() => {
@@ -185,12 +188,13 @@ export const EditMode = () => {
       .map(([id, count]) => ({ id, count }));
 
     // Check for broken clozes (raw regex checks on content)
-    const unclosed = ClozeUtils.findUnclosedClozes(content);
-    const malformed = ClozeUtils.findMalformedClozes(content);
-    const dangling = ClozeUtils.findDanglingClosers(content);
+    // Use debounced content for expensive regex checks
+    const unclosed = ClozeUtils.findUnclosedClozes(debouncedContent);
+    const malformed = ClozeUtils.findMalformedClozes(debouncedContent);
+    const dangling = ClozeUtils.findDanglingClosers(debouncedContent);
 
-    return { total, unique: entries.length, entries, missingIds, unclosed, malformed, dangling };
-  }, [parsedPreview, content]);
+    return { total, unique: entries.length, entries, missingIds, unclosed, malformed, dangling, maxId };
+  }, [parsedPreview, debouncedContent]);
 
   const highlightTimerRef = useRef<NodeJS.Timeout | null>(null);
   const highlightedPreviewElementsRef = useRef<HTMLElement[]>([]);
@@ -240,6 +244,7 @@ export const EditMode = () => {
   };
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const cursorUpdateRafRef = useRef<number | null>(null);
 
   // Helper to calculate exact pixel offset of a character index in the textarea
   // This is necessary because simple line counting (split \n) fails when lines wrap.
@@ -428,20 +433,27 @@ export const EditMode = () => {
     }
   }, [currentNote]);
 
-  // Debounce preview update
+  // Debounce preview and stats update
   useEffect(() => {
     const timer = setTimeout(() => {
       setParsedPreview(parseNote(content));
+      setDebouncedContent(content);
     }, 200);
     return () => clearTimeout(timer);
   }, [content]);
+
+  useEffect(() => {
+      return () => {
+          if (cursorUpdateRafRef.current !== null) {
+              cancelAnimationFrame(cursorUpdateRafRef.current);
+          }
+      };
+  }, []);
 
   // Close floating menu when content changes
   useEffect(() => {
       setActivePreviewCloze(null);
   }, [content]);
-
-  if (!currentNote || !currentFilepath) return null;
 
   const handleSave = async () => {
     if (!isDirty) {
@@ -452,54 +464,19 @@ export const EditMode = () => {
     try {
       if (!isTauri()) {
         addToast('Saving is only available in desktop app', 'warning');
+        setIsSaving(false);
         return;
       }
 
       // Remember our own save to avoid reacting to the resulting file watcher event
       lastSelfSaveAtRef.current = Date.now();
 
-      // 1. Save to local filesystem
-      await fileSystem.writeNote(currentFilepath, content);
+      // Delegate the actual save + sync pipeline to the store
+      await saveCurrentNote(content);
 
-      // 2. Update in-memory cache (with size cap) and parsed note so UI is instantly fresh
-      useAppStore.setState((state) => {
-        const existing = { ...state.contentCache };
-        delete existing[currentFilepath];
-        const next = { ...existing, [currentFilepath]: content };
-        const keys = Object.keys(next);
-        if (keys.length > MAX_CONTENT_CACHE_ENTRIES) {
-          const overflow = keys.length - MAX_CONTENT_CACHE_ENTRIES;
-          for (let i = 0; i < overflow; i++) {
-            delete next[keys[i]];
-          }
-        }
-        return {
-          contentCache: next,
-          currentNote: parseNote(content),
-        };
-      });
-      
       // OPTIMISTIC UI UPDATE: Finish "saving" state immediately
       setIsSaving(false);
       addToast('Saved locally', 'success');
-
-      // 3. Best-effort cloud sync (Background)
-      const noteId = useAppStore.getState().pathMap[currentFilepath];
-      if (noteId && dataService) {
-        // Fire-and-forget sync + metadata refresh
-        dataService.syncNote(currentFilepath, content, noteId, currentVault?.id)
-            .then(() => {
-                updateLastSync();
-                useAppStore.getState().markNoteSynced(currentFilepath);
-                // Refresh metadata (like due dates) without reloading content to avoid overwriting editor
-                useAppStore.getState().refreshMetadata(currentFilepath);
-            })
-            .catch((syncError) => {
-                console.error('[EditMode] Cloud sync failed', syncError);
-                useAppStore.getState().markNoteSyncPending(currentFilepath);
-                addToast('Cloud sync failed (saved locally)', 'warning');
-            });
-      }
     } catch (e) {
       console.error(e);
       addToast('Failed to save note', 'error');
@@ -560,18 +537,52 @@ export const EditMode = () => {
       return null;
   };
 
-  const updateTargetClozeId = () => {
+  const updateTargetClozeId = useCallback(() => {
       const textarea = textareaRef.current;
       if (!textarea) return;
+      // Use the live textarea value for cursor-relative search
       const full = textarea.value;
-      const id = computeSameIdTarget(full, textarea.selectionStart);
-      setTargetClozeId(id);
-  };
+      
+      // Optimize: Use the maxId from our stats instead of rescanning the whole file
+      // This might be slightly stale (200ms) but that's acceptable for a hint
+      const prevId = ClozeUtils.findPrecedingClozeId(full, textarea.selectionStart);
+      
+      if (prevId !== null) {
+          setTargetClozeId(prevId);
+          return;
+      }
+      
+      const maxId = clozeStats.maxId;
+      if (maxId > 0) {
+          setTargetClozeId(maxId);
+      } else {
+          setTargetClozeId(null);
+      }
+  }, [clozeStats.maxId]);
+
+  const scheduleUpdateTargetClozeId = useCallback(() => {
+      if (cursorUpdateRafRef.current !== null) {
+          cancelAnimationFrame(cursorUpdateRafRef.current);
+      }
+      cursorUpdateRafRef.current = requestAnimationFrame(() => {
+          cursorUpdateRafRef.current = null;
+          updateTargetClozeId();
+      });
+  }, [updateTargetClozeId]);
+
+  // Debounce cursor-dependent logic (target cloze ID)
+  useEffect(() => {
+      const timer = setTimeout(() => {
+          updateTargetClozeId();
+      }, 150);
+      return () => clearTimeout(timer);
+  }, [content, updateTargetClozeId]); // Re-run when content changes (cursor often moves with content change)
 
   /**
    * Inserts a new cloze with auto-incremented ID (e.g., c1 -> c2)
    */
   const insertCloze = (sameId = false) => {
+      // ...
       const textarea = textareaRef.current;
       if (!textarea) return;
 
@@ -936,7 +947,7 @@ export const EditMode = () => {
       textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight / 2);
   };
 
-  const handlePreviewErrorClick = (
+  const handlePreviewErrorClick = useCallback((
       kind: 'unclosed' | 'malformed' | 'dangling',
       occurrenceIndex: number,
       _target?: HTMLElement,
@@ -985,9 +996,9 @@ export const EditMode = () => {
       const lineHeight = 24;
       const targetTop = (lines - 1) * lineHeight;
       textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight / 2);
-  };
+  }, [clozeStats]);
 
-  const handlePreviewClozeContextMenu = (id: number, occurrenceIndex: number, target: HTMLElement, _event: React.MouseEvent) => {
+  const handlePreviewClozeContextMenu = useCallback((id: number, occurrenceIndex: number, target: HTMLElement, _event: React.MouseEvent) => {
       // Trigger Menu on Right Click
       if (target) {
         const rect = target.getBoundingClientRect();
@@ -998,9 +1009,9 @@ export const EditMode = () => {
         });
       }
       setTargetClozeId(id);
-  };
+  }, []);
 
-  const handlePreviewClozeClick = (id: number, occurrenceIndex: number, _target: HTMLElement) => {
+  const handlePreviewClozeClick = useCallback((id: number, occurrenceIndex: number, _target: HTMLElement) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     
@@ -1047,7 +1058,9 @@ export const EditMode = () => {
     textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
 
     flashPreviewCloze(id);
-  };
+  }, []);
+
+  if (!currentNote || !currentFilepath) return null;
 
   return (
     <div className="h-full flex flex-col bg-base-100 relative">
@@ -1152,7 +1165,7 @@ export const EditMode = () => {
           <div className="flex items-center gap-3">
             {/* Status Badge (Pulse Dot) */}
             <div className={`flex items-center gap-1.5 text-xs font-medium ${isDirty ? 'text-warning' : 'text-base-content/50'}`} title={isDirty ? 'Unsaved Changes' : 'All Saved'}>
-                <div className={`w-2 h-2 rounded-full ${isDirty ? 'bg-warning animate-pulse shadow-[0_0_8px_rgba(250,189,0,0.5)]' : 'bg-base-content/20'}`} />
+                <div className={`w-2 h-2 rounded-full transition-colors duration-300 ${isDirty ? 'bg-warning shadow-[0_0_8px_rgba(250,189,0,0.5)]' : 'bg-base-content/20'}`} />
             </div>
 
             <div className="h-3 w-px bg-base-content/10" />
@@ -1330,10 +1343,10 @@ export const EditMode = () => {
                 value={content}
                 onChange={(e) => {
                     setContent(e.target.value);
-                    updateTargetClozeId();
+                    // updateTargetClozeId handled by effect
                 }}
-                onClick={updateTargetClozeId}
-                onSelect={updateTargetClozeId}
+                onClick={scheduleUpdateTargetClozeId}
+                onSelect={scheduleUpdateTargetClozeId}
                 placeholder="Start typing..."
                 spellCheck={false}
                 onKeyUp={(e) => {
@@ -1347,7 +1360,7 @@ export const EditMode = () => {
                     e.key === 'PageUp' ||
                     e.key === 'PageDown'
                 ) {
-                    updateTargetClozeId();
+                    scheduleUpdateTargetClozeId();
                 }
                 }}
                 onKeyDown={(e) => {
@@ -1416,13 +1429,15 @@ export const EditMode = () => {
            </div>
 
           <div className="flex-1 overflow-y-auto px-8 py-8 custom-scrollbar scroll-smooth">
-            <MarkdownContent
-                content={parsedPreview.renderableContent}
-                className="text-base max-w-none"
-                onClozeClick={handlePreviewClozeClick}
-                onClozeContextMenu={handlePreviewClozeContextMenu}
-                onErrorLinkClick={handlePreviewErrorClick}
-            />
+            {active && (
+                <MarkdownContent
+                    content={parsedPreview.renderableContent}
+                    className="text-base max-w-none"
+                    onClozeClick={handlePreviewClozeClick}
+                    onClozeContextMenu={handlePreviewClozeContextMenu}
+                    onErrorLinkClick={handlePreviewErrorClick}
+                />
+            )}
           </div>
         </div>
       </div>
