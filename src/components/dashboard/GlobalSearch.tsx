@@ -148,7 +148,7 @@ export const GlobalSearch: React.FC = () => {
                         </ul>
                     ) : (
                         <div className="p-4 text-center text-base-content/50">
-                            {isLoading ? 'Searching...' : 'No results found'}
+                            {isLoading ? 'Searching...' : 'No matching cards found'}
                         </div>
                     )}
                 </div>

@@ -55,7 +55,7 @@ export const ReviewTrends = ({ distribution }: { distribution: Record<number, nu
                 {total === 0 ? (
                     <div className="flex-1 flex flex-col items-center justify-center opacity-40">
                         <PieChart size={32} className="mb-2" />
-                        <div className="text-xs">No data yet</div>
+                        <div className="text-xs">No reviews yet. Complete some reviews to see trends.</div>
                     </div>
                 ) : (
                     <div className="flex flex-col gap-6 flex-1 justify-center">

@@ -35,7 +35,7 @@ export const DifficultyDistribution = ({ folderLapses }: { folderLapses: Record<
                 {folders.length === 0 ? (
                      <div className="flex flex-col items-center justify-center flex-1 text-center opacity-40">
                         <Folder size={32} className="mb-2 opacity-20" />
-                        <p className="text-xs">No difficulty data found.</p>
+                        <p className="text-xs">No lapse data yet. Trouble spots will appear here.</p>
                     </div>
                 ) : (
                     folders.map((f) => {

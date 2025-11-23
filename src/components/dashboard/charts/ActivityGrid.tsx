@@ -146,7 +146,7 @@ export const ActivityGrid = () => {
                         ))}
                     </div>
 
-                    <div className="flex gap-[3px] justify-between overflow-hidden h-[100px]">
+                    <div className="flex gap-[3px] justify-between h-24 sm:h-28 md:h-32">
                         {weeks.map((week, i) => (
                             <div key={i} className="flex flex-col gap-[3px] h-full justify-between flex-1">
                                 {week.map((day) => (
@@ -161,7 +161,7 @@ export const ActivityGrid = () => {
                                                 <TooltipCard
                                                     title={day.fullDate}
                                                     items={[{ label: 'Reviews', value: day.count }]}
-                                                    footer={day.count > 0 ? "Good job!" : "No activity"}
+                                                    footer={day.count > 0 ? "Good job!" : "No reviews this day"}
                                                 />
                                             </div>
                                         )}

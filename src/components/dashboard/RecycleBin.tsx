@@ -67,7 +67,7 @@ export const RecycleBin = () => {
         {items.length === 0 && !isLoading && (
           <div className="flex-1 flex flex-col items-center justify-center text-xs opacity-60 text-center py-6">
             <Trash2 size={24} className="mb-2 opacity-40" />
-            <p>Bin is empty. No deleted notes.</p>
+            <p>Recycle bin is empty. No deleted notes yet.</p>
           </div>
         )}
 

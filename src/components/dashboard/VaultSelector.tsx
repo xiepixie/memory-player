@@ -168,7 +168,7 @@ export const VaultSelector = () => {
               {vaults.length === 0 && (
                 <div className="px-4 py-6 text-center text-base-content/40 text-xs flex flex-col items-center gap-2">
                   <Layers size={24} className="opacity-20" />
-                  No vaults found.
+                  No vaults yet. Create one to start syncing.
                 </div>
               )}
             </div>
