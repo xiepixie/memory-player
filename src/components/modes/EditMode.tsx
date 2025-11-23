@@ -10,7 +10,7 @@ import { parseNote } from '../../lib/markdown/parser';
 import { useFileWatcher } from '../../hooks/useFileWatcher';
 
 export const EditMode = () => {
-  const { currentNote, currentFilepath, loadNote, dataService, currentClozeIndex, updateLastSync } = useAppStore();
+  const { currentNote, currentFilepath, loadNote, dataService, currentClozeIndex, updateLastSync, currentVault } = useAppStore();
   const addToast = useToastStore((state) => state.addToast);
   const [content, setContent] = useState(currentNote?.raw || '');
   const [isSaving, setIsSaving] = useState(false);
@@ -157,10 +157,10 @@ export const EditMode = () => {
         
         // Sync to Supabase
         const noteId = useAppStore.getState().pathMap[currentFilepath];
-        
+
         if (noteId && dataService) {
             addToast('Syncing to cloud...', 'info');
-            await dataService.syncNote(currentFilepath, content, noteId);
+            await dataService.syncNote(currentFilepath, content, noteId, currentVault?.id);
             updateLastSync();
         }
 

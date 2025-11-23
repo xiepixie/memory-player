@@ -1,8 +1,7 @@
 import { create, StateCreator } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
-import { DataService, NoteMetadata, QueueItem, ReviewLog } from '../lib/storage/types';
+import { DataService, NoteMetadata, QueueItem, ReviewLog, Vault } from '../lib/storage/types';
 import { MockAdapter } from '../lib/storage/MockAdapter';
-import { SupabaseAdapter } from '../lib/storage/SupabaseAdapter';
 import { fileSystem } from '../lib/services/fileSystem';
 import { isTauri } from '../lib/tauri';
 import { parseNote, ParsedNote } from '../lib/markdown/parser';
@@ -27,6 +26,7 @@ interface AppState {
 
   recentVaults: string[];
   removeRecentVault: (path: string) => void;
+  handleExternalCardUpdate: (row: any) => void;
 
   setRootPath: (path: string | null) => void;
   setFiles: (files: string[]) => void;
@@ -41,6 +41,7 @@ interface AppState {
     timeStarted: number;
     reviewedCount: number;
     ratings: Record<number, number>;
+    skippedCount: number;
   };
   setQueue: (items: QueueItem[]) => void;
   startSession: () => void;
@@ -49,7 +50,7 @@ interface AppState {
   currentNote: ParsedNote | null;
   currentMetadata: NoteMetadata | null;
   currentClozeIndex: number | null;
-  
+
   isGrading: boolean;
 
   viewMode: ViewMode;
@@ -59,13 +60,24 @@ interface AppState {
   setTheme: (theme: string) => void;
 
   contentCache: Record<string, string>;
-  
+
   loadNote: (filepath: string, targetClozeIndex?: number | null) => Promise<void>;
   saveReview: (rating: number) => Promise<boolean>;
   closeNote: () => void;
 
   loadSettings: () => void;
   updateLastSync: () => void;
+
+  // --- Smart Queue & Actions ---
+  fetchDueCards: (limit?: number) => Promise<void>;
+  searchCards: (query: string) => Promise<any[]>;
+  suspendCard: (cardId: string, isSuspended: boolean) => Promise<void>;
+  resetCard: (cardId: string) => Promise<void>;
+
+  vaults: Vault[];
+  currentVault: Vault | null;
+  loadVaults: () => Promise<void>;
+  setCurrentVault: (vault: Vault | null) => void;
 }
 
 type VaultSlice = Pick<
@@ -77,11 +89,16 @@ type VaultSlice = Pick<
   | 'pathMap'
   | 'recentVaults'
   | 'contentCache'
+  | 'vaults'
+  | 'currentVault'
   | 'setRootPath'
   | 'setFiles'
   | 'loadAllMetadata'
   | 'loadSettings'
   | 'removeRecentVault'
+  | 'handleExternalCardUpdate'
+  | 'loadVaults'
+  | 'setCurrentVault'
 >;
 
 type HistorySlice = Pick<
@@ -130,6 +147,14 @@ type ServiceSlice = Pick<
   | 'updateLastSync'
 >;
 
+type SmartQueueSlice = Pick<
+  AppState,
+  | 'fetchDueCards'
+  | 'searchCards'
+  | 'suspendCard'
+  | 'resetCard'
+>;
+
 type AppStateCreator<T> = StateCreator<
   AppState,
   [['zustand/devtools', never], ['zustand/persist', unknown]],
@@ -147,6 +172,7 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
     try {
       let service: DataService;
       if (type === 'supabase') {
+        const { SupabaseAdapter } = await import('../lib/storage/SupabaseAdapter');
         service = new SupabaseAdapter(
           import.meta.env.VITE_SUPABASE_URL || '',
           import.meta.env.VITE_SUPABASE_ANON_KEY || ''
@@ -156,6 +182,7 @@ const createServiceSlice: AppStateCreator<ServiceSlice> = (set, get) => ({
       }
       await service.init();
       set({ dataService: service, syncMode: type, lastSyncAt: new Date() });
+      await get().loadVaults();
       await get().loadAllMetadata();
       await get().loadReviewHistory();
     } catch (e) {
@@ -177,6 +204,8 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
   idMap: {},
   pathMap: {},
   contentCache: {},
+  vaults: [],
+  currentVault: null,
 
   loadSettings: () => {
     const persistedStore = localStorage.getItem('app-store');
@@ -187,7 +216,7 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
     const savedPath = localStorage.getItem('rootPath');
     const savedRecents = localStorage.getItem('recentVaults');
     const savedFiles = localStorage.getItem('cachedFiles');
-    
+
     set({
       rootPath: savedPath,
       recentVaults: savedRecents ? JSON.parse(savedRecents) : [],
@@ -200,13 +229,14 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
   },
 
   setRootPath: (path) => {
-    const { recentVaults } = get();
+    const { recentVaults, vaults, currentVault } = get();
     // Only add to recents if it's not the Demo Vault and not null
     if (path && path !== 'DEMO_VAULT') {
       const updatedRecents = [path, ...recentVaults.filter(p => p !== path)].slice(0, 5);
-      set({ rootPath: path, recentVaults: updatedRecents, contentCache: {} }); // Clear cache on vault switch
+      const matchedVault = vaults.find(v => (v.config as any)?.rootPath === path) || currentVault;
+      set({ rootPath: path, recentVaults: updatedRecents, contentCache: {}, currentVault: matchedVault || null });
     } else {
-      set({ rootPath: path, contentCache: {} });
+      set({ rootPath: path, contentCache: {}, currentVault });
     }
   },
 
@@ -233,6 +263,75 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
       useToastStore.getState().addToast("Failed to load metadata", 'error');
     }
   },
+
+  loadVaults: async () => {
+    try {
+      const { dataService, rootPath } = get();
+      const vaults = await dataService.getVaults();
+      let currentVault = get().currentVault;
+      if (!currentVault && rootPath) {
+        currentVault = vaults.find(v => (v.config as any)?.rootPath === rootPath) || null;
+      }
+      if (!currentVault && vaults.length > 0) {
+        currentVault = vaults[0];
+      }
+      set({ vaults, currentVault });
+    } catch (e) {
+      console.error("Failed to load vaults", e);
+    }
+  },
+
+  setCurrentVault: (vault) => {
+    set({ currentVault: vault });
+  },
+
+  handleExternalCardUpdate: (row: any) => {
+    const { idMap, fileMetadatas, currentFilepath } = get();
+    const filepath = idMap[row.note_id];
+
+    if (!filepath) return; // Note not loaded or unknown
+
+    const meta = fileMetadatas[filepath];
+    if (!meta) return;
+
+    // Construct updated card
+    const updatedCard = {
+      ...createEmptyCard(), // Start with defaults
+      state: row.state,
+      due: new Date(row.due),
+      stability: row.stability,
+      difficulty: row.difficulty,
+      elapsed_days: row.elapsed_days,
+      scheduled_days: row.scheduled_days,
+      reps: row.reps,
+      lapses: row.lapses,
+      last_review: row.last_review ? new Date(row.last_review) : undefined
+    };
+
+    const newMeta = {
+      ...meta,
+      cards: {
+        ...meta.cards,
+        [row.cloze_index]: updatedCard
+      }
+    };
+
+    // Update Store
+    const updates: Partial<AppState> = {
+      fileMetadatas: {
+        ...fileMetadatas,
+        [filepath]: newMeta
+      }
+    };
+
+    // If this is the currently open note, update it too
+    if (currentFilepath === filepath) {
+      updates.currentMetadata = newMeta;
+    }
+
+    set(updates);
+    useToastStore.getState().addToast(`External update: ${filepath.split('/').pop()}`, 'info');
+  },
 });
 
 const createHistorySlice: AppStateCreator<HistorySlice> = (set, get) => ({
@@ -245,15 +344,15 @@ const createHistorySlice: AppStateCreator<HistorySlice> = (set, get) => ({
     const end = new Date();
     const start = new Date();
     start.setDate(start.getDate() - 365);
-    
+
     try {
-        const history = await dataService.getReviewHistory(start, end);
-        set({ 
-          reviewHistory: history,
-          pendingSyncCount: syncMode === 'mock' ? history.length : 0,
-        });
+      const history = await dataService.getReviewHistory(start, end);
+      set({
+        reviewHistory: history,
+        pendingSyncCount: syncMode === 'mock' ? history.length : 0,
+      });
     } catch (e) {
-        console.error("Failed to load review history", e);
+      console.error("Failed to load review history", e);
     }
   },
 });
@@ -262,7 +361,7 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
   queue: [],
   sessionTotal: 0,
   sessionIndex: 0,
-  sessionStats: { timeStarted: 0, reviewedCount: 0, ratings: {} },
+  sessionStats: { timeStarted: 0, reviewedCount: 0, ratings: {}, skippedCount: 0 },
   isGrading: false,
 
   setQueue: (queue) => set({ queue }),
@@ -276,7 +375,8 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
         sessionStats: {
           timeStarted: Date.now(),
           reviewedCount: 0,
-          ratings: { 1: 0, 2: 0, 3: 0, 4: 0 }
+          ratings: { 1: 0, 2: 0, 3: 0, 4: 0 },
+          skippedCount: 0,
         }
       });
       const first = queue[0];
@@ -292,90 +392,90 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
 
     // Allow rating only if we have a specific cloze in focus
     if (currentClozeIndex === null) {
-         useToastStore.getState().addToast("No active cloze to grade", 'warning');
-         return false;
+      useToastStore.getState().addToast("No active cloze to grade", 'warning');
+      return false;
     }
 
     // Safety check: if we are somehow out of bounds, don't proceed
     if (sessionIndex >= queue.length && queue.length > 0) {
-        useToastStore.getState().addToast("Session already complete", 'info');
-        return false;
+      useToastStore.getState().addToast("Session already complete", 'info');
+      return false;
     }
 
     set({ isGrading: true });
 
     try {
-        const f = fsrs();
-        // Get current card state or default to empty/new
-        const currentCard = currentMetadata.cards[currentClozeIndex] || createEmptyCard();
-        const scheduling_cards = f.repeat(currentCard, new Date());
-        const record = scheduling_cards[rating as 1 | 2 | 3 | 4];
+      const f = fsrs();
+      // Get current card state or default to empty/new
+      const currentCard = currentMetadata.cards[currentClozeIndex] || createEmptyCard();
+      const scheduling_cards = f.repeat(currentCard, new Date());
+      const record = scheduling_cards[rating as 1 | 2 | 3 | 4];
 
-        if (!record) {
-            useToastStore.getState().addToast("Grading failed", 'error');
-            return false;
-        }
-
-        // Use noteId if available, fallback to filepath
-        const noteId = currentMetadata.noteId || currentFilepath;
-        await dataService.saveReview(noteId, currentClozeIndex, record.card, record.log);
-
-        const newMetadata: NoteMetadata = {
-            ...currentMetadata,
-            cards: {
-                ...currentMetadata.cards,
-                [currentClozeIndex]: record.card
-            },
-            lastReviews: {
-                ...currentMetadata.lastReviews,
-                [currentClozeIndex]: record.log
-            }
-        };
-
-        // Optimistic update of metadata map
-        set({
-            sessionStats: {
-                ...sessionStats,
-                reviewedCount: sessionStats.reviewedCount + 1,
-                ratings: { ...sessionStats.ratings, [rating]: (sessionStats.ratings[rating] || 0) + 1 }
-            },
-            currentMetadata: newMetadata, // Update current view too!
-            fileMetadatas: {
-                ...fileMetadatas,
-                [currentFilepath]: newMetadata
-            },
-            lastSyncAt: new Date(),
-        });
-
-        // Navigation Logic
-        if (queue.length > 0) {
-            const nextIndex = sessionIndex + 1;
-            
-            if (nextIndex < queue.length) {
-                set({ sessionIndex: nextIndex });
-                const nextItem = queue[nextIndex];
-                await loadNote(nextItem.filepath, nextItem.clozeIndex);
-            } else {
-                // Session Complete
-                set({ 
-                    currentFilepath: null, 
-                    currentNote: null, 
-                    viewMode: 'summary',
-                    sessionIndex: queue.length // Ensure it shows 100% or complete
-                });
-                useToastStore.getState().addToast("Session Complete!", 'success');
-            }
-        } else {
-            // If not in a session (e.g. grading manually in Library mode), just stay or toast
-            useToastStore.getState().addToast("Review saved", 'success');
-        }
-        return true;
-    } catch (e) {
-        console.error("Save review failed", e);
-        useToastStore.getState().addToast("Failed to save review", 'error');
+      if (!record) {
+        useToastStore.getState().addToast("Grading failed", 'error');
         return false;
+      }
+
+      // Use noteId if available, fallback to filepath
+      const noteId = currentMetadata.noteId || currentFilepath;
+      await dataService.saveReview(noteId, currentClozeIndex, record.card, record.log);
+
+      const newMetadata: NoteMetadata = {
+        ...currentMetadata,
+        cards: {
+          ...currentMetadata.cards,
+          [currentClozeIndex]: record.card
+        },
+        lastReviews: {
+          ...currentMetadata.lastReviews,
+          [currentClozeIndex]: record.log
+        }
+      };
+
+      // Optimistic update of metadata map
+      set({
+        sessionStats: {
+          ...sessionStats,
+          reviewedCount: sessionStats.reviewedCount + 1,
+          ratings: { ...sessionStats.ratings, [rating]: (sessionStats.ratings[rating] || 0) + 1 }
+        },
+        currentMetadata: newMetadata, // Update current view too!
+        fileMetadatas: {
+          ...fileMetadatas,
+          [currentFilepath]: newMetadata
+        },
+        lastSyncAt: new Date(),
+      });
+
+      // Navigation Logic
+      if (queue.length > 0) {
+        const nextIndex = sessionIndex + 1;
+
+        if (nextIndex < queue.length) {
+          set({ sessionIndex: nextIndex });
+          const nextItem = queue[nextIndex];
+          await loadNote(nextItem.filepath, nextItem.clozeIndex);
+        } else {
+          // Session Complete
+          set({
+            currentFilepath: null,
+            currentNote: null,
+            viewMode: 'summary',
+            sessionIndex: queue.length // Ensure it shows 100% or complete
+          });
+          useToastStore.getState().addToast("Session Complete!", 'success');
+        }
+      } else {
+        // If not in a session (e.g. grading manually in Library mode), just stay or toast
+        useToastStore.getState().addToast("Review saved", 'success');
+      }
+      return true;
+    } catch (e) {
+      console.error("Save review failed", e);
+      useToastStore.getState().addToast("Failed to save review", 'error');
+      return false;
     } finally {
-        set({ isGrading: false });
+      set({ isGrading: false });
     }
   },
 });
@@ -394,14 +494,18 @@ const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
 
       if (!content) {
         if (rootPath === 'DEMO_VAULT') {
-            // Generate demo content
-            const fileName = filepath.split('/').pop() || 'Demo';
-            content = `---
+          // Generate demo content
+          const fileName = filepath.split('/').pop() || 'Demo';
+          content = `---
 title: ${fileName.replace('.md', '')}
 tags: [demo, spaced-repetition]
 ---
 
 # ${fileName.replace('.md', '')}
+---
+title: Welcome
+tags: [demo, spaced-repetition]
+---
 
 This is a **demo note** to showcase the Memory Player's spaced repetition features.
 
@@ -429,31 +533,40 @@ The ==Ebbinghaus== forgetting curve shows how information is lost over time when
 | :---------------------- | :----------------------- | :------------------------------------ |
 | **问题导向原则**              | 逆向工程范式                   | 确保题目能作为阅读的起点和导航图。                     |
 | **认知负荷管理**              | 认知负荷理论                   | 将大任务分解为 5 个独立小任务，降低瞬时认知压力。            |
-| **信息检索测试**              | 信息检索理论                   | 考察考生能否根据“查询指令”（题干）在“数据库”（文章）中高效、精准定位。 |
-| **绝对答案唯一性**             | 选择题固有属性                  | 确保只有一个“出错概率最小”的最佳选项，同时设置三个逻辑上可证伪的干扰项。 |
+
+# 测试公式
+
+行内：{{c4::$E = mc^2$}}
+
+块公式：
+
+{{c3::$$
+\\int_a^b f(x)\\,dx = F(b) - F(a)
+$$}}
 
 ---
 *This is a demo note. Start by grading your recall of the information above!*
+
 `;
         } else {
-            // Check if we're in Tauri environment
-            if (!isTauri()) {
+          // Check if we're in Tauri environment
+          if (!isTauri()) {
             useToastStore.getState().addToast("File system access is only available in the desktop app", 'error');
             return;
-            }
-            
-            // Use FileSystemService to ensure ID exists and read content
-            const result = await fileSystem.ensureNoteId(filepath);
-            content = result.content;
-            noteId = result.id;
+          }
 
-            // Update ID maps
-            set(state => ({
-                idMap: { ...state.idMap, [noteId!]: filepath },
-                pathMap: { ...state.pathMap, [filepath]: noteId! }
-            }));
+          // Use FileSystemService to ensure ID exists and read content
+          const result = await fileSystem.ensureNoteId(filepath);
+          content = result.content;
+          noteId = result.id;
+
+          // Update ID maps
+          set(state => ({
+            idMap: { ...state.idMap, [noteId!]: filepath },
+            pathMap: { ...state.pathMap, [filepath]: noteId! }
+          }));
         }
-        
+
         // Update cache
         set(state => ({ contentCache: { ...state.contentCache, [filepath]: content } }));
       }
@@ -461,21 +574,21 @@ The ==Ebbinghaus== forgetting curve shows how information is lost over time when
       const parsed = parseNote(content);
       // Pass noteId if available, otherwise fallback to filepath
       const metadata = await get().dataService.getMetadata(noteId || '', filepath);
-      
+
       // Inject the real ID if we have it
       if (noteId) {
-          metadata.noteId = noteId;
-          
-          // Update fileMetadatas with the discovered ID
-          const { fileMetadatas } = get();
-          if (fileMetadatas[filepath]) {
-              set({
-                  fileMetadatas: {
-                      ...fileMetadatas,
-                      [filepath]: { ...fileMetadatas[filepath], noteId }
-                  }
-              });
-          }
+        metadata.noteId = noteId;
+
+        // Update fileMetadatas with the discovered ID
+        const { fileMetadatas } = get();
+        if (fileMetadatas[filepath]) {
+          set({
+            fileMetadatas: {
+              ...fileMetadatas,
+              [filepath]: { ...fileMetadatas[filepath], noteId }
+            }
+          });
+        }
       }
 
       const { viewMode } = get();
@@ -505,6 +618,63 @@ const createUISlice: AppStateCreator<UISlice> = (set) => ({
   setViewMode: (mode) => set({ viewMode: mode }),
   setTheme: (theme) => set({ theme }),
 });
+
+const createSmartQueueSlice: AppStateCreator<SmartQueueSlice> = (set, get) => ({
+  fetchDueCards: async (limit = 50) => {
+    try {
+      const { dataService } = get();
+      const dueCards = await dataService.getDueCards(limit);
+      set({ queue: dueCards });
+      useToastStore.getState().addToast(`Loaded ${dueCards.length} due cards`, 'success');
+    } catch (e) {
+      console.error("Failed to fetch due cards", e);
+      useToastStore.getState().addToast("Failed to fetch due cards", 'error');
+    }
+  },
+
+  searchCards: async (query) => {
+    try {
+      const { dataService } = get();
+      return await dataService.searchCards(query);
+    } catch (e) {
+      console.error("Failed to search cards", e);
+      return [];
+    }
+  },
+
+  suspendCard: async (cardId, isSuspended) => {
+    try {
+      const { dataService } = get();
+      await dataService.suspendCard(cardId, isSuspended);
+      useToastStore.getState().addToast(isSuspended ? "Card suspended" : "Card unsuspended", 'info');
+
+      // Remove from queue if suspended
+      if (isSuspended) {
+        // const { queue } = get();
+        // Note: QueueItem currently doesn't have cardId directly, but we can infer or update QueueItem to have it if needed.
+        // For now, we might need to reload queue or filter by noteId+clozeIndex if we have that info.
+        // But suspendCard takes cardId (UUID).
+        // Let's just reload queue for simplicity or assume UI handles it.
+        // Actually, let's refresh the queue if we are in a session? No, that might disrupt flow.
+      }
+    } catch (e) {
+      console.error("Failed to suspend card", e);
+      useToastStore.getState().addToast("Failed to update card suspension", 'error');
+    }
+  },
+
+  resetCard: async (cardId) => {
+    try {
+      const { dataService } = get();
+      await dataService.resetCard(cardId);
+      useToastStore.getState().addToast("Card progress reset", 'success');
+    } catch (e) {
+      console.error("Failed to reset card", e);
+      useToastStore.getState().addToast("Failed to reset card", 'error');
+    }
+  }
+});
+
 export const useAppStore = create<AppState>()(
   devtools(
     persist(
@@ -515,6 +685,7 @@ export const useAppStore = create<AppState>()(
         ...createSessionSlice(...a),
         ...createNoteSlice(...a),
         ...createUISlice(...a),
+        ...createSmartQueueSlice(...a),
       }),
       {
         name: 'app-store',

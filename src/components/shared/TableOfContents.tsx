@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../../store/appStore';
+import { MarkdownSplitter } from '../../lib/markdown/splitter';
 
 interface Header {
     id: string;
@@ -11,6 +12,7 @@ export const TableOfContents = () => {
     const currentNote = useAppStore((state) => state.currentNote);
     const viewMode = useAppStore((state) => state.viewMode);
     const [headers, setHeaders] = useState<Header[]>([]);
+    const [sectionCardCounts, setSectionCardCounts] = useState<Record<string, number>>({});
 
     useEffect(() => {
         if (!currentNote) {
@@ -48,6 +50,30 @@ export const TableOfContents = () => {
 
         setHeaders(extracted);
     }, [currentNote, viewMode]);
+
+    useEffect(() => {
+        if (!currentNote) {
+            setSectionCardCounts({});
+            return;
+        }
+
+        const tags = Array.isArray((currentNote.frontmatter as any)?.tags)
+            ? (currentNote.frontmatter as any).tags as string[]
+            : [];
+
+        const blocks = MarkdownSplitter.split(currentNote.content, tags);
+        const counts: Record<string, number> = {};
+
+        blocks.forEach(block => {
+            const clozeCount = block.clozeIds?.length || 0;
+            if (clozeCount === 0) return;
+            block.sectionPath.forEach(title => {
+                counts[title] = (counts[title] || 0) + clozeCount;
+            });
+        });
+
+        setSectionCardCounts(counts);
+    }, [currentNote]);
 
     if (headers.length === 0) return null;
 
@@ -93,9 +119,15 @@ export const TableOfContents = () => {
                         {/* Active indicator dot (optional - could rely on scroll spy later) */}
                         <div className="w-1 h-1 rounded-full bg-base-content/20 group-hover:bg-primary transition-colors" />
                         
-                        <span className="truncate opacity-60 group-hover:opacity-100 group-hover:text-primary-content transition-all text-xs font-medium" title={header.text}>
+                        <span className="flex-1 truncate opacity-60 group-hover:opacity-100 group-hover:text-primary-content transition-all text-xs font-medium" title={header.text}>
                             {header.text}
                         </span>
+
+                        {sectionCardCounts[header.text] > 0 && (
+                            <span className="ml-2 text-[10px] font-mono opacity-50">
+                                {sectionCardCounts[header.text]}
+                            </span>
+                        )}
                     </li>
                 ))}
             </ul>

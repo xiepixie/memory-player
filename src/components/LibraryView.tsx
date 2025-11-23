@@ -4,15 +4,17 @@ import { isTauri } from '../lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readDir } from '@tauri-apps/plugin-fs';
 import { FolderOpen, FileText, Clock, X, LayoutGrid, List, FolderTree, Brain, PenTool, Cloud, Search } from 'lucide-react';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { join } from '@tauri-apps/api/path';
-import { Dashboard } from './Dashboard';
 import { formatDistanceToNow, isPast, isToday } from 'date-fns';
 import { ThemeController } from './shared/ThemeController';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToastStore } from '../store/toastStore';
 import { FileTreeView } from './shared/FileTreeView';
 import { Card } from 'ts-fsrs';
+import { VaultSelector } from './dashboard/VaultSelector';
+
+const DashboardLazy = lazy(() => import('./Dashboard').then((m) => ({ default: m.Dashboard })));
 
 export const LibraryView = () => {
   const {
@@ -26,6 +28,8 @@ export const LibraryView = () => {
     loadSettings,
     recentVaults,
     removeRecentVault,
+    syncMode,
+    lastSyncAt,
   } = useAppStore(
     useShallow((state) => ({
       rootPath: state.rootPath,
@@ -38,6 +42,8 @@ export const LibraryView = () => {
       loadSettings: state.loadSettings,
       recentVaults: state.recentVaults,
       removeRecentVault: state.removeRecentVault,
+      syncMode: state.syncMode,
+      lastSyncAt: state.lastSyncAt,
     })),
   );
   const addToast = useToastStore((state) => state.addToast);
@@ -50,11 +56,17 @@ export const LibraryView = () => {
   const [draftBeforeHistory, setDraftBeforeHistory] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [now, setNow] = useState(new Date());
 
   useEffect(() => {
     const hasSupabase = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
     initDataService(hasSupabase ? 'supabase' : 'mock');
     loadSettings();
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 300000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -78,6 +90,15 @@ export const LibraryView = () => {
 
   const vaultKey = rootPath || 'NO_VAULT';
   const searchHistory = searchHistoryByVault[vaultKey] || [];
+
+  const syncLabel = syncMode === 'supabase' ? 'Cloud (Supabase)' : 'Local-only';
+  const lastSyncText = useMemo(() => (
+    syncMode === 'supabase'
+      ? lastSyncAt
+        ? `Last cloud sync ${formatDistanceToNow(lastSyncAt, { addSuffix: true })}`
+        : 'No cloud sync yet'
+      : 'Cloud sync disabled'
+  ), [syncMode, lastSyncAt, now]);
 
   const filteredFiles = useMemo(() => {
     if (!searchQuery.trim()) return files;
@@ -209,6 +230,7 @@ export const LibraryView = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              <VaultSelector />
               {rootPath && (
                 <div className="join bg-base-200/50 p-1 rounded-lg mr-2 border border-base-300/50">
                   <button
@@ -232,6 +254,18 @@ export const LibraryView = () => {
                   >
                     <FolderTree size={14} />
                   </button>
+                </div>
+              )}
+              {rootPath && (
+                <div className="hidden md:flex flex-col items-end text-xs mr-1">
+                  <span className="flex items-center gap-1">
+                    <Cloud
+                      size={14}
+                      className={syncMode === 'supabase' ? 'text-success' : 'text-base-content/40'}
+                    />
+                    <span className="font-medium">{syncLabel}</span>
+                  </span>
+                  <span className="text-[10px] opacity-60">{lastSyncText}</span>
                 </div>
               )}
               <ThemeController />
@@ -546,7 +580,9 @@ export const LibraryView = () => {
 
             {dashboardTab === 'focus' ? (
               <>
-                <Dashboard mode="hero-only" />
+                <Suspense fallback={<div className="w-full rounded-2xl border border-base-200 bg-base-100/60 h-40 animate-pulse" />}>
+                  <DashboardLazy mode="hero-only" />
+                </Suspense>
 
                 <div className="flex items-center justify-between text-xs text-base-content/60 mt-2 mb-4 px-1">
                   <span>
@@ -589,9 +625,9 @@ export const LibraryView = () => {
                 )}
               </>
             ) : (
-              <>
-                <Dashboard mode="insights-only" />
-              </>
+              <Suspense fallback={<div className="w-full rounded-2xl border border-base-200 bg-base-100/60 h-40 animate-pulse" />}>
+                <DashboardLazy mode="insights-only" />
+              </Suspense>
             )}
           </div>
         )}

@@ -10,10 +10,28 @@ export interface NoteMetadata {
 }
 
 export interface QueueItem {
+  cardId?: string;
   noteId: string;
   filepath: string;
   clozeIndex: number;
   due: Date;
+}
+
+export interface Vault {
+  id: string;
+  user_id: string;
+  name: string;
+  config: {
+    rootPath?: string;
+    fsrsParams?: any;
+    dailyGoals?: {
+      newCards: number;
+      reviewCards: number;
+    };
+    [key: string]: any;
+  };
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DataService {
@@ -22,10 +40,32 @@ export interface DataService {
    */
   init(): Promise<void>;
 
+  // --- Vault Management ---
+  getVaults(): Promise<Vault[]>;
+  createVault(name: string, config?: Vault['config']): Promise<Vault | null>;
+  updateVault(id: string, updates: Partial<Vault>): Promise<Vault | null>;
+
+  // --- Note Management ---
+
   /**
    * Sync a note to the backend
    */
-  syncNote(filepath: string, content: string, noteId: string): Promise<void>;
+  syncNote(filepath: string, content: string, noteId: string, vaultId?: string): Promise<void>;
+
+  /**
+   * Soft delete a note
+   */
+  softDeleteNote(noteId: string): Promise<void>;
+
+  /**
+   * Get all deleted notes (for Recycle Bin)
+   */
+  getDeletedNotes(): Promise<NoteMetadata[]>;
+
+  /**
+   * Restore a soft-deleted note
+   */
+  restoreNote(noteId: string): Promise<void>;
 
   /**
    * Save the review result for a specific cloze in a note
@@ -54,6 +94,37 @@ export interface DataService {
    * Get review history within a date range
    */
   getReviewHistory(start: Date, end: Date): Promise<ReviewLog[]>;
+
+  /**
+   * Subscribe to realtime changes from the backend
+   * @param onCardUpdate Callback when a card is updated externally
+   */
+  subscribeToRealtime(onCardUpdate: (payload: any) => void): () => void;
+
+  // --- Smart Queue & Actions ---
+
+  /**
+   * Get due cards for the "Smart Queue".
+   * Filters by due date <= now and is_suspended = false.
+   * @param limit Max number of cards to fetch (default 50)
+   */
+  getDueCards(limit?: number): Promise<QueueItem[]>;
+
+  /**
+   * Search for cards by content.
+   * @param query Search term
+   */
+  searchCards(query: string): Promise<any[]>;
+
+  /**
+   * Suspend or unsuspend a card.
+   */
+  suspendCard(cardId: string, isSuspended: boolean): Promise<void>;
+
+  /**
+   * Reset a card's FSRS progress to initial state (New).
+   */
+  resetCard(cardId: string): Promise<void>;
 }
 
 export type { ReviewLog };

@@ -65,6 +65,11 @@ export const SessionSummary = () => {
                         <div className="stat-desc font-medium opacity-60">Cards</div>
                     </div>
                     <div className="stat place-items-center py-6 border-l border-base-content/5">
+                        <div className="stat-title text-xs font-bold uppercase tracking-widest opacity-50 mb-1">Skipped</div>
+                        <div className="stat-value text-warning text-3xl">{sessionStats.skippedCount || 0}</div>
+                        <div className="stat-desc font-medium opacity-60">Cards</div>
+                    </div>
+                    <div className="stat place-items-center py-6 border-l border-base-content/5">
                         <div className="stat-title text-xs font-bold uppercase tracking-widest opacity-50 mb-1">Time</div>
                         <div className="stat-value text-secondary font-mono text-3xl">
                             {minutes}:{seconds.toString().padStart(2, '0')}

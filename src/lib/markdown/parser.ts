@@ -40,6 +40,20 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
       answer,
       hint
     });
+
+    if (typeof answer === 'string') {
+      const trimmed = answer.trim();
+        // Special handling for full $$...$$ math clozes: convert to a fenced code block
+      // with language "math-cloze-{id}" so ReactMarkdown can delegate to a custom
+      // renderer without interfering with remark-math/rehype-katex.
+      if (trimmed.startsWith('$$') && trimmed.endsWith('$$')) {
+        const inner = trimmed.slice(2, -2).trim();
+        // Produces a block like:
+        // ```math-cloze-4\n<latex here>\n```\n
+        return '```math-cloze-' + id + '\n' + inner + '\n```\n';
+      }
+    }
+
     // Replace with link syntax: [Answer](#cloze-id-hint) or [Answer](#cloze-id)
     const hash = hint ? `#cloze-${id}-${encodeURIComponent(hint)}` : `#cloze-${id}`;
     return `[${answer}](${hash})`;

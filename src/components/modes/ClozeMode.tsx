@@ -5,6 +5,7 @@ import { ModeActionHint } from '../shared/ModeActionHint';
 import confetti from 'canvas-confetti';
 import clsx from 'clsx';
 import { getThemeColors } from '../../lib/themeUtils';
+import { MathClozeBlock } from '../shared/MathClozeBlock';
 
 export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
   const currentNote = useAppStore((state) => state.currentNote);
@@ -174,6 +175,51 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
                 );
               }
               return <a href={href} title={title} className="link link-primary" target={href?.startsWith('http') ? "_blank" : undefined}>{children}</a>;
+            },
+            code: ({ className, children, ...props }) => {
+              const match = /language-([\w-]+)/.exec(className || '');
+              const lang = match?.[1];
+              const isInline = !match;
+
+              if (lang && lang.startsWith('math-cloze-')) {
+                const idStr = lang.replace('math-cloze-', '');
+                const id = parseInt(idStr, 10);
+                const latex = String(children).trim();
+
+                const isTarget = currentClozeIndex !== null ? id === currentClozeIndex : true;
+                const isRevealed = revealed[idStr] || !isTarget;
+                const isContext = !isTarget;
+
+                const handleToggle = () => {
+                  if (isTarget) {
+                    toggleReveal(idStr);
+                  }
+                };
+
+                return (
+                  <div id={`cloze-${id}`} className="my-6">
+                    <MathClozeBlock
+                      id={Number.isNaN(id) ? 0 : id}
+                      latex={latex}
+                      isRevealed={isRevealed}
+                      isInteractive={isTarget}
+                      onToggle={handleToggle}
+                      className={isContext ? 'opacity-60' : undefined}
+                    />
+                  </div>
+                );
+              }
+
+              // Fallback to a regular code rendering similar to MarkdownContent
+              return isInline ? (
+                <code className="bg-base-300 px-1.5 py-0.5 rounded text-sm font-mono text-primary font-bold" {...props}>
+                  {children}
+                </code>
+              ) : (
+                <div className="mockup-code bg-neutral text-neutral-content my-4 text-sm">
+                  <pre className="px-4"><code>{children}</code></pre>
+                </div>
+              );
             },
           }}
         />

@@ -22,6 +22,14 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
     const storageKey = identity ? `stickyNotes:${identity}` : null;
     const oldStorageKey = identity ? `stickyNote:${identity}` : null;
 
+
+    const BASE_Z_INDEX = 1100;
+
+    const getMaxZIndex = () => {
+        if (notes.length === 0) return BASE_Z_INDEX;
+        return Math.max(...notes.map(n => n.zIndex || 0), BASE_Z_INDEX);
+    };
+
     // Load notes
     useEffect(() => {
         if (!storageKey) {
@@ -32,7 +40,13 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
         const raw = localStorage.getItem(storageKey);
         if (raw) {
             try {
-                setNotes(JSON.parse(raw));
+                const loadedNotes: StickyNoteData[] = JSON.parse(raw);
+                // Normalize z-indices on load to ensure they are above UI elements
+                const normalizedNotes = loadedNotes.map(n => ({
+                    ...n,
+                    zIndex: Math.max(n.zIndex || 0, BASE_Z_INDEX)
+                }));
+                setNotes(normalizedNotes);
             } catch (e) {
                 console.error("Failed to parse sticky notes", e);
                 setNotes([]);
@@ -53,7 +67,7 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
                             height: 200,
                             color: 'yellow',
                             isMinimized: false,
-                            zIndex: 1
+                            zIndex: BASE_Z_INDEX + 1
                         };
                         setNotes([migratedNote]);
                     }
@@ -73,13 +87,16 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
     }, [notes, storageKey]);
 
     const addNote = () => {
+        const defaultWidth = 360;
+        const defaultHeight = 300;
+
         const newNote: StickyNoteData = {
             id: crypto.randomUUID(),
             content: '',
-            x: window.innerWidth / 2 - 150,
-            y: window.innerHeight / 2 - 100,
-            width: 300,
-            height: 200,
+            x: window.innerWidth / 2 - defaultWidth / 2,
+            y: window.innerHeight / 2 - defaultHeight / 2,
+            width: defaultWidth,
+            height: defaultHeight,
             color: 'yellow',
             isMinimized: false,
             zIndex: getMaxZIndex() + 1
@@ -103,14 +120,11 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
 
     const focusNote = useCallback((id: string) => {
         setNotes(prev => {
-            const maxZ = Math.max(...prev.map(n => n.zIndex || 0), 0);
+            const maxZ = Math.max(...prev.map(n => n.zIndex || 0), BASE_Z_INDEX);
             return prev.map(n => n.id === id ? { ...n, zIndex: maxZ + 1 } : n);
         });
     }, []);
 
-    const getMaxZIndex = () => {
-        return Math.max(...notes.map(n => n.zIndex || 0), 0);
-    };
 
     if (!isOpen && notes.length === 0) return null;
 

@@ -1,4 +1,5 @@
 import { useAppStore } from '../store/appStore';
+import { useToastStore } from '../store/toastStore';
 import { ClozeMode } from './modes/ClozeMode';
 import { BlurMode } from './modes/BlurMode';
 import { EditMode } from './modes/EditMode';
@@ -28,6 +29,8 @@ export const NoteRenderer = () => {
         rootPath,
         currentNote,
         currentMetadata,
+        queue,
+        suspendCard,
     } = useAppStore(
         useShallow((state) => ({
             viewMode: state.viewMode,
@@ -42,11 +45,14 @@ export const NoteRenderer = () => {
             rootPath: state.rootPath,
             currentNote: state.currentNote,
             currentMetadata: state.currentMetadata,
+            queue: state.queue,
+            suspendCard: state.suspendCard,
         })),
     );
     const [immersive, setImmersive] = useState(false);
     const [isPeeking, setIsPeeking] = useState(false);
     const [stickyOpen, setStickyOpen] = useState(false);
+    const addToast = useToastStore((state) => state.addToast);
 
     // New local state for sub-modes
     // 'write' -> 'preview' | 'source' (Handled by EditMode internally or just toggle here? Let's use viewMode for simplicity)
@@ -57,6 +63,8 @@ export const NoteRenderer = () => {
     // Let's keep viewMode in store but add a UI abstraction
     const isStudyMode = viewMode === 'test' || viewMode === 'master';
     const isSessionActive = sessionTotal > 0;
+    const currentQueueItem = queue[sessionIndex];
+    const canSuspendCurrent = !!currentQueueItem?.cardId;
 
     // Blur controls for BlurMode: hold Space to temporarily reveal
     useEffect(() => {
@@ -126,6 +134,52 @@ export const NoteRenderer = () => {
         || currentMetadata?.noteId
         || currentFilepath
         || null;
+
+    const handleSuspendCurrent = async () => {
+        if (!currentQueueItem || !currentQueueItem.cardId) {
+            addToast('Cannot suspend this card in the current session', 'warning');
+            return;
+        }
+
+        try {
+            await suspendCard(currentQueueItem.cardId, true);
+            addToast('Card suspended. It will be skipped in future queues.', 'info');
+
+            const { queue, sessionIndex } = useAppStore.getState();
+
+            if (queue.length === 0) {
+                return;
+            }
+
+            const nextIndex = sessionIndex + 1;
+
+            // Increment skipped count for this session
+            useAppStore.setState((state) => ({
+                sessionStats: {
+                    ...state.sessionStats,
+                    skippedCount: (state.sessionStats.skippedCount || 0) + 1,
+                },
+            }));
+
+            if (nextIndex < queue.length) {
+                const nextItem = queue[nextIndex];
+                useAppStore.setState({ sessionIndex: nextIndex });
+                await useAppStore.getState().loadNote(nextItem.filepath, nextItem.clozeIndex);
+            } else {
+                // No more cards in this session: show summary
+                useAppStore.setState({
+                    currentFilepath: null,
+                    currentNote: null,
+                    viewMode: 'summary',
+                    sessionIndex: queue.length,
+                });
+                useToastStore.getState().addToast('Session Complete!', 'success');
+            }
+        } catch (e) {
+            console.error('Failed to suspend card', e);
+            addToast('Failed to suspend card', 'error');
+        }
+    };
 
     // Left Sidebar with Tree View
     const LeftSidebar = (
@@ -252,6 +306,16 @@ export const NoteRenderer = () => {
                             title="Edit Note"
                         >
                             <PenTool size={16} />
+                        </button>
+                    )}
+
+                    {isSessionActive && isStudyMode && canSuspendCurrent && (
+                        <button
+                            className="btn btn-ghost btn-sm gap-1 text-warning"
+                            onClick={handleSuspendCurrent}
+                            title="Suspend this card from future queues"
+                        >
+                            Suspend
                         </button>
                     )}
 

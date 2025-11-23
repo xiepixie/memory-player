@@ -100,6 +100,12 @@ const TreeItem = ({ node, depth, loadNote, isRoot = false, metadatas }: { node: 
                 )}
 
                 <span className={`text-xs font-medium truncate ${statusColor ? '' : 'opacity-80'}`}>{node.name}</span>
+
+                {!hasChildren && node.path && metadatas[node.path]?.cards && (
+                    <span className="ml-auto text-[10px] opacity-40 font-mono">
+                        {Object.keys(metadatas[node.path].cards).length}
+                    </span>
+                )}
             </div>
 
             <AnimatePresence>
