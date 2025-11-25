@@ -1,4 +1,4 @@
-name: 'macOS Release'
+name: 'macOS'
 
 on:
   workflow_dispatch:
@@ -26,7 +26,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Setup Rust (Universal)
         uses: dtolnay/rust-toolchain@stable
@@ -39,11 +38,14 @@ jobs:
           workspaces: src-tauri
           cache-on-failure: true
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Install dependencies
-        run: npm ci
+        run: bun install
 
       - name: Build Tauri (Universal Binary)
-        run: npx tauri build --target universal-apple-darwin
+        run: bunx tauri build --target universal-apple-darwin
 
       - name: Upload .dmg
         uses: actions/upload-artifact@v4
