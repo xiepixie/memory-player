@@ -30,7 +30,6 @@ export const Layout = () => {
 
   useEffect(() => {
     const unsub = dataService.subscribeToRealtime((payload: any) => {
-      console.log("Realtime update received:", payload);
       handleExternalCardUpdate(payload);
     });
     return () => {

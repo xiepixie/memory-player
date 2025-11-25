@@ -8,27 +8,22 @@ export const SessionSummary = () => {
     const sessionStats = useAppStore((state) => state.sessionStats);
     const setViewMode = useAppStore((state) => state.setViewMode);
 
-    // Trigger big confetti on mount
+    // Trigger a lightweight confetti burst on mount. Avoid long-running
+    // intervals to keep the interaction cost small.
     useEffect(() => {
-        const duration = 3000;
-        const animationEnd = Date.now() + duration;
-        const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 };
+        const defaults = { startVelocity: 35, spread: 320, ticks: 50, zIndex: 0 };
 
-        const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+        confetti({
+            ...defaults,
+            particleCount: 80,
+            origin: { x: 0.25, y: 0.4 },
+        });
 
-        const interval: any = setInterval(function() {
-          const timeLeft = animationEnd - Date.now();
-
-          if (timeLeft <= 0) {
-            return clearInterval(interval);
-          }
-
-          const particleCount = 50 * (timeLeft / duration);
-          confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } });
-          confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } });
-        }, 250);
-
-        return () => clearInterval(interval);
+        confetti({
+            ...defaults,
+            particleCount: 80,
+            origin: { x: 0.75, y: 0.4 },
+        });
     }, []);
 
     const now = Date.now();

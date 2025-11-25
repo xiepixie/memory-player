@@ -1,8 +1,10 @@
 import { useAppStore } from '../../store/appStore';
-import { MarkdownContent } from '../shared/MarkdownContent';
 import { ModeActionHint } from '../shared/ModeActionHint';
 import { useFileWatcher } from '../../hooks/useFileWatcher';
 import { useShallow } from 'zustand/react/shallow';
+import { useMemo } from 'react';
+import { VirtualizedMarkdown } from '../shared/VirtualizedMarkdown';
+import { buildMarkdownBlocks } from '../../lib/markdown/parser';
 
 export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
   const { currentNote, currentFilepath, loadNote } = useAppStore(
@@ -24,9 +26,17 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
   // Hints extraction
   const hints = currentNote.hints || [];
 
+  const noteContent = cleanContent(currentNote.content);
+
+  const blurBlocks = useMemo(
+    () => buildMarkdownBlocks(noteContent),
+    [noteContent],
+  );
+
   return (
     <div
       className={`w-full min-h-full flex flex-col select-none transition-all duration-500 ease-out ${immersive ? 'px-12 py-4' : 'px-8 py-8'}`}
+      data-immersive={immersive ? "true" : undefined}
     >
       {/* Hints Section */}
       {hints.length > 0 && !immersive && (
@@ -54,8 +64,8 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
       {/* Flashlight Container (layout only; blur handled at note-scroll-container level) */}
       <div className="relative flex-1 max-w-none">
         <div className="relative border-t border-transparent transition-all duration-200 prose prose-lg max-w-none">
-          <MarkdownContent 
-            content={cleanContent(currentNote.content)} 
+          <VirtualizedMarkdown 
+            blocks={blurBlocks}
             disableIds={false}
           />
         </div>

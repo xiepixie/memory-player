@@ -3,54 +3,68 @@
 
 @keyframes toc-highlight {
   0% {
-    /* 统一覆盖整行标题，避免中心比边缘更深 */
-    background-color: color-mix(in srgb, var(--color-primary) 10%, transparent);
-    transform: scale(1.01);
+    opacity: 0.8;
+    transform: scaleX(1.01) scaleY(1.02);
   }
   40% {
-    /* 平滑减弱到更浅的统一色，而不是靠阴影制造光圈 */
-    background-color: color-mix(in srgb, var(--color-primary) 4%, transparent);
-    transform: scale(1.01);
+    opacity: 0.4;
+    transform: scaleX(1.005) scaleY(1.01);
   }
   100% {
-    background-color: transparent;
+    opacity: 0;
     transform: scale(1);
   }
 }
 
 .toc-target-highlight {
-  animation: toc-highlight 2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  border-radius: 6px;
+  position: relative;
+}
+
+.toc-target-highlight::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--color-primary) 10%, transparent);
   transform-origin: left center;
+  animation: toc-highlight 2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform, opacity;
+  pointer-events: none;
 }
 
 @keyframes cloze-flash {
   0% {
-    border-color: transparent;
-    box-shadow: 0 0 0 2px transparent;
+    opacity: 0.9;
     transform: scale(1);
   }
   20% {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 2px var(--color-primary);
-    transform: scale(1.02);
+    opacity: 1;
+    transform: scale(1.04);
   }
   80% {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 2px var(--color-primary);
+    opacity: 0.6;
     transform: scale(1.02);
   }
   100% {
-    border-color: transparent;
-    box-shadow: 0 0 0 2px transparent;
+    opacity: 0;
     transform: scale(1);
   }
 }
 
 .cloze-target-highlight {
+  position: relative;
+}
+
+.cloze-target-highlight::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 6px;
+    border: 2px solid var(--color-primary);
+    opacity: 0;
     animation: cloze-flash 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    border-radius: 4px;
-    border: 1px solid transparent; /* Base border */
+    will-change: transform, opacity;
+    pointer-events: none;
 }
 
 /* Custom Scrollbar */
@@ -79,4 +93,175 @@
 .mask-linear-fade {
   mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
+}
+
+/* Reveal animations for math content */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-in {
+  animation-fill-mode: both;
+}
+
+.fade-in {
+  animation-name: fade-in;
+}
+
+.slide-up {
+  animation-name: slide-up;
+}
+
+.duration-200 {
+  animation-duration: 200ms;
+}
+
+.duration-300 {
+  animation-duration: 300ms;
+}
+
+/* Math block scrollbar styling */
+.overflow-x-auto::-webkit-scrollbar {
+  height: 4px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-base-content) 15%, transparent);
+  border-radius: 4px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-base-content) 25%, transparent);
+}
+
+/* KaTeX display mode improvements for long formulas */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5rem 0;
+}
+
+.katex-display > .katex {
+  white-space: nowrap;
+}
+
+/* Immersive mode math scaling */
+[data-immersive="true"] .katex {
+  font-size: 1.15em;
+}
+
+[data-immersive="true"] .katex-display {
+  margin: 1.5rem 0;
+}
+
+/* Math block hover states for better interactivity */
+[data-cloze-id]:not([data-revealed="true"]) {
+  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+}
+
+[data-cloze-id]:not([data-revealed="true"]):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px -5px rgba(0, 0, 0, 0.1), 0 4px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+[data-cloze-id]:not([data-revealed="true"]):active {
+  transform: translateY(0);
+}
+
+/* Smooth state transition when revealing */
+[data-cloze-id][data-revealed="true"] {
+  animation: math-reveal 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes math-reveal {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.98);
+  }
+  50% {
+    transform: scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Focus ring for keyboard navigation */
+[data-cloze-id]:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* ============================================
+   PERFORMANCE OPTIMIZATIONS
+   ============================================ */
+
+/* content-visibility: auto - Browser skips rendering for off-screen content */
+.virtualized-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 150px; /* Estimated height for placeholders */
+}
+
+/* Strict containment for math blocks - improves compositing */
+[data-cloze-id] {
+  contain: layout style paint;
+}
+
+/* Promote scrollable containers to their own layer */
+.prose {
+  will-change: scroll-position;
+}
+
+/* Reduce paint area for scroll containers */
+.overflow-x-auto {
+  contain: strict;
+  content-visibility: auto;
+}
+
+/* Optimize KaTeX rendering containers */
+.katex-html {
+  contain: layout style;
+}
+
+/* Reduce layout thrashing during scroll */
+.scroll-container {
+  overflow-anchor: auto;
+  overscroll-behavior: contain;
+}
+
+/* GPU acceleration for animated elements */
+.animate-in,
+[data-revealed="true"] {
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+/* Clean up will-change after animation completes */
+.animate-in.animation-done,
+[data-revealed="true"].animation-done {
+  will-change: auto;
 }

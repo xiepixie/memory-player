@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import { FolderOpen, FileText, ChevronRight, ChevronDown } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { isPast, isToday } from 'date-fns';
+import { useAppStore } from '../../store/appStore';
+import { useShallow } from 'zustand/react/shallow';
 
 export interface TreeNode {
     name: string;
@@ -9,7 +10,7 @@ export interface TreeNode {
     children?: Record<string, TreeNode>;
 }
 
-export const FileTreeView = ({ files, rootPath, loadNote, metadatas, className }: { files: string[], rootPath: string | null, loadNote: (path: string) => void, metadatas: Record<string, any>, className?: string }) => {
+const FileTreeViewImpl = ({ files, rootPath, loadNote, className }: { files: string[], rootPath: string | null, loadNote: (path: string) => void, className?: string }) => {
     const rootName = useMemo(() => {
         if (!rootPath) return 'Vault';
         return rootPath.split(/[/\\]/).pop() || 'Vault';
@@ -39,43 +40,61 @@ export const FileTreeView = ({ files, rootPath, loadNote, metadatas, className }
 
     return (
         <div className={`bg-transparent p-2 ${className || ''}`}>
-             {/* We pass isRoot=false (default) so it renders the node itself, depth -1 effectively so children start at 0 visual indent if we wanted, 
+            {/* We pass isRoot=false (default) so it renders the node itself, depth -1 effectively so children start at 0 visual indent if we wanted, 
                  but here we want the root to be visible. Let's treat it as depth 0. 
                  We manually create the "root" visual behavior by ensuring it's expanded. 
              */}
-            <TreeItem 
-                node={tree} 
-                depth={0} 
-                loadNote={loadNote} 
-                metadatas={metadatas} 
+            <TreeItem
+                node={tree}
+                depth={0}
+                loadNote={loadNote}
                 forcedOpen={true} // New prop to force root open
             />
         </div>
     );
 };
 
-const TreeItem = ({ node, depth, loadNote, metadatas, forcedOpen = false }: { node: TreeNode, depth: number, loadNote: (path: string) => void, metadatas: Record<string, any>, forcedOpen?: boolean }) => {
+const TreeItem = memo(({ node, depth, loadNote, forcedOpen = false }: { node: TreeNode, depth: number, loadNote: (path: string) => void, forcedOpen?: boolean }) => {
     const [isOpen, setIsOpen] = useState(forcedOpen || depth < 1);
     const hasChildren = node.children && Object.keys(node.children).length > 0;
-    
-    // ... rest of component ...
+
+    // Select metadata only for this node if it's a file
+    const meta = useAppStore(
+        useShallow((state) => node.path ? state.fileMetadatas[node.path] : undefined)
+    );
 
     // Determine status color if it's a file
     let statusColor = '';
     let statusIcon = null;
+    let cardCount = 0;
 
-    if (node.path) {
-        const meta = metadatas[node.path];
-        const isNew = !meta?.card || meta.card.reps === 0;
-        const dueDate = meta?.card?.due ? new Date(meta.card.due) : null;
+    if (node.path && meta) {
+        const isNew = !meta.cards || Object.values(meta.cards).every((c: any) => c.reps === 0);
+
+        // Check for any due cards
+        let hasOverdue = false;
+        let hasToday = false;
+
+        if (meta.cards) {
+            const cards = Object.values(meta.cards);
+            cardCount = cards.length;
+
+            cards.forEach((card: any) => {
+                if (card.due) {
+                    const due = new Date(card.due);
+                    if (isPast(due) && !isToday(due)) hasOverdue = true;
+                    else if (isToday(due)) hasToday = true;
+                }
+            });
+        }
 
         if (isNew) {
             statusColor = 'text-info';
             statusIcon = <div className="w-2 h-2 rounded-full bg-info" title="New" />;
-        } else if (dueDate && isPast(dueDate) && !isToday(dueDate)) {
+        } else if (hasOverdue) {
             statusColor = 'text-error';
             statusIcon = <div className="w-2 h-2 rounded-full bg-error" title="Overdue" />;
-        } else if (dueDate && isToday(dueDate)) {
+        } else if (hasToday) {
             statusColor = 'text-warning';
             statusIcon = <div className="w-2 h-2 rounded-full bg-warning" title="Due Today" />;
         }
@@ -108,27 +127,26 @@ const TreeItem = ({ node, depth, loadNote, metadatas, forcedOpen = false }: { no
 
                 <span className={`text-xs font-medium truncate ${statusColor ? '' : 'opacity-80'}`}>{node.name}</span>
 
-                {!hasChildren && node.path && metadatas[node.path]?.cards && (
+                {!hasChildren && cardCount > 0 && (
                     <span className="ml-auto text-[10px] opacity-40 font-mono">
-                        {Object.keys(metadatas[node.path].cards).length}
+                        {cardCount}
                     </span>
                 )}
             </div>
 
-            <AnimatePresence>
-                {isOpen && hasChildren && node.children && (
-                    <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="overflow-hidden"
-                    >
-                        {Object.values(node.children).map((child) => (
-                            <TreeItem key={child.path || child.name} node={child} depth={depth + 1} loadNote={loadNote} metadatas={metadatas} />
-                        ))}
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {isOpen && hasChildren && node.children && (
+                <div
+                    className={`overflow-hidden transition-all duration-200 ease-out ${
+                        isOpen ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
+                    }`}
+                >
+                    {Object.values(node.children).map((child) => (
+                        <TreeItem key={child.path || child.name} node={child} depth={depth + 1} loadNote={loadNote} />
+                    ))}
+                </div>
+            )}
         </div>
     );
-};
+});
+
+export const FileTreeView = memo(FileTreeViewImpl);

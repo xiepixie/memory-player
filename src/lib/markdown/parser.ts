@@ -1,5 +1,6 @@
 import matter from 'gray-matter';
 import { ClozeUtils } from './clozeUtils';
+import { generateSlug } from '../stringUtils';
 
 export interface ParsedNote {
   content: string;
@@ -8,6 +9,7 @@ export interface ParsedNote {
   clozes: ClozeItem[];
   raw: string;
   renderableContent: string; // Content with clozes replaced by [Answer](#cloze-id) for rendering
+  blocks: MarkdownBlock[];
 }
 
 export interface ClozeItem {
@@ -15,6 +17,19 @@ export interface ClozeItem {
   original: string; // {{c1::Answer}}
   answer: string;   // Answer
   hint?: string;    // Hint if {{c1::Answer::Hint}}
+}
+
+export interface MarkdownBlock {
+  id: string;
+  content: string;
+  startLine: number;
+  endLine: number;
+  heading?: {
+    level: number;
+    text: string;
+    slug: string;
+  };
+  hasCloze: boolean;
 }
 
 export const parseNote = (rawMarkdown: string): ParsedNote => {
@@ -29,6 +44,13 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
   }
 
   const clozes: ClozeItem[] = [];
+  const clozeOccurrences: Record<number, number> = {};
+
+  const nextOccurrence = (id: number) => {
+    const current = clozeOccurrences[id] ?? 0;
+    clozeOccurrences[id] = current + 1;
+    return current;
+  };
 
   // Before parsing clozes, pre-mark any dangling closing braces `}}` that
   // are not part of valid/malformed cloze patterns. This keeps the
@@ -60,6 +82,9 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
       hint
     });
 
+    const occurrence = nextOccurrence(id);
+    const occurrenceSuffix = `-o${occurrence}`;
+
     if (typeof answer === 'string') {
       const trimmed = answer.trim();
         // Special handling for full $$...$$ math clozes: convert to a fenced code block
@@ -69,12 +94,13 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
         const inner = trimmed.slice(2, -2).trim();
         // Produces a block like:
         // ```math-cloze-4\n<latex here>\n```\n
-        return '```math-cloze-' + id + '\n' + inner + '\n```\n';
+        return `\u0060\u0060\u0060math-cloze-${id}${occurrenceSuffix}\n${inner}\n\u0060\u0060\u0060\n`;
       }
     }
 
     // Replace with link syntax: [Answer](#cloze-id-hint) or [Answer](#cloze-id)
-    const hash = hint ? `#cloze-${id}-${encodeURIComponent(hint)}` : `#cloze-${id}`;
+    const hintPart = hint ? `-${encodeURIComponent(hint)}` : '';
+    const hash = `#cloze-${id}${occurrenceSuffix}${hintPart}`;
     return `[${answer}](${hash})`;
   });
 
@@ -107,12 +133,106 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
       return `[${answer}](#highlight)`;
   });
 
+  const blocks = buildBlocks(renderableContent);
+
   return {
     content, // Original content minus frontmatter
     frontmatter,
     hints,
     clozes,
     raw: rawMarkdown,
-    renderableContent
+    renderableContent,
+    blocks
   };
+};
+
+const buildBlocks = (markdown: string): MarkdownBlock[] => {
+  const blocks: MarkdownBlock[] = [];
+  const lines = markdown.split('\n');
+  let currentLines: string[] = [];
+  let blockStartLine = 0;
+  let inFence = false;
+  let fenceMarker: string | null = null;
+  const slugCounts: Record<string, number> = {};
+
+  const pushBlock = (endLine: number, heading?: MarkdownBlock['heading']) => {
+    if (currentLines.length === 0 && !heading) {
+      return;
+    }
+
+    const content = currentLines.join('\n').trimEnd();
+    currentLines = [];
+
+    if (!content && !heading) {
+      return;
+    }
+
+    const hasCloze = /#cloze-|math-cloze-/.test(content);
+    blocks.push({
+      id: `block-${blocks.length}`,
+      content,
+      startLine: blockStartLine,
+      endLine,
+      heading,
+      hasCloze,
+    });
+  };
+
+  const getHeadingInfo = (level: number, text: string) => {
+    const baseSlug = generateSlug(text);
+    if (!baseSlug) {
+      return { level, text, slug: '' };
+    }
+    const count = slugCounts[baseSlug] || 0;
+    slugCounts[baseSlug] = count + 1;
+    const slug = count === 0 ? baseSlug : `${baseSlug}-${count}`;
+    return { level, text, slug };
+  };
+
+  lines.forEach((line, index) => {
+    const trimmed = line.trimEnd();
+    const headingMatch = !inFence && trimmed.match(/^(#{1,6})\s+(.+)$/);
+
+    const fenceMatch = line.match(/^(```+|~~~+)(.*)$/);
+    if (!inFence && fenceMatch) {
+      inFence = true;
+      fenceMarker = fenceMatch[1];
+    } else if (inFence && fenceMarker && line.startsWith(fenceMarker)) {
+      inFence = false;
+      fenceMarker = null;
+    }
+
+    const isBlankLine = !inFence && trimmed === '';
+
+    if (headingMatch) {
+      pushBlock(index - 1);
+      const [, hashes, headingText] = headingMatch;
+      const headingInfo = getHeadingInfo(hashes.length, headingText.trim());
+      currentLines = [line];
+      blockStartLine = index;
+      pushBlock(index, headingInfo);
+      currentLines = [];
+      blockStartLine = index + 1;
+      return;
+    }
+
+    if (isBlankLine) {
+      pushBlock(index);
+      blockStartLine = index + 1;
+      return;
+    }
+
+    if (currentLines.length === 0) {
+      blockStartLine = index;
+    }
+
+    currentLines.push(line);
+  });
+
+  pushBlock(lines.length - 1);
+  return blocks;
+};
+
+export const buildMarkdownBlocks = (markdown: string): MarkdownBlock[] => {
+  return buildBlocks(markdown);
 };

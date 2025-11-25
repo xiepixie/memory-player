@@ -1,49 +1,71 @@
 /**
  * Helper to extract current theme colors for use in canvas/JS contexts
+ * Optimized for DaisyUI 5 with OKLCH color format
  */
-export const getThemeColors = (): string[] => {
-    if (typeof window === 'undefined') return [];
+let cachedTheme: string | null = null;
+let cachedThemeColors: string[] | null = null;
 
-    const vars = ['primary', 'secondary', 'accent', 'neutral', 'info', 'success', 'warning', 'error'];
+const DEFAULT_CONFETTI_COLORS = ['#a864fd', '#29cdff', '#78ff44', '#ff718d', '#fdff6a'];
+
+export const getThemeColors = (forceRefresh: boolean = false): string[] => {
+    if (typeof window === 'undefined') return DEFAULT_CONFETTI_COLORS;
+
+    const themeAttr = document.documentElement?.getAttribute('data-theme') || 'night';
+
+    // ✅ Use cache to avoid repeated computation
+    if (!forceRefresh && cachedTheme === themeAttr && cachedThemeColors && cachedThemeColors.length > 0) {
+        return cachedThemeColors;
+    }
+
+    const colorVars = ['primary', 'secondary', 'accent', 'info', 'success', 'warning'];
     const colors: string[] = [];
-    
-    const temp = document.createElement('div');
-    temp.style.display = 'none';
-    document.body.appendChild(temp);
 
-    vars.forEach(v => {
-        temp.className = `text-${v}`;
-        const style = getComputedStyle(temp);
-        const rgb = style.color; // Returns "rgb(r, g, b)" or "rgba(r, g, b, a)"
-        colors.push(rgbToHex(rgb));
+    // ✅ Read CSS variables directly from root element - only ONE getComputedStyle call
+    const rootStyles = getComputedStyle(document.documentElement);
+
+    colorVars.forEach(varName => {
+        // DaisyUI 5 uses --color-{name} format
+        const cssValue = rootStyles.getPropertyValue(`--color-${varName}`).trim();
+        if (cssValue) {
+            // Convert OKLCH to HEX
+            const hexColor = oklchToHex(cssValue);
+            if (hexColor) colors.push(hexColor);
+        }
     });
 
-    document.body.removeChild(temp);
-    return colors.filter(c => c !== '');
+    const filtered = colors.filter(c => c !== '');
+    cachedTheme = themeAttr;
+    cachedThemeColors = filtered.length > 0 ? filtered : DEFAULT_CONFETTI_COLORS;
+    return cachedThemeColors;
 };
 
-const rgbToHex = (rgb: string): string => {
-    if (!rgb) return '';
-    
-    // Handle rgb(r, g, b)
-    const rgbMatch = rgb.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
-    if (rgbMatch) {
-        return "#" + 
-            ("0" + parseInt(rgbMatch[1], 10).toString(16)).slice(-2) +
-            ("0" + parseInt(rgbMatch[2], 10).toString(16)).slice(-2) +
-            ("0" + parseInt(rgbMatch[3], 10).toString(16)).slice(-2);
-    }
+/**
+ * Convert OKLCH color to HEX
+ * DaisyUI format: "oklch(62.9% 0.233 270.6)"
+ * Uses browser native API for conversion without external dependencies
+ */
+const oklchToHex = (oklchString: string): string | null => {
+    if (typeof window === 'undefined') return null;
 
-    // Handle rgba(r, g, b, a) - ignore alpha for confetti
-    const rgbaMatch = rgb.match(/^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/);
-    if (rgbaMatch) {
-         return "#" + 
-            ("0" + parseInt(rgbaMatch[1], 10).toString(16)).slice(-2) +
-            ("0" + parseInt(rgbaMatch[2], 10).toString(16)).slice(-2) +
-            ("0" + parseInt(rgbaMatch[3], 10).toString(16)).slice(-2);
-    }
+    try {
+        // Use canvas 2D context to get RGB values (most reliable method)
+        // This avoids DOM insertion and forced reflows
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 1;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
 
-    // If it's already hex or some other format we can't parse easily, return as is (confetti might fail or default)
-    // But getComputedStyle usually returns rgb/rgba
-    return rgb.startsWith('#') ? rgb : '';
+        ctx.fillStyle = oklchString;
+        const computedColor = ctx.fillStyle; // Returns #RRGGBB format
+
+        // Validate if it's a valid hex color
+        if (/^#[0-9A-Fa-f]{6}$/.test(computedColor)) {
+            return computedColor;
+        }
+
+        return null;
+    } catch (e) {
+        console.warn('Failed to convert OKLCH to HEX:', oklchString, e);
+        return null;
+    }
 };

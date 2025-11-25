@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../../store/appStore';
 import { MarkdownSplitter } from '../../lib/markdown/splitter';
+import { useVirtualizedMarkdown } from './VirtualizedMarkdown';
 
 interface Header {
     id: string;
@@ -25,6 +26,7 @@ export const TableOfContents = () => {
     const viewMode = useAppStore((state) => state.viewMode);
     const [headers, setHeaders] = useState<Header[]>([]);
     const [sectionCardCounts, setSectionCardCounts] = useState<Record<string, number>>({});
+    const vm = useVirtualizedMarkdown();
 
     useEffect(() => {
         if (!currentNote) {
@@ -32,62 +34,19 @@ export const TableOfContents = () => {
             return;
         }
 
-        const container = document.getElementById('note-scroll-container');
-        if (!container) {
-            setHeaders([]);
-            return;
-        }
+        const extracted: Header[] = [];
+        const blocks = currentNote.blocks || [];
 
-        let rafId: number | null = null;
-
-        const collectHeaders = () => {
-            const headingElements = container.querySelectorAll<HTMLHeadingElement>('h1[id], h2[id], h3[id], h4[id]');
-            const extracted: Header[] = [];
-
-            headingElements.forEach((el) => {
-                // Ignore headings that are inside aria-hidden containers
-                if (el.closest('[aria-hidden="true"]')) return;
-
-                const level = Number(el.tagName.substring(1));
-                if (!level || level < 1 || level > 4) return;
-
-                const text = el.textContent?.trim() || '';
-                if (!text) return;
-
-                if (!el.id) return;
-
-                extracted.push({
-                    id: el.id,
-                    text,
-                    level,
-                });
+        blocks.forEach((block) => {
+            if (!block.heading || !block.heading.slug) return;
+            extracted.push({
+                id: block.heading.slug,
+                text: block.heading.text,
+                level: block.heading.level,
             });
-
-            const nextHeaders = extracted;
-
-            // Debug: trace header collection for TOC
-            console.debug('[TableOfContents] collectHeaders', {
-                count: nextHeaders.length,
-                ids: nextHeaders.map(h => h.id),
-                levels: nextHeaders.map(h => h.level),
-            });
-
-            setHeaders((prev) => (headersAreEqual(prev, nextHeaders) ? prev : nextHeaders));
-        };
-
-        collectHeaders();
-
-        const observer = new MutationObserver(() => {
-            if (rafId) cancelAnimationFrame(rafId);
-            rafId = requestAnimationFrame(collectHeaders);
         });
 
-        observer.observe(container, { childList: true, subtree: true });
-
-        return () => {
-            if (rafId) cancelAnimationFrame(rafId);
-            observer.disconnect();
-        };
+        setHeaders((prev) => (headersAreEqual(prev, extracted) ? prev : extracted));
     }, [currentNote, viewMode]);
 
     useEffect(() => {
@@ -117,9 +76,25 @@ export const TableOfContents = () => {
     if (headers.length === 0) return null;
 
     const scrollToHeader = (id: string) => {
+        if (vm) {
+            vm.ensureBlockVisible({ headingSlug: id, align: 'start' });
+
+            // Apply highlight after the target block has had a chance to mount and scroll
+            setTimeout(() => {
+                const element = document.getElementById(id) as HTMLElement | null;
+                if (!element) return;
+
+                element.classList.add('toc-target-highlight');
+                setTimeout(() => {
+                    element.classList.remove('toc-target-highlight');
+                }, 1500);
+            }, 200);
+
+            return;
+        }
+
         const container = document.getElementById('note-scroll-container');
         if (!container) {
-            console.warn(`[TableOfContents] Scroll container not found when trying to scroll to id "${id}"`);
             return;
         }
 
@@ -130,36 +105,16 @@ export const TableOfContents = () => {
             element = candidates.find((el) => el.id === id) ?? null;
         }
 
-        const foundInsideContainer = !!element && container.contains(element);
-
         if (!element) {
-            console.warn(`[TableOfContents] Scroll target not found for id "${id}"`);
             return;
         }
 
-        console.debug('[TableOfContents] scrollToHeader', {
-            id,
-            hasContainer: !!container,
-            foundInsideContainer,
-        });
-
-        // Let the browser find the nearest scroll container and respect `scroll-margin-top` (scroll-mt-20)
         element.scrollIntoView({
             behavior: 'smooth',
             block: 'start',
         });
 
-        // UX: Highlight the target heading to assist visual scanning
-        document.querySelectorAll('.toc-target-highlight').forEach(el => {
-            el.classList.remove('toc-target-highlight');
-        });
-
-        // Force reflow to allow restarting animation if clicking same link
-        void element.offsetWidth;
-
         element.classList.add('toc-target-highlight');
-
-        // Clean up after animation
         setTimeout(() => {
             element.classList.remove('toc-target-highlight');
         }, 1500);
@@ -169,7 +124,7 @@ export const TableOfContents = () => {
         <div className="h-full overflow-y-auto p-4 text-sm relative">
             {/* Decorative background line */}
             <div className="absolute left-6 top-12 bottom-4 w-px bg-gradient-to-b from-base-content/20 to-transparent" />
-            
+
             <h3 className="font-bold mb-6 px-2 opacity-40 uppercase tracking-widest text-[10px] text-base-content">Outline</h3>
             <ul className="space-y-1 relative">
                 {headers.map((header, i) => (
@@ -185,7 +140,7 @@ export const TableOfContents = () => {
                     >
                         {/* Active indicator dot (optional - could rely on scroll spy later) */}
                         <div className="w-1 h-1 rounded-full bg-base-content/20 group-hover:bg-primary transition-colors" />
-                        
+
                         <span className="flex-1 truncate opacity-60 group-hover:opacity-100 group-hover:text-primary-content transition-all text-xs font-medium" title={header.text}>
                             {header.text}
                         </span>

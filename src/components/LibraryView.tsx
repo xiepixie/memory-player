@@ -4,7 +4,7 @@ import { isTauri } from '../lib/tauri';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readDir } from '@tauri-apps/plugin-fs';
 import { FolderOpen, FileText, Clock, X, Brain, PenTool, Cloud } from 'lucide-react';
-import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense, memo } from 'react';
 import { join } from '@tauri-apps/api/path';
 import { formatDistanceToNow, isPast, isToday } from 'date-fns';
 import { LibraryHeader } from './LibraryHeader';
@@ -34,7 +34,7 @@ export const LibraryView = () => {
     signOut,
     vaults,
     setCurrentVault,
-    updateLastSync
+    updateLastSync,
   } = useAppStore(
     useShallow((state) => ({
       rootPath: state.rootPath,
@@ -53,7 +53,7 @@ export const LibraryView = () => {
       signOut: state.signOut,
       vaults: state.vaults,
       setCurrentVault: state.setCurrentVault,
-      updateLastSync: state.updateLastSync
+      updateLastSync: state.updateLastSync,
     })),
   );
   const dataService = useAppStore((state) => state.dataService);
@@ -109,6 +109,8 @@ export const LibraryView = () => {
     window.addEventListener('library-focus-search', handleFocusSearch as EventListener);
     return () => window.removeEventListener('library-focus-search', handleFocusSearch as EventListener);
   }, [rootPath]);
+
+
 
   const vaultKey = rootPath || 'NO_VAULT';
   const searchHistory = searchHistoryByVault[vaultKey] || [];
@@ -207,14 +209,14 @@ export const LibraryView = () => {
   const grouped = filteredFiles.reduce((acc, file) => {
     const meta = fileMetadatas[file];
     if (!meta || !meta.cards) {
-        acc.new.push(file); // Treat untracked as new
-        return acc;
+      acc.new.push(file); // Treat untracked as new
+      return acc;
     }
 
     const cards = Object.values(meta.cards);
     if (cards.length === 0) {
-         acc.new.push(file);
-         return acc;
+      acc.new.push(file);
+      return acc;
     }
 
     let hasOverdue = false;
@@ -222,37 +224,37 @@ export const LibraryView = () => {
     let hasNew = false;
 
     cards.forEach(card => {
-        if (!card.due) {
-            if ((card as any).reps === 0) hasNew = true;
-            return;
-        }
+      if (!card.due) {
+        if ((card as any).reps === 0) hasNew = true;
+        return;
+      }
 
-        const due = new Date(card.due as any);
-        if (isNaN(due.getTime())) {
-            if ((card as any).reps === 0) hasNew = true;
-            return;
-        }
+      const due = new Date(card.due as any);
+      if (isNaN(due.getTime())) {
+        if ((card as any).reps === 0) hasNew = true;
+        return;
+      }
 
-        const isNewCard = (card as any).reps === 0;
+      const isNewCard = (card as any).reps === 0;
 
-        if (isNewCard) {
-            if (isToday(due)) {
-                hasToday = true;
-            } else {
-                hasNew = true;
-            }
-        } else if (isPast(due) && !isToday(due)) {
-            hasOverdue = true;
-        } else if (isToday(due)) {
-            hasToday = true;
+      if (isNewCard) {
+        if (isToday(due)) {
+          hasToday = true;
+        } else {
+          hasNew = true;
         }
+      } else if (isPast(due) && !isToday(due)) {
+        hasOverdue = true;
+      } else if (isToday(due)) {
+        hasToday = true;
+      }
     });
 
     if (hasOverdue) acc.overdue.push(file);
     else if (hasToday) acc.today.push(file);
     else if (hasNew) acc.new.push(file);
     else acc.future.push(file);
-    
+
     return acc;
   }, { overdue: [] as string[], today: [] as string[], new: [] as string[], future: [] as string[] });
 
@@ -307,67 +309,67 @@ export const LibraryView = () => {
   };
 
   const handleManualSync = async () => {
-      if (syncMode !== 'supabase' || !dataService) return;
+    if (syncMode !== 'supabase' || !dataService) return;
 
-      if (syncing) return;
+    if (syncing) return;
 
-      setSyncing(true);
-      addToast('Starting cloud sync...', 'info');
-      
-      let retriedCount = 0;
-      let errorCount = 0;
-      
-      try {
-         const storeState = useAppStore.getState();
-         const { pendingNoteSyncs, pathMap, currentVault } = storeState;
+    setSyncing(true);
+    addToast('Starting cloud sync...', 'info');
 
-         const filesToRetry = Object.keys(pendingNoteSyncs || {});
+    let retriedCount = 0;
+    let errorCount = 0;
 
-         if (filesToRetry.length > 0) {
-           for (const filepath of filesToRetry) {
-             try {
-               const noteId = pathMap[filepath];
-               if (!noteId) continue;
+    try {
+      const storeState = useAppStore.getState();
+      const { pendingNoteSyncs, pathMap, currentVault } = storeState;
 
-               const content = await fileSystem.readNote(filepath);
-               await dataService.syncNote(filepath, content, noteId, currentVault?.id);
-               storeState.markNoteSynced(filepath);
-               retriedCount++;
-             } catch (e) {
-               console.error(`Failed to sync ${filepath}`, e);
-               errorCount++;
-             }
-           }
-         }
+      const filesToRetry = Object.keys(pendingNoteSyncs || {});
 
-         // Always refresh cloud-derived state after sync attempts
-         try {
-           await storeState.loadAllMetadata();
-         } catch (e) {
-           console.error('Failed to refresh metadata after sync', e);
-         }
+      if (filesToRetry.length > 0) {
+        for (const filepath of filesToRetry) {
+          try {
+            const noteId = pathMap[filepath];
+            if (!noteId) continue;
 
-         try {
-           await storeState.fetchDueCards(50);
-         } catch (e) {
-           console.error('Failed to refresh due cards after sync', e);
-         }
-
-         updateLastSync();
-
-         if (errorCount > 0) {
-             addToast(`Sync complete. ${retriedCount} notes synced, ${errorCount} failed.`, 'warning');
-         } else if (retriedCount > 0) {
-             addToast(`Sync complete. ${retriedCount} notes synced.`, 'success');
-         } else {
-             addToast('Cloud state refreshed.', 'success');
-         }
-      } catch (err) {
-          console.error('Manual sync error', err);
-          addToast('Sync failed', 'error');
-      } finally {
-          setSyncing(false);
+            const content = await fileSystem.readNote(filepath);
+            await dataService.syncNote(filepath, content, noteId, currentVault?.id);
+            storeState.markNoteSynced(filepath);
+            retriedCount++;
+          } catch (e) {
+            console.error(`Failed to sync ${filepath}`, e);
+            errorCount++;
+          }
+        }
       }
+
+      // Always refresh cloud-derived state after sync attempts
+      try {
+        await storeState.loadAllMetadata();
+      } catch (e) {
+        console.error('Failed to refresh metadata after sync', e);
+      }
+
+      try {
+        await storeState.fetchDueCards(50);
+      } catch (e) {
+        console.error('Failed to refresh due cards after sync', e);
+      }
+
+      updateLastSync();
+
+      if (errorCount > 0) {
+        addToast(`Sync complete. ${retriedCount} notes synced, ${errorCount} failed.`, 'warning');
+      } else if (retriedCount > 0) {
+        addToast(`Sync complete. ${retriedCount} notes synced.`, 'success');
+      } else {
+        addToast('Cloud state refreshed.', 'success');
+      }
+    } catch (err) {
+      console.error('Manual sync error', err);
+      addToast('Sync failed', 'error');
+    } finally {
+      setSyncing(false);
+    }
   };
 
   return (
@@ -397,7 +399,7 @@ export const LibraryView = () => {
         <AnimatePresence mode="wait">
           {!rootPath ? (
             // WELCOME SCREEN
-            <motion.div 
+            <motion.div
               key="welcome"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -406,138 +408,138 @@ export const LibraryView = () => {
               className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center p-8 relative overflow-hidden absolute inset-0 select-none"
             >
               <div className="absolute inset-0 z-0" data-tauri-drag-region />
-              
+
               {/* Background Blobs */}
-              <motion.div 
+              <motion.div
                 animate={{ scale: [1, 1.1, 1], rotate: [0, 10, 0] }}
                 transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen" 
+                className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen"
               />
-              <motion.div 
-                 animate={{ scale: [1, 1.2, 1], rotate: [0, -15, 0] }}
-                 transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-                className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-secondary/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen" 
+              <motion.div
+                animate={{ scale: [1, 1.2, 1], rotate: [0, -15, 0] }}
+                transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+                className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-secondary/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen"
               />
 
               <div className="max-w-3xl w-full z-10 flex flex-col items-center text-center">
-                  <motion.div
-                    initial={{ opacity: 0, y: 30 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.8, ease: "easeOut" }}
-                    className="mb-12 relative"
+                <motion.div
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.8, ease: "easeOut" }}
+                  className="mb-12 relative"
+                >
+                  <h1 className="text-5xl md:text-7xl font-black mb-6 leading-tight tracking-tight drop-shadow-sm">
+                    Turn notes into <br />
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary animate-gradient-x">
+                      long-term memory
+                    </span>
+                  </h1>
+                  <p className="text-xl opacity-60 max-w-2xl mx-auto leading-relaxed font-light">
+                    The local-first spaced repetition player for your markdown knowledge base.
+                  </p>
+                </motion.div>
+
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, delay: 0.2 }}
+                  className="flex flex-col sm:flex-row gap-4 w-full max-w-md justify-center mb-16 relative z-20"
+                >
+                  <button
+                    onClick={handleOpenFolder}
+                    className="btn btn-primary btn-lg shadow-xl shadow-primary/20 hover:shadow-primary/30 transition-all gap-3 h-14 rounded-2xl text-lg"
                   >
-                    <h1 className="text-5xl md:text-7xl font-black mb-6 leading-tight tracking-tight drop-shadow-sm">
-                      Turn notes into <br/>
-                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary animate-gradient-x">
-                        long-term memory
-                      </span>
-                    </h1>
-                    <p className="text-xl opacity-60 max-w-2xl mx-auto leading-relaxed font-light">
-                      The local-first spaced repetition player for your markdown knowledge base.
+                    <FolderOpen size={22} />
+                    Open Vault
+                  </button>
+                  <button
+                    onClick={() => { setFiles([]); setRootPath('DEMO_VAULT'); }}
+                    className="btn btn-ghost btn-lg hover:bg-base-200/50 h-14 rounded-2xl text-lg"
+                  >
+                    Try Demo Vault
+                  </button>
+                </motion.div>
+
+                {/* Features Grid */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, delay: 0.2 }}
+                  className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full text-left mb-16"
+                >
+                  <div className="p-6 rounded-2xl bg-base-100/80 backdrop-blur-sm border border-base-200 hover:border-primary/30 transition-all shadow-sm hover:shadow-md hover:-translate-y-1">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center mb-4">
+                      <PenTool size={20} />
+                    </div>
+                    <h3 className="font-bold text-lg mb-2">Markdown Native</h3>
+                    <p className="text-sm opacity-60 leading-relaxed">
+                      Edit your files directly. No proprietary formats. You own your data forever.
                     </p>
-                  </motion.div>
+                  </div>
+                  <div className="p-6 rounded-2xl bg-base-100/80 backdrop-blur-sm border border-base-200 hover:border-primary/30 transition-all shadow-sm hover:shadow-md hover:-translate-y-1">
+                    <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center mb-4">
+                      <Brain size={20} />
+                    </div>
+                    <h3 className="font-bold text-lg mb-2">Spaced Repetition</h3>
+                    <p className="text-sm opacity-60 leading-relaxed">
+                      Built-in FSRS algorithm schedules reviews at the perfect time to maximize retention.
+                    </p>
+                  </div>
+                  <div className="p-6 rounded-2xl bg-base-100/80 backdrop-blur-sm border border-base-200 hover:border-primary/30 transition-all shadow-sm hover:shadow-md hover:-translate-y-1">
+                    <div className="w-10 h-10 rounded-xl bg-green-500/10 text-green-500 flex items-center justify-center mb-4">
+                      <Cloud size={20} />
+                    </div>
+                    <h3 className="font-bold text-lg mb-2">Cloud Sync</h3>
+                    <p className="text-sm opacity-60 leading-relaxed">
+                      Seamlessly sync your review progress across devices while keeping files local.
+                    </p>
+                  </div>
+                </motion.div>
 
+                {/* Recent Vaults */}
+                {recentVaults.length > 0 && (
                   <motion.div
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.6, delay: 0.2 }}
-                      className="flex flex-col sm:flex-row gap-4 w-full max-w-md justify-center mb-16 relative z-20"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.6, delay: 0.3 }}
+                    className="w-full max-w-lg"
                   >
-                      <button
-                        onClick={handleOpenFolder}
-                        className="btn btn-primary btn-lg shadow-xl shadow-primary/20 hover:shadow-primary/30 transition-all gap-3 h-14 rounded-2xl text-lg"
-                      >
-                        <FolderOpen size={22} />
-                        Open Vault
-                      </button>
-                      <button
-                        onClick={() => { setFiles([]); setRootPath('DEMO_VAULT'); }}
-                        className="btn btn-ghost btn-lg hover:bg-base-200/50 h-14 rounded-2xl text-lg"
-                      >
-                        Try Demo Vault
-                      </button>
-                  </motion.div>
-
-                  {/* Features Grid */}
-                  <motion.div
-                       initial={{ opacity: 0, y: 20 }}
-                       animate={{ opacity: 1, y: 0 }}
-                       transition={{ duration: 0.6, delay: 0.2 }}
-                       className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full text-left mb-16"
-                  >
-                      <div className="p-6 rounded-2xl bg-base-100/80 backdrop-blur-sm border border-base-200 hover:border-primary/30 transition-all shadow-sm hover:shadow-md hover:-translate-y-1">
-                          <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center mb-4">
-                              <PenTool size={20} />
+                    <div className="divider opacity-10 mb-8">Recent Vaults</div>
+                    <div className="flex flex-col gap-2">
+                      {recentVaults.filter(Boolean).map(path => (
+                        <div
+                          key={path}
+                          onClick={() => { setFiles([]); setRootPath(path); }}
+                          className="group flex items-center gap-4 p-4 bg-base-100/80 backdrop-blur-sm rounded-xl hover:bg-base-100 hover:shadow-lg hover:scale-[1.01] transition-all cursor-pointer border border-transparent hover:border-primary/20"
+                        >
+                          <div className="w-10 h-10 rounded-lg bg-base-200 flex items-center justify-center text-base-content/50 group-hover:text-primary transition-colors">
+                            <Clock size={20} />
                           </div>
-                          <h3 className="font-bold text-lg mb-2">Markdown Native</h3>
-                          <p className="text-sm opacity-60 leading-relaxed">
-                              Edit your files directly. No proprietary formats. You own your data forever.
-                          </p>
-                      </div>
-                      <div className="p-6 rounded-2xl bg-base-100/80 backdrop-blur-sm border border-base-200 hover:border-primary/30 transition-all shadow-sm hover:shadow-md hover:-translate-y-1">
-                           <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-500 flex items-center justify-center mb-4">
-                              <Brain size={20} />
-                          </div>
-                          <h3 className="font-bold text-lg mb-2">Spaced Repetition</h3>
-                          <p className="text-sm opacity-60 leading-relaxed">
-                              Built-in FSRS algorithm schedules reviews at the perfect time to maximize retention.
-                          </p>
-                      </div>
-                      <div className="p-6 rounded-2xl bg-base-100/80 backdrop-blur-sm border border-base-200 hover:border-primary/30 transition-all shadow-sm hover:shadow-md hover:-translate-y-1">
-                           <div className="w-10 h-10 rounded-xl bg-green-500/10 text-green-500 flex items-center justify-center mb-4">
-                              <Cloud size={20} />
-                          </div>
-                          <h3 className="font-bold text-lg mb-2">Cloud Sync</h3>
-                          <p className="text-sm opacity-60 leading-relaxed">
-                              Seamlessly sync your review progress across devices while keeping files local.
-                          </p>
-                      </div>
-                  </motion.div>
-
-                  {/* Recent Vaults */}
-                  {recentVaults.length > 0 && (
-                     <motion.div
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          transition={{ duration: 0.6, delay: 0.3 }}
-                          className="w-full max-w-lg"
-                     >
-                        <div className="divider opacity-10 mb-8">Recent Vaults</div>
-                        <div className="flex flex-col gap-2">
-                          {recentVaults.filter(Boolean).map(path => (
-                            <div
-                              key={path}
-                              onClick={() => { setFiles([]); setRootPath(path); }}
-                              className="group flex items-center gap-4 p-4 bg-base-100/80 backdrop-blur-sm rounded-xl hover:bg-base-100 hover:shadow-lg hover:scale-[1.01] transition-all cursor-pointer border border-transparent hover:border-primary/20"
-                            >
-                              <div className="w-10 h-10 rounded-lg bg-base-200 flex items-center justify-center text-base-content/50 group-hover:text-primary transition-colors">
-                                  <Clock size={20} />
-                              </div>
-                              <div className="flex-1 text-left min-w-0">
-                                  <div className="font-bold truncate text-sm" title={path}>
-                                      {path?.split(/[\\/]/).pop() || 'Unknown Vault'}
-                                  </div>
-                                  <div className="text-xs opacity-40 truncate font-mono mt-0.5" title={path}>
-                                      {path}
-                                  </div>
-                              </div>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); removeRecentVault(path); }}
-                                className="btn btn-ghost btn-sm btn-square opacity-0 group-hover:opacity-100 transition-opacity"
-                                title="Remove from recent"
-                              >
-                                <X size={16} />
-                              </button>
+                          <div className="flex-1 text-left min-w-0">
+                            <div className="font-bold truncate text-sm" title={path}>
+                              {path?.split(/[\\/]/).pop() || 'Unknown Vault'}
                             </div>
-                          ))}
+                            <div className="text-xs opacity-40 truncate font-mono mt-0.5" title={path}>
+                              {path}
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeRecentVault(path); }}
+                            className="btn btn-ghost btn-sm btn-square opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Remove from recent"
+                          >
+                            <X size={16} />
+                          </button>
                         </div>
-                     </motion.div>
-                  )}
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
               </div>
             </motion.div>
           ) : (
             // MAIN LIBRARY CONTENT
-            <motion.div 
+            <motion.div
               key="library"
               initial={{ opacity: 0, y: 20, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -546,164 +548,163 @@ export const LibraryView = () => {
               className="p-4 md:p-6 max-w-7xl mx-auto w-full absolute inset-0 overflow-y-auto"
             >
               <div className="flex items-center justify-between mb-6 px-1">
-              <div className="relative flex p-1 bg-base-200/50 rounded-xl border border-base-300/50">
-                 {['focus', 'insights'].map((tab) => (
+                <div className="relative flex p-1 bg-base-200/50 rounded-xl border border-base-300/50">
+                  {['focus', 'insights'].map((tab) => (
                     <button
-                        key={tab}
-                        onClick={() => setDashboardTab(tab as 'focus' | 'insights')}
-                        className={`relative px-4 py-1.5 text-sm font-medium transition-colors z-10 ${dashboardTab === tab ? 'text-base-content' : 'text-base-content/50 hover:text-base-content/70'}`}
+                      key={tab}
+                      onClick={() => setDashboardTab(tab as 'focus' | 'insights')}
+                      className={`relative px-4 py-1.5 text-sm font-medium transition-colors z-10 ${dashboardTab === tab ? 'text-base-content' : 'text-base-content/50 hover:text-base-content/70'}`}
                     >
-                        {dashboardTab === tab && (
-                            <motion.div
-                                layoutId="dashboard-tab-pill"
-                                className="absolute inset-0 bg-base-100 shadow-sm rounded-lg border border-base-200/50"
-                                transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                            />
-                        )}
-                        <span className="relative z-10 capitalize">{tab}</span>
+                      {dashboardTab === tab && (
+                        <motion.div
+                          layoutId="dashboard-tab-pill"
+                          className="absolute inset-0 bg-base-100 shadow-sm rounded-lg border border-base-200/50"
+                          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                        />
+                      )}
+                      <span className="relative z-10 capitalize">{tab}</span>
                     </button>
-                 ))}
-              </div>
-            </div>
-
-            <AnimatePresence mode="wait">
-            {dashboardTab === 'focus' ? (
-              <motion.div
-                key="focus"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.3, ease: "circOut" }}
-                className="w-full"
-              >
-                {showVaultOnboarding && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.25 }}
-                    className="mb-4 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5 rounded-full w-2 h-2 bg-primary animate-pulse" />
-                      <div>
-                        <div className="text-xs font-bold uppercase tracking-widest text-primary/80 mb-1">
-                          Link this folder to a Vault
-                        </div>
-                        <div className="text-sm text-base-content/80">
-                          {folderName ? (
-                            <>
-                              Use a named cloud vault for <span className="font-mono text-xs">{folderName}</span> so your
-                              review progress stays in sync across devices.
-                            </>
-                          ) : (
-                            'Create a cloud vault for this folder so your review progress stays in sync across devices.'
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 justify-end">
-                      <button
-                        className="btn btn-ghost btn-xs normal-case text-xs"
-                        onClick={() => {
-                          markVaultOnboarded();
-                          addToast('Staying local-only for this folder', 'info');
-                        }}
-                      >
-                        Not now
-                      </button>
-                      <button
-                        className="btn btn-primary btn-sm normal-case text-xs"
-                        onClick={handleCreateFirstVault}
-                        disabled={vaultOnboardingBusy}
-                      >
-                        {vaultOnboardingBusy ? (
-                          <span className="loading loading-spinner loading-xs" />
-                        ) : (
-                          <>Create Vault{folderName ? ` "${folderName}"` : ''}</>
-                        )}
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-                <Suspense fallback={<div className="w-full rounded-2xl border border-base-200 bg-base-100/60 h-40 animate-pulse" />}>
-                  <DashboardLazy mode="hero-only" />
-                </Suspense>
-
-                <div className="flex items-center justify-between text-xs text-base-content/60 mt-6 mb-4 px-1">
-                  <span>
-                    {searchQuery.trim()
-                      ? `Showing ${filteredFiles.length} of ${files.length} notes for "${searchQuery}"`
-                      : `Browsing ${files.length} notes in this vault`}
-                  </span>
+                  ))}
                 </div>
+              </div>
 
-                {loading ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-pulse">
-                    {[1, 2, 3, 4, 5, 6].map(i => <div key={i} className="h-32 bg-base-300 rounded-xl opacity-50"></div>)}
-                  </div>
-                ) : (
-                  <div className="space-y-6 pb-20">
-                    {filteredFiles.length === 0 ? (
-                      <div className="mt-12 text-center text-base-content/60">
-                        <p className="text-sm mb-2">No notes match your search.</p>
-                        <p className="text-xs opacity-70">
-                          Try a different keyword or clear the search to browse all notes.
-                        </p>
+              <AnimatePresence mode="wait">
+                {dashboardTab === 'focus' ? (
+                  <motion.div
+                    key="focus"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    transition={{ duration: 0.3, ease: "circOut" }}
+                    className="w-full"
+                  >
+                    {showVaultOnboarding && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        transition={{ duration: 0.25 }}
+                        className="mb-4 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 rounded-full w-2 h-2 bg-primary animate-pulse" />
+                          <div>
+                            <div className="text-xs font-bold uppercase tracking-widest text-primary/80 mb-1">
+                              Link this folder to a Vault
+                            </div>
+                            <div className="text-sm text-base-content/80">
+                              {folderName ? (
+                                <>
+                                  Use a named cloud vault for <span className="font-mono text-xs">{folderName}</span> so your
+                                  review progress stays in sync across devices.
+                                </>
+                              ) : (
+                                'Create a cloud vault for this folder so your review progress stays in sync across devices.'
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 justify-end">
+                          <button
+                            className="btn btn-ghost btn-xs normal-case text-xs"
+                            onClick={() => {
+                              markVaultOnboarded();
+                              addToast('Staying local-only for this folder', 'info');
+                            }}
+                          >
+                            Not now
+                          </button>
+                          <button
+                            className="btn btn-primary btn-sm normal-case text-xs"
+                            onClick={handleCreateFirstVault}
+                            disabled={vaultOnboardingBusy}
+                          >
+                            {vaultOnboardingBusy ? (
+                              <span className="loading loading-spinner loading-xs" />
+                            ) : (
+                              <>Create Vault{folderName ? ` "${folderName}"` : ''}</>
+                            )}
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                    <Suspense fallback={<div className="w-full rounded-2xl border border-base-200 bg-base-100/60 h-40 animate-pulse" />}>
+                      <DashboardLazy mode="hero-only" />
+                    </Suspense>
+
+                    <div className="flex items-center justify-between text-xs text-base-content/60 mt-6 mb-4 px-1">
+                      <span>
+                        {searchQuery.trim()
+                          ? `Showing ${filteredFiles.length} of ${files.length} notes for "${searchQuery}"`
+                          : `Browsing ${files.length} notes in this vault`}
+                      </span>
+                    </div>
+
+                    {loading ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-pulse">
+                        {[1, 2, 3, 4, 5, 6].map(i => <div key={i} className="h-32 bg-base-300 rounded-xl opacity-50"></div>)}
                       </div>
                     ) : (
-                      <>
-                        {viewType === 'tree' ? (
-                          <div className="bg-base-100 rounded-2xl border border-base-200 p-4 shadow-sm">
-                              <FileTreeView files={filteredFiles} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} />
+                      <div className="space-y-6 pb-20">
+                        {filteredFiles.length === 0 ? (
+                          <div className="mt-12 text-center text-base-content/60">
+                            <p className="text-sm mb-2">No notes match your search.</p>
+                            <p className="text-xs opacity-70">
+                              Try a different keyword or clear the search to browse all notes.
+                            </p>
                           </div>
                         ) : (
-                          <motion.div 
-                             initial="hidden"
-                             animate="visible"
-                             variants={{
-                                visible: { transition: { staggerChildren: 0.05 } }
-                             }}
-                          >
-                            {grouped.overdue.length > 0 && <FileSection title="Overdue" icon="🚨" files={grouped.overdue} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="error" viewType={viewType} />}
-                            {grouped.today.length > 0 && <FileSection title="Due Today" icon="📅" files={grouped.today} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="warning" viewType={viewType} />}
-                            {grouped.new.length > 0 && <FileSection title="New Cards" icon="🆕" files={grouped.new} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="info" viewType={viewType} />}
-                            <FileSection title="Library" icon="📚" files={grouped.future} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} color="neutral" collapsed={false} viewType={viewType} />
-                          </motion.div>
+                          <>
+                            {viewType === 'tree' ? (
+                              <div className="bg-base-100 rounded-2xl border border-base-200 p-4 shadow-sm">
+                                <FileTreeView files={filteredFiles} rootPath={rootPath} loadNote={loadNote} />
+                              </div>
+                            ) : (
+                              <motion.div
+                                initial="hidden"
+                                animate="visible"
+                                variants={{
+                                  visible: { transition: { staggerChildren: 0.05 } }
+                                }}
+                              >
+                                {grouped.overdue.length > 0 && <FileSection title="Overdue" icon="🚨" files={grouped.overdue} rootPath={rootPath} loadNote={loadNote} color="error" viewType={viewType} />}
+                                {grouped.today.length > 0 && <FileSection title="Due Today" icon="📅" files={grouped.today} rootPath={rootPath} loadNote={loadNote} color="warning" viewType={viewType} />}
+                                {grouped.new.length > 0 && <FileSection title="New Cards" icon="🆕" files={grouped.new} rootPath={rootPath} loadNote={loadNote} color="info" viewType={viewType} />}
+                                <FileSection title="Library" icon="📚" files={grouped.future} rootPath={rootPath} loadNote={loadNote} color="neutral" collapsed={false} viewType={viewType} />
+                              </motion.div>
+                            )}
+                          </>
                         )}
-                      </>
+                      </div>
                     )}
-                  </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="insights"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ duration: 0.3, ease: "circOut" }}
+                    className="w-full"
+                  >
+                    <Suspense fallback={<div className="w-full rounded-2xl border border-base-200 bg-base-100/60 h-40 animate-pulse" />}>
+                      <DashboardLazy mode="insights-only" />
+                    </Suspense>
+                  </motion.div>
                 )}
-              </motion.div>
-            ) : (
-              <motion.div
-                key="insights"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                transition={{ duration: 0.3, ease: "circOut" }}
-                className="w-full"
-              >
-                <Suspense fallback={<div className="w-full rounded-2xl border border-base-200 bg-base-100/60 h-40 animate-pulse" />}>
-                  <DashboardLazy mode="insights-only" />
-                </Suspense>
-              </motion.div>
-            )}
-            </AnimatePresence>
+              </AnimatePresence>
 
-          </motion.div>
-        )}
+            </motion.div>
+          )}
         </AnimatePresence>
       </div>
-  
-  </div>
+    </div>
   );
 };
 
-const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color, collapsed = false, viewType = 'list' }: any) => {
+const FileSection = memo(({ title, icon, files, rootPath, loadNote, color, collapsed = false, viewType = 'list' }: any) => {
   const [isOpen, setIsOpen] = useState(!collapsed);
-  
+
   if (files.length === 0) return null;
 
   const containerVariants = {
@@ -724,126 +725,157 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
 
   return (
     <div className="flex flex-col gap-3">
-        <div 
-            className="flex items-center gap-2 cursor-pointer group select-none"
-            onClick={() => setIsOpen(!isOpen)}
-        >
-            <span className={`transform transition-transform ${isOpen ? 'rotate-90' : ''} opacity-50`}>▶</span>
-            <span className="text-xl font-bold tracking-tight flex items-center gap-2">
-               {icon && <span>{icon}</span>} {title}
-            </span>
-            <div className={`badge badge-${color} badge-sm`}>{files.length}</div>
-            <div className="h-px bg-base-300 flex-1 ml-2 opacity-50"></div>
-        </div>
+      <div
+        className="flex items-center gap-2 cursor-pointer group select-none"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <span className={`transform transition-transform ${isOpen ? 'rotate-90' : ''} opacity-50`}>▶</span>
+        <span className="text-xl font-bold tracking-tight flex items-center gap-2">
+          {icon && <span>{icon}</span>} {title}
+        </span>
+        <div className={`badge badge-${color} badge-sm`}>{files.length}</div>
+        <div className="h-px bg-base-300 flex-1 ml-2 opacity-50"></div>
+      </div>
 
-        <AnimatePresence>
-            {isOpen && (
-                <motion.div
-                    initial="hidden"
-                    animate="visible"
-                    exit="hidden"
-                    variants={containerVariants}
-                    className="overflow-hidden"
-                >
-                    {viewType === 'list' ? (
-                        <div className="grid grid-cols-1 gap-1 pl-2">
-                            {files.map((file: string, idx: number) => {
-                                const meta = metadatas[file];
-                                return (
-                                    <motion.div 
-                                        key={idx}
-                                        variants={itemVariants}
-                                        onClick={() => loadNote(file)}
-                                        whileHover={{ scale: 1.01, x: 4 }}
-                                        whileTap={{ scale: 0.98 }}
-                                        className="group flex items-center gap-4 p-3 rounded-lg bg-base-100/40 hover:bg-base-100 cursor-pointer border border-base-content/5 hover:border-primary/20 transition-colors backdrop-blur-sm"
-                                    >
-                                        <div className={`w-8 h-8 rounded flex items-center justify-center bg-base-200/50 text-base-content/50 group-hover:text-${color === 'neutral' ? 'primary' : color}`}>
-                                            <FileText size={16} />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="font-medium truncate">
-                                                {file.replace(rootPath || '', '').replace(/^\//, '')}
-                                            </div>
-                                        </div>
-                                        {(() => {
-                                            if (!meta?.cards) return null;
-                                            const cards = Object.values(meta.cards) as Card[];
-                                            if (cards.length === 0) return null;
-
-                                            const scheduled = cards.filter((c) => c.reps > 0 && c.due);
-                                            if (scheduled.length === 0) return null;
-
-                                            const earliest = scheduled.reduce((prev, curr) => {
-                                                return new Date(prev.due) < new Date(curr.due) ? prev : curr;
-                                            });
-
-                                            const earliestDate = new Date(earliest.due);
-                                            if (!earliestDate || isNaN(earliestDate.getTime())) return null;
-
-                                            return (
-                                                <div className="text-xs font-mono opacity-50 bg-base-200 px-2 py-1 rounded flex gap-2 items-center">
-                                                    <span>{cards.length} cards</span>
-                                                    <span>•</span>
-                                                    <span>{formatDistanceToNow(earliestDate, { addSuffix: true })}</span>
-                                                </div>
-                                            );
-                                        })()}
-                                    </motion.div>
-                                );
-                            })}
-                        </div>
-                    ) : (
-                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 pb-4">
-                            {files.map((file: string, idx: number) => {
-                            const meta = metadatas[file];
-                            return (
-                                <motion.div
-                                key={idx}
-                                variants={itemVariants}
-                                onClick={() => loadNote(file)}
-                                whileHover={{ scale: 1.03, y: -4 }}
-                                whileTap={{ scale: 0.95 }}
-                                className="card bg-base-100/60 hover:bg-base-100 transition-colors cursor-pointer p-4 flex flex-col gap-3 h-36 justify-between shadow-sm hover:shadow-md border border-base-200 hover:border-primary/20 backdrop-blur-sm"
-                                >
-                                <div className="flex justify-between items-start">
-                                    <div className={`p-2 rounded-lg bg-${color === 'neutral' ? 'base-200' : color + '/10'} text-${color === 'neutral' ? 'base-content' : color}`}>
-                                        <FileText size={20} />
-                                    </div>
-                                    {(() => {
-                                        if (!meta?.cards) return null;
-                                        const cards = Object.values(meta.cards) as Card[];
-                                        const count = cards.length;
-                                        if (count === 0) return null;
-
-                                        const scheduled = cards.filter((c) => c.reps > 0 && c.due);
-                                        if (scheduled.length === 0) return null;
-
-                                        const earliest = scheduled.reduce((prev, curr) =>
-                                            new Date(prev.due) < new Date(curr.due) ? prev : curr,
-                                        );
-
-                                        const earliestDate = new Date(earliest.due);
-                                        if (!earliestDate || isNaN(earliestDate.getTime())) return null;
-
-                                        return (
-                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-base-200 opacity-60`}>
-                                                {formatDistanceToNow(earliestDate)}
-                                            </span>
-                                        );
-                                    })()}
-                                </div>
-                                <span className="font-bold text-sm line-clamp-2 leading-snug" title={file}>
-                                    {file.replace(rootPath || '', '').replace(/^\//, '')}
-                                </span>
-                                </motion.div>
-                            );
-                            })}
-                        </div>
-                    )}
-                </motion.div>
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial="hidden"
+            animate="visible"
+            exit="hidden"
+            variants={containerVariants}
+            className="overflow-hidden"
+          >
+            {viewType === 'list' ? (
+              <div className="grid grid-cols-1 gap-1 pl-2">
+                {files.map((file: string) => (
+                  <FileListItem
+                    key={file}
+                    file={file}
+                    rootPath={rootPath}
+                    loadNote={loadNote}
+                    color={color}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 pb-4">
+                {files.map((file: string) => (
+                  <FileGridItem
+                    key={file}
+                    file={file}
+                    rootPath={rootPath}
+                    loadNote={loadNote}
+                    color={color}
+                  />
+                ))}
+              </div>
             )}
-        </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
-};
+});
+
+const FileListItem = memo(({ file, rootPath, loadNote, color }: any) => {
+  const meta = useAppStore(useShallow(state => state.fileMetadatas[file]));
+
+  const itemVariants = {
+    hidden: { opacity: 0, y: 10 },
+    visible: { opacity: 1, y: 0 }
+  };
+
+  return (
+    <motion.div
+      variants={itemVariants}
+      onClick={() => loadNote(file)}
+      whileHover={{ scale: 1.01, x: 4 }}
+      whileTap={{ scale: 0.98 }}
+      className="group flex items-center gap-4 p-3 rounded-lg bg-base-100/40 hover:bg-base-100 cursor-pointer border border-base-content/5 hover:border-primary/20 transition-colors backdrop-blur-sm"
+    >
+      <div className={`w-8 h-8 rounded flex items-center justify-center bg-base-200/50 text-base-content/50 group-hover:text-${color === 'neutral' ? 'primary' : color}`}>
+        <FileText size={16} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="font-medium truncate">
+          {file.replace(rootPath || '', '').replace(/^\//, '')}
+        </div>
+      </div>
+      {(() => {
+        if (!meta?.cards) return null;
+        const cards = Object.values(meta.cards) as Card[];
+        if (cards.length === 0) return null;
+
+        const scheduled = cards.filter((c) => c.reps > 0 && c.due);
+        if (scheduled.length === 0) return null;
+
+        const earliest = scheduled.reduce((prev, curr) => {
+          return new Date(prev.due) < new Date(curr.due) ? prev : curr;
+        });
+
+        const earliestDate = new Date(earliest.due);
+        if (!earliestDate || isNaN(earliestDate.getTime())) return null;
+
+        return (
+          <div className="text-xs font-mono opacity-50 bg-base-200 px-2 py-1 rounded flex gap-2 items-center">
+            <span>{cards.length} cards</span>
+            <span>•</span>
+            <span>{formatDistanceToNow(earliestDate, { addSuffix: true })}</span>
+          </div>
+        );
+      })()}
+    </motion.div>
+  );
+});
+
+const FileGridItem = memo(({ file, rootPath, loadNote, color }: any) => {
+  const meta = useAppStore(useShallow(state => state.fileMetadatas[file]));
+
+  const itemVariants = {
+    hidden: { opacity: 0, scale: 0.9 },
+    visible: { opacity: 1, scale: 1 }
+  };
+
+  return (
+    <motion.div
+      variants={itemVariants}
+      onClick={() => loadNote(file)}
+      whileHover={{ scale: 1.02, y: -2 }}
+      whileTap={{ scale: 0.98 }}
+      className="group flex flex-col p-4 rounded-xl bg-base-100/40 hover:bg-base-100 cursor-pointer border border-base-content/5 hover:border-primary/20 transition-all backdrop-blur-sm shadow-sm hover:shadow-md aspect-[4/3] relative overflow-hidden"
+    >
+      <div className={`absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity text-${color === 'neutral' ? 'primary' : color}`}>
+        <FileText size={64} />
+      </div>
+
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center bg-base-200/50 text-base-content/50 group-hover:text-${color === 'neutral' ? 'primary' : color} mb-3`}>
+        <FileText size={20} />
+      </div>
+
+      <div className="font-bold truncate text-sm mb-1 z-10">
+        {file.split(/[\\/]/).pop()?.replace('.md', '')}
+      </div>
+      <div className="text-xs opacity-50 truncate font-mono z-10 mb-auto">
+        {file.replace(rootPath || '', '').replace(/^\//, '')}
+      </div>
+
+      {(() => {
+        if (!meta?.cards) return null;
+        const cards = Object.values(meta.cards) as Card[];
+        if (cards.length === 0) return null;
+
+        const scheduled = cards.filter((c) => c.reps > 0 && c.due);
+
+        return (
+          <div className="mt-3 pt-3 border-t border-base-content/5 flex items-center justify-between text-xs opacity-60">
+            <span>{cards.length} cards</span>
+            {scheduled.length > 0 && (
+              <span>{scheduled.length} active</span>
+            )}
+          </div>
+        );
+      })()}
+    </motion.div>
+  );
+});

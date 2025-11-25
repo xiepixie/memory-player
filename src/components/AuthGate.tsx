@@ -4,6 +4,7 @@ import { useAppStore } from '../store/appStore';
 import { useToastStore } from '../store/toastStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Brain } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 
 interface AuthGateProps {
   children: ReactNode;
@@ -12,14 +13,43 @@ interface AuthGateProps {
 type AuthStatus = 'checking' | 'no-supabase' | 'needs-login' | 'ready';
 
 export const AuthGate = ({ children }: AuthGateProps) => {
-  const initDataService = useAppStore((state) => state.initDataService);
-  const authCheckCounter = useAppStore((state) => state.authCheckCounter);
+  const { initDataService, authCheckCounter, studyResourcesPrefetched, setStudyResourcesPrefetched } = useAppStore(
+    useShallow((state) => ({
+      initDataService: state.initDataService,
+      authCheckCounter: state.authCheckCounter,
+      studyResourcesPrefetched: state.studyResourcesPrefetched,
+      setStudyResourcesPrefetched: state.setStudyResourcesPrefetched,
+    })),
+  );
   const addToast = useToastStore((state) => state.addToast);
   const [status, setStatus] = useState<AuthStatus>('checking');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (studyResourcesPrefetched) return;
+
+    // Fire-and-forget: warm up heavy, soon-to-be-used resources
+    (async () => {
+      try {
+        await Promise.allSettled([
+          import('./NoteRenderer'),
+          import('./modes/ClozeMode'),
+          import('./modes/BlurMode'),
+          import('./modes/EditMode'),
+          import('./sticky/StickyBoard'),
+          import('./shared/MathClozeBlock'),
+          import('katex'),
+          import('canvas-confetti'),
+        ]);
+        setStudyResourcesPrefetched(true);
+      } catch (e) {
+        console.debug('Prefetch study resources failed', e);
+      }
+    })();
+  }, [studyResourcesPrefetched, setStudyResourcesPrefetched]);
 
   useEffect(() => {
     const supabase = getSupabaseClient();

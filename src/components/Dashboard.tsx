@@ -44,38 +44,19 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
         })),
     );
 
-    // Data Aggregation
-    const dashboardData = useMemo(() => {
-        const now = new Date();
-        const todayKey = format(now, 'yyyy-MM-dd');
-
-        const dueItems: QueueItem[] = [];
-        const overdueItems: QueueItem[] = [];
-        const newItems: QueueItem[] = [];
-        const leeches: QueueItem[] = [];
-        const futureCounts: Record<string, number> = {};
+    // Data Aggregation - Split into granular memos for better performance
+    const baseStats = useMemo(() => {
         const stats = { new: 0, learning: 0, review: 0, relearning: 0 };
         const stabilityList: number[] = [];
         const folderLapses: Record<string, { sum: number; count: number }> = {};
 
-        files.forEach(f => {
-            const meta = fileMetadatas[f];
+        Object.entries(fileMetadatas).forEach(([filepath, meta]) => {
             if (!meta || !meta.cards) return;
 
-            Object.entries(meta.cards).forEach(([indexStr, card]) => {
-                const due = new Date(card.due);
-                const clozeIdx = parseInt(indexStr, 10);
-                const item: QueueItem = {
-                    noteId: meta.noteId || '',
-                    filepath: f,
-                    clozeIndex: clozeIdx,
-                    due: due
-                };
+            const normalizedPath = filepath.replace(/\\/g, '/');
+            const folder = normalizedPath.includes('/') ? normalizedPath.slice(0, normalizedPath.lastIndexOf('/')) : '.';
 
-                const normalizedPath = f.replace(/\\/g, '/');
-                const folder = normalizedPath.includes('/') ? normalizedPath.slice(0, normalizedPath.lastIndexOf('/')) : '.';
-
-                // Stats
+            Object.values(meta.cards).forEach(card => {
                 if (card.state === 0) stats.new++;
                 else if (card.state === 1) stats.learning++;
                 else if (card.state === 2) stats.review++;
@@ -89,6 +70,37 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
                     folderLapses[folder].sum += card.lapses;
                     folderLapses[folder].count += 1;
                 }
+            });
+        });
+
+        const trackedFiles = Object.keys(fileMetadatas);
+        const orphanCount = files.length - trackedFiles.filter(f => fileMetadatas[f]?.cards && Object.keys(fileMetadatas[f].cards).length > 0).length;
+
+        return { stats, stabilityList, folderLapses, orphanCount };
+    }, [fileMetadatas, files]);
+
+    const dueData = useMemo(() => {
+        const now = new Date();
+        const todayKey = format(now, 'yyyy-MM-dd');
+
+        const dueItems: QueueItem[] = [];
+        const overdueItems: QueueItem[] = [];
+        const newItems: QueueItem[] = [];
+        const leeches: QueueItem[] = [];
+        const futureCounts: Record<string, number> = {};
+
+        Object.entries(fileMetadatas).forEach(([filepath, meta]) => {
+            if (!meta || !meta.cards) return;
+
+            Object.entries(meta.cards).forEach(([indexStr, card]) => {
+                const due = new Date(card.due);
+                const clozeIdx = parseInt(indexStr, 10);
+                const item: QueueItem = {
+                    noteId: meta.noteId || '',
+                    filepath,
+                    clozeIndex: clozeIdx,
+                    due: due
+                };
 
                 if (card.lapses > 5) leeches.push(item);
 
@@ -118,11 +130,15 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
 
         dueItems.sort((a, b) => a.due.getTime() - b.due.getTime());
 
-        // Streak Calculation
+        return { dueItems, overdueItems, newItems, leeches, futureCounts };
+    }, [fileMetadatas]);
+
+    const historyStats = useMemo(() => {
         const historyDates = reviewHistory.map(r => new Date(r.review).setHours(0, 0, 0, 0)).sort((a, b) => b - a);
         const uniqueDates = Array.from(new Set(historyDates));
         const reviewDays = uniqueDates.length;
         let currentStreak = 0;
+
         if (uniqueDates.length > 0) {
             const today = new Date().setHours(0, 0, 0, 0);
             const yesterday = subDays(new Date(), 1).setHours(0, 0, 0, 0);
@@ -146,15 +162,15 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
         const ratingDist: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
         reviewHistory.forEach(r => { if (ratingDist[r.rating] !== undefined) ratingDist[r.rating]++; });
 
-        const trackedFiles = Object.keys(fileMetadatas);
-        const orphanCount = files.length - trackedFiles.filter(f => fileMetadatas[f]?.cards && Object.keys(fileMetadatas[f].cards).length > 0).length;
+        return { currentStreak, retentionRate, ratingDist, reviewDays };
+    }, [reviewHistory]);
 
-        return {
-            dueItems, overdueItems, newItems, leeches, futureCounts, stats,
-            orphanCount, stabilityList, folderLapses, currentStreak,
-            retentionRate, ratingDist, reviewDays
-        };
-    }, [files, fileMetadatas, reviewHistory]);
+    // Combine stats for easy access
+    const dashboardData = useMemo(() => ({
+        ...baseStats,
+        ...dueData,
+        ...historyStats
+    }), [baseStats, dueData, historyStats]);
 
     // Handlers
     const handleStartSession = (items: QueueItem[]) => {
@@ -200,7 +216,7 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
 
             {/* Focus Zone */}
             {mode !== 'insights-only' && (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-500 slide-in-from-bottom-2">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 opacity-100 transition-opacity duration-300">
                     {/* Main Action Center - 9/12 cols */}
                     <div className="lg:col-span-9 h-full">
                         <ActionCenter
@@ -223,7 +239,7 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
 
             {/* Insights Grid */}
             {mode !== 'hero-only' && (
-                <div className="space-y-6 animate-in fade-in duration-700 slide-in-from-bottom-8">
+                <div className="space-y-6 opacity-100 transition-opacity duration-300">
 
                     {/* 1. Vital Signs Row */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
