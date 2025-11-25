@@ -105,14 +105,36 @@ export const MarkdownContent = memo(({ content, components, className, disableId
                             const id = parseInt(idStr, 10);
                             const latex = String(children).trim();
 
+                            // Track occurrence index for this math cloze
+                            const numId = Number.isNaN(id) ? 0 : id;
+                            let occurrenceIndex = 0;
+                            if (!Number.isNaN(id)) {
+                                occurrenceIndex = clozeCounts.current[numId] || 0;
+                                clozeCounts.current[numId] = occurrenceIndex + 1;
+                            }
+
                             return (
                                 <span
                                     id={`cloze-item-${id}`}
                                     data-cloze-id={id}
-                                    className="block my-6"
+                                    className="block my-6 cursor-pointer"
+                                    onClick={(e) => {
+                                        if (onClozeClick && !Number.isNaN(id)) {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            onClozeClick(id, occurrenceIndex, e.currentTarget);
+                                        }
+                                    }}
+                                    onContextMenu={(e) => {
+                                        if (onClozeContextMenu && !Number.isNaN(id)) {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            onClozeContextMenu(id, occurrenceIndex, e.currentTarget, e);
+                                        }
+                                    }}
                                 >
                                     <MathClozeBlock
-                                        id={Number.isNaN(id) ? 0 : id}
+                                        id={numId}
                                         latex={latex}
                                         isRevealed={true}
                                         isInteractive={false}

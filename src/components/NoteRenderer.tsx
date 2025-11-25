@@ -3,8 +3,7 @@ import { useToastStore } from '../store/toastStore';
 import { GradingBar } from './GradingBar';
 import { SessionSummary } from './SessionSummary';
 import { ArrowLeft, Maximize2, Minimize2, PenTool, Brain, Eye, StickyNote as StickyNoteIcon } from 'lucide-react';
-import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
-import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { ThreeColumnLayout } from './shared/ThreeColumnLayout';
 import { TableOfContents } from './shared/TableOfContents';
 import { FileTreeView } from './shared/FileTreeView';
@@ -64,12 +63,6 @@ export const NoteRenderer = () => {
         }
     }, [currentFilepath, currentNote, loadNote]);
 
-    // Animation: Track previous viewMode to determine transition direction
-    const prevViewModeRef = useRef(viewMode);
-    useEffect(() => {
-        prevViewModeRef.current = viewMode;
-    }, [viewMode]);
-    const prevViewMode = prevViewModeRef.current;
 
     const isStudyMode = viewMode === 'test' || viewMode === 'master';
     const hasSessionInProgress = queue.length > 0 && sessionIndex < queue.length;
@@ -182,22 +175,19 @@ export const NoteRenderer = () => {
             )}
 
             {/* Unified Header */}
-            <motion.div
-                initial={false}
-                animate={{ y: immersive ? -60 : 0, opacity: immersive ? 0 : 1 }}
-                transition={{ duration: 0.3 }}
-                className="sticky top-0 left-0 right-0 flex items-center justify-between px-4 py-3 border-b border-base-200 bg-base-100/95 backdrop-blur z-40"
+            <div
+                className={`sticky top-0 left-0 right-0 flex items-center justify-between px-4 py-3 border-b border-base-200 bg-base-100/95 backdrop-blur z-40 transition-all duration-300 ${
+                    immersive ? '-translate-y-16 opacity-0 pointer-events-none' : 'translate-y-0 opacity-100'
+                }`}
             >
                 <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <motion.button
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
-                        className="btn btn-circle btn-ghost btn-sm"
+                    <button
+                        className="btn btn-circle btn-ghost btn-sm hover:scale-110 active:scale-90 transition-transform"
                         onClick={closeNote}
                         title="Back to Library"
                     >
                         <ArrowLeft size={18} />
-                    </motion.button>
+                    </button>
 
                     <div className="flex flex-col min-w-0">
                         <span className="font-bold text-sm truncate">{noteName}</span>
@@ -217,24 +207,19 @@ export const NoteRenderer = () => {
                             { id: 'test', label: 'Cloze', icon: Brain, color: 'text-secondary' },
                             { id: 'master', label: 'Blur', icon: Eye, color: 'text-info' },
                         ]
-                        .filter(m => !hasSessionInProgress || (isStudyMode && m.id !== 'edit')) // Show all if not session; if session & study, hide edit
+                        .filter(m => !hasSessionInProgress || (isStudyMode && m.id !== 'edit'))
                         .map((mode) => {
                             const isActive = viewMode === mode.id;
                             return (
                                 <button
                                     key={mode.id}
                                     onClick={() => setViewMode(mode.id as any)}
-                                    className={`relative btn btn-sm rounded-full px-4 border-none bg-transparent hover:bg-transparent transition-colors ${
-                                        isActive ? `${mode.color} shadow-none` : 'text-base-content/60 hover:text-base-content'
+                                    className={`relative btn btn-sm rounded-full px-4 border-none transition-all duration-200 ${
+                                        isActive 
+                                            ? `${mode.color} bg-base-100 shadow-sm` 
+                                            : 'bg-transparent text-base-content/60 hover:text-base-content hover:bg-base-100/50'
                                     }`}
                                 >
-                                    {isActive && (
-                                        <motion.div
-                                            layoutId="activeModePill"
-                                            className="absolute inset-0 bg-base-100 shadow-sm rounded-full -z-10"
-                                            transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                                        />
-                                    )}
                                     <mode.icon size={14} className="mr-2" />
                                     {mode.label}
                                 </button>
@@ -302,7 +287,7 @@ export const NoteRenderer = () => {
                         {immersive ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                     </button>
                 </div>
-            </motion.div>
+            </div>
 
             {/* Blur Mode Study Hints Overlay */}
             {viewMode === 'master' && hints.length > 0 && (
@@ -333,81 +318,54 @@ export const NoteRenderer = () => {
                 />
             </Suspense>
 
-            {/* Content Area - Dual Layer Persistent Architecture */}
-            <LayoutGroup>
-                <div className="relative flex-1 w-full h-full overflow-hidden bg-base-100">
+            {/* Content Area - Dual Layer Persistent Architecture with CSS transitions */}
+            <div className="relative flex-1 w-full h-full overflow-hidden bg-base-100">
                     {/* Layer 1: Editor (Persistent) */}
-                    <motion.div
-                        className="absolute inset-0 w-full h-full overflow-hidden bg-base-100"
-                        initial={false}
-                        animate={{
-                            x: viewMode === 'edit' ? 0 : '-20%', // Subtle parallax effect
-                            opacity: viewMode === 'edit' ? 1 : 0,
-                            zIndex: viewMode === 'edit' ? 10 : 1,
-                            scale: viewMode === 'edit' ? 1 : 0.98
-                        }}
-                        transition={{ duration: 0.3, ease: "circOut" }}
-                        style={{ 
-                            pointerEvents: viewMode === 'edit' ? 'auto' : 'none',
-                            visibility: viewMode === 'edit' || prevViewMode === 'edit' ? 'visible' : 'hidden' // Hide after transition to save GPU
-                        }}
-                        onAnimationComplete={() => {
-                            // Optional: trigger generic resize event if needed
-                        }}
+                    <div
+                        className={`absolute inset-0 w-full h-full overflow-hidden bg-base-100 transition-all duration-300 ease-out ${
+                            viewMode === 'edit' 
+                                ? 'translate-x-0 opacity-100 scale-100 z-10' 
+                                : '-translate-x-[5%] opacity-0 scale-[0.98] z-0 pointer-events-none'
+                        }`}
                     >
                         <div className="w-full h-full">
                             <Suspense fallback={<ContentSkeleton />}>
                                 <EditModeLazy active={viewMode === 'edit'} />
                             </Suspense>
                         </div>
-                    </motion.div>
+                    </div>
 
                     {/* Layer 2: Review (Cloze/Blur) */}
-                    <motion.div
+                    <div
                         id="note-scroll-container"
-                        className="absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden bg-base-100"
-                        initial={false}
-                        animate={{
-                            x: viewMode !== 'edit' ? 0 : '20%',
-                            opacity: viewMode !== 'edit' ? 1 : 0,
-                            zIndex: viewMode !== 'edit' ? 10 : 1,
-                            scale: viewMode !== 'edit' ? 1 : 0.98
-                        }}
-                        transition={{ duration: 0.3, ease: "circOut" }}
-                        style={{ 
-                            pointerEvents: viewMode !== 'edit' ? 'auto' : 'none',
-                            visibility: viewMode !== 'edit' || prevViewMode !== 'edit' ? 'visible' : 'hidden'
-                        }}
+                        className={`absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden bg-base-100 transition-all duration-300 ease-out ${
+                            viewMode !== 'edit' 
+                                ? 'translate-x-0 opacity-100 scale-100 z-10' 
+                                : 'translate-x-[5%] opacity-0 scale-[0.98] z-0 pointer-events-none'
+                        }`}
                     >
                          <div className={`min-h-full mx-auto transition-all duration-300 ${
-                            immersive ? 'max-w-5xl' : 'max-w-3xl' // Padding handled by internal components now
+                            immersive ? 'max-w-5xl' : 'max-w-3xl'
                         }`}>
-                            <AnimatePresence mode="wait">
-                                {(viewMode === 'test' || viewMode === 'master' || (hasSessionInProgress && viewMode !== 'edit')) && (
-                                    <motion.div
-                                        key={viewMode === 'master' ? 'master' : 'test'}
-                                        initial={{ opacity: 0, filter: 'blur(4px)' }}
-                                        animate={{ 
-                                            opacity: 1, 
-                                            filter: viewMode === 'master' && !isPeeking ? 'blur(5px)' : 'blur(0px)'
-                                        }}
-                                        exit={{ opacity: 0, filter: 'blur(4px)', transition: { duration: 0.1 } }}
-                                        transition={{ duration: 0.2 }}
-                                    >
-                                        <Suspense fallback={null}>
-                                            {viewMode === 'master' ? (
-                                                <BlurModeLazy immersive={immersive} />
-                                            ) : (
-                                                <ClozeModeLazy immersive={immersive} />
-                                            )}
-                                        </Suspense>
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
+                            {/* Blur Mode content with CSS blur */}
+                            {(viewMode === 'test' || viewMode === 'master' || (hasSessionInProgress && viewMode !== 'edit')) && (
+                                <div
+                                    className={`transition-[filter] duration-200 ${
+                                        viewMode === 'master' && !isPeeking ? 'blur-[5px]' : 'blur-0'
+                                    }`}
+                                >
+                                    <Suspense fallback={null}>
+                                        {viewMode === 'master' ? (
+                                            <BlurModeLazy immersive={immersive} />
+                                        ) : (
+                                            <ClozeModeLazy immersive={immersive} />
+                                        )}
+                                    </Suspense>
+                                </div>
+                            )}
                         </div>
-                    </motion.div>
+                    </div>
                 </div>
-            </LayoutGroup>
 
             {/* Grading Bar (Only in Study Mode) - Moved to outer layout for viewport positioning */}
         </div>
@@ -420,27 +378,21 @@ export const NoteRenderer = () => {
                 <>
                     {CenterContent}
                     {/* Grading Bar (Only in Study Mode) - anchored to content column */}
-                    <AnimatePresence>
-                        {isStudyMode && (
-                            <motion.div
-                                initial={{ y: 100, opacity: 0 }}
-                                animate={{ y: 0, opacity: 1 }}
-                                exit={{ y: 100, opacity: 0 }}
-                                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                                className="fixed inset-x-0 bottom-0 z-[100] pointer-events-none pb-6"
-                            >
-                                <div
-                                    className={`relative mx-auto transition-all duration-300 ${
-                                        immersive
-                                            ? 'max-w-5xl px-12'
-                                            : 'max-w-3xl px-8'
-                                    }`}
-                                >
-                                    <GradingBar />
-                                </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
+                    <div
+                        className={`fixed inset-x-0 bottom-0 z-[100] pointer-events-none pb-6 transition-all duration-300 ease-out ${
+                            isStudyMode ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'
+                        }`}
+                    >
+                        <div
+                            className={`relative mx-auto transition-all duration-300 ${
+                                immersive
+                                    ? 'max-w-5xl px-12'
+                                    : 'max-w-3xl px-8'
+                            }`}
+                        >
+                            <GradingBar />
+                        </div>
+                    </div>
 
                     {immersive && (
                         <ImmersiveControls onExit={() => setImmersive(false)} remaining={hasSessionInProgress ? remainingCards : null} />
@@ -456,12 +408,7 @@ export const NoteRenderer = () => {
 
 const ImmersiveControls = ({ onExit, remaining }: { onExit: () => void; remaining: number | null }) => {
     return (
-        <motion.div
-            initial={{ y: -20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -20, opacity: 0 }}
-            className="absolute top-6 right-6 z-50 group"
-        >
+        <div className="absolute top-6 right-6 z-50 group animate-in fade-in slide-in-from-top-2 duration-300">
             <div className="flex items-center gap-3 bg-base-100/40 backdrop-blur-md border border-base-content/5 shadow-sm hover:shadow-md rounded-full p-1.5 pr-4 transition-all duration-300 hover:bg-base-100/90">
                 <button
                     className="btn btn-circle btn-sm btn-ghost bg-base-100/50 hover:bg-base-200 border-none shadow-sm"
@@ -482,6 +429,6 @@ const ImmersiveControls = ({ onExit, remaining }: { onExit: () => void; remainin
                     )}
                 </div>
             </div>
-        </motion.div>
+        </div>
     );
 };

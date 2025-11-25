@@ -100,6 +100,8 @@ CREATE TABLE public.cards (
 );
 
 -- Indexes
+-- Note: We use a partial unique index for active cards to allow soft-deleted duplicates.
+-- The application handles upserts manually since ON CONFLICT doesn't work with partial indexes.
 CREATE UNIQUE INDEX uq_card_identity_active
 ON public.cards (note_id, cloze_index)
 WHERE is_deleted = false;

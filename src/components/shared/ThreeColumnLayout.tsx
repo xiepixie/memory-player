@@ -1,6 +1,5 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, Menu, List } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
 
 interface Props {
     left?: ReactNode;
@@ -11,14 +10,16 @@ interface Props {
 }
 
 export const ThreeColumnLayout = ({ left, center, right, immersive = false, fullWidth = false }: Props) => {
-    const [showLeft, setShowLeft] = useState(false); // Default closed to focus on content
+    const [showLeft, setShowLeft] = useState(false);
     const [showRight, setShowRight] = useState(false);
 
-    // Close sidebars when entering immersive mode
-    if (immersive && (showLeft || showRight)) {
-        setShowLeft(false);
-        setShowRight(false);
-    }
+    // Close sidebars when entering immersive mode - use effect to avoid setState during render
+    useEffect(() => {
+        if (immersive) {
+            setShowLeft(false);
+            setShowRight(false);
+        }
+    }, [immersive]);
 
     return (
         <div className="flex h-full w-full overflow-hidden bg-base-100 relative">
@@ -34,74 +35,56 @@ export const ThreeColumnLayout = ({ left, center, right, immersive = false, full
                 </div>
             </div>
 
-            {/* Left Sidebar - Floating */}
-            <AnimatePresence initial={false}>
-                {left && showLeft && !immersive && (
-                    <motion.div
-                        initial={{ x: -280, opacity: 0 }}
-                        animate={{ x: 0, opacity: 1 }}
-                        exit={{ x: -280, opacity: 0 }}
-                        transition={{ duration: 0.3, ease: "easeInOut" }}
-                        className="absolute top-0 left-0 bottom-0 w-[280px] border-r border-white/5 bg-base-100/60 backdrop-blur-xl z-20 shadow-2xl"
-                    >
-                        <div className="flex-1 h-full overflow-hidden">
-                            {left}
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {/* Left Sidebar - Floating with CSS transitions */}
+            {left && !immersive && (
+                <div
+                    className={`absolute top-0 left-0 bottom-0 w-[280px] border-r border-white/5 bg-base-100/60 backdrop-blur-xl z-20 shadow-2xl transition-all duration-300 ease-out ${
+                        showLeft ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-0 pointer-events-none'
+                    }`}
+                >
+                    <div className="flex-1 h-full overflow-hidden">
+                        {left}
+                    </div>
+                </div>
+            )}
 
             {/* Toggle Left Button */}
             {left && !immersive && (
-                <motion.button
-                    initial={false}
-                    animate={{
-                        x: showLeft ? 260 : 0,
-                        backgroundColor: showLeft ? 'rgba(255,255,255,0.1)' : 'rgba(20,20,25,0.6)'
-                    }}
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.95 }}
-                    className="absolute bottom-6 left-6 z-30 btn btn-circle btn-sm shadow-xl border border-white/10 backdrop-blur-md text-base-content/80 hover:text-white transition-colors"
+                <button
+                    className={`absolute bottom-6 z-30 btn btn-circle btn-sm shadow-xl border border-white/10 backdrop-blur-md text-base-content/80 hover:text-white hover:scale-110 active:scale-95 transition-all duration-300 ${
+                        showLeft ? 'left-[272px] bg-white/10' : 'left-6 bg-base-300/60'
+                    }`}
                     onClick={() => setShowLeft(!showLeft)}
                     title={showLeft ? "Hide Explorer" : "Show Explorer"}
                 >
                     {showLeft ? <ChevronLeft size={16} /> : <Menu size={16} />}
-                </motion.button>
+                </button>
             )}
 
-            {/* Right Sidebar - Floating */}
-            <AnimatePresence initial={false}>
-                {right && showRight && !immersive && (
-                    <motion.div
-                        initial={{ x: 240, opacity: 0 }}
-                        animate={{ x: 0, opacity: 1 }}
-                        exit={{ x: 240, opacity: 0 }}
-                        transition={{ duration: 0.3, ease: "easeInOut" }}
-                        className="absolute top-0 right-0 bottom-0 w-[240px] border-l border-white/5 bg-base-100/60 backdrop-blur-xl z-20 shadow-2xl"
-                    >
-                        <div className="flex-1 h-full overflow-hidden">
-                            {right}
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {/* Right Sidebar - Floating with CSS transitions */}
+            {right && !immersive && (
+                <div
+                    className={`absolute top-0 right-0 bottom-0 w-[240px] border-l border-white/5 bg-base-100/60 backdrop-blur-xl z-20 shadow-2xl transition-all duration-300 ease-out ${
+                        showRight ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0 pointer-events-none'
+                    }`}
+                >
+                    <div className="flex-1 h-full overflow-hidden">
+                        {right}
+                    </div>
+                </div>
+            )}
 
             {/* Toggle Right Button */}
             {right && !immersive && (
-                <motion.button
-                    initial={false}
-                    animate={{
-                        x: showRight ? -220 : 0,
-                        backgroundColor: showRight ? 'rgba(255,255,255,0.1)' : 'rgba(20,20,25,0.6)'
-                    }}
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.95 }}
-                    className="absolute bottom-6 right-6 z-30 btn btn-circle btn-sm shadow-xl border border-white/10 backdrop-blur-md text-base-content/80 hover:text-white transition-colors"
+                <button
+                    className={`absolute bottom-6 z-30 btn btn-circle btn-sm shadow-xl border border-white/10 backdrop-blur-md text-base-content/80 hover:text-white hover:scale-110 active:scale-95 transition-all duration-300 ${
+                        showRight ? 'right-[232px] bg-white/10' : 'right-6 bg-base-300/60'
+                    }`}
                     onClick={() => setShowRight(!showRight)}
                     title={showRight ? "Hide Outline" : "Show Outline"}
                 >
                     {showRight ? <ChevronRight size={16} /> : <List size={16} />}
-                </motion.button>
+                </button>
             )}
         </div>
     );

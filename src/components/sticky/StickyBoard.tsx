@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { StickyNoteData } from './types';
 import { StickyNote } from './StickyNote';
-import { AnimatePresence, motion } from 'framer-motion';
 import { Plus, Trash2 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
@@ -150,7 +149,7 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
     if (!isOpen && notes.length === 0) return null;
 
     return (
-        <AnimatePresence>
+        <>
             {isOpen && (
                 <>
                     {/* Render Notes */}
@@ -166,12 +165,7 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
 
                     {/* Portal Controls to Header */}
                     {portalTarget && createPortal(
-                        <motion.div 
-                            initial={{ width: 0, opacity: 0 }}
-                            animate={{ width: 'auto', opacity: 1 }}
-                            exit={{ width: 0, opacity: 0 }}
-                            className="flex items-center gap-1 overflow-hidden"
-                        >
+                        <div className="flex items-center gap-1 overflow-hidden animate-in fade-in slide-in-from-left-2 duration-200">
                              <div className="w-px h-4 bg-base-content/10 mx-1" />
                              <button
                                 className="btn btn-xs btn-ghost btn-circle"
@@ -192,11 +186,11 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
                             <span className="text-[10px] font-mono opacity-50 min-w-[20px] text-center select-none">
                                 {notes.length}
                             </span>
-                        </motion.div>,
+                        </div>,
                         portalTarget
                     )}
                 </>
             )}
-        </AnimatePresence>
+        </>
     );
 };

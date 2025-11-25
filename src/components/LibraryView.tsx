@@ -37,6 +37,7 @@ export const LibraryView = () => {
     fetchDueCards,
     manualSyncPendingNotes,
     createVault,
+    loadReviewHistory,
   } = useAppStore(
     useShallow((state) => ({
       rootPath: state.rootPath,
@@ -59,6 +60,7 @@ export const LibraryView = () => {
       fetchDueCards: state.fetchDueCards,
       manualSyncPendingNotes: state.manualSyncPendingNotes,
       createVault: state.createVault,
+      loadReviewHistory: state.loadReviewHistory,
     })),
   );
   const dataService = useAppStore((state) => state.dataService);
@@ -347,19 +349,14 @@ export const LibraryView = () => {
     try {
       const { retriedCount, errorCount } = await manualSyncPendingNotes();
 
-      // Always refresh cloud-derived state after sync attempts
-      try {
-        await loadAllMetadata();
-      } catch (e) {
-        console.error('Failed to refresh metadata after sync', e);
-      }
-
-      try {
-        await fetchDueCards(50);
-      } catch (e) {
-        console.error('Failed to refresh due cards after sync', e);
-      }
-
+      // Refresh all cloud-derived state in parallel for faster UI update
+      const refreshPromises = [
+        loadAllMetadata().catch(e => console.error('Failed to refresh metadata after sync', e)),
+        fetchDueCards(50).catch(e => console.error('Failed to refresh due cards after sync', e)),
+        loadReviewHistory().catch(e => console.error('Failed to refresh review history after sync', e)),
+      ];
+      
+      await Promise.allSettled(refreshPromises);
       updateLastSync();
 
       if (errorCount > 0) {

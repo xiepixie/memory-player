@@ -1,12 +1,4 @@
-import { useState, useRef, useEffect, memo } from 'react';
-import { 
-    motion, 
-    useDragControls, 
-    useMotionValue, 
-    useTransform, 
-    useSpring,
-    useVelocity
-} from 'framer-motion';
+import { useState, useRef, useEffect, memo, useCallback } from 'react';
 import { X, Minus, Maximize2, Palette, Edit3, GripVertical } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -26,29 +18,16 @@ interface StickyNoteProps {
 export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNoteProps) => {
     const [isResizing, setIsResizing] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
+    const [isDragging, setIsDragging] = useState(false);
+    const [position, setPosition] = useState({ x: note.x, y: note.y });
     const noteRef = useRef<HTMLDivElement>(null);
     const resizeRef = useRef<{ startX: number, startY: number, startWidth: number, startHeight: number } | null>(null);
-    const dragControls = useDragControls();
+    const dragRef = useRef<{ startX: number, startY: number, noteX: number, noteY: number } | null>(null);
     
-    // Motion values for physics-based interactions
-    const x = useMotionValue(note.x);
-    const y = useMotionValue(note.y);
-    
-    // Sync motion values when props change (e.g. external update or initial load)
+    // Sync position when props change
     useEffect(() => {
-        x.set(note.x);
-        y.set(note.y);
-    }, [note.x, note.y, x, y]);
-
-    // Calculate rotation based on drag velocity for a natural "paper" feel
-    const xVelocity = useVelocity(x);
-    const rotate = useSpring(useTransform(xVelocity, [-1000, 1000], [0, 0]), {
-        damping: 20,
-        stiffness: 400
-    });
-    
-    // Scale effect on drag
-    const scale = useSpring(1, { damping: 20, stiffness: 300 });
+        setPosition({ x: note.x, y: note.y });
+    }, [note.x, note.y]);
 
     const theme = NOTE_COLORS[note.color] ?? NOTE_COLORS.primary;
 
@@ -93,87 +72,97 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
         };
     }, [isResizing, note.id, onUpdate]);
 
-    const handleDragEnd = (_: any, info: any) => {
-        scale.set(1);
+    // Native pointer drag handler
+    useEffect(() => {
+        if (!isDragging) return;
 
-        const rawX = note.x + info.offset.x;
-        const rawY = note.y + info.offset.y;
+        const handlePointerMove = (e: PointerEvent) => {
+            if (!dragRef.current) return;
+            e.preventDefault();
+            
+            const deltaX = e.clientX - dragRef.current.startX;
+            const deltaY = e.clientY - dragRef.current.startY;
+            
+            setPosition({
+                x: dragRef.current.noteX + deltaX,
+                y: dragRef.current.noteY + deltaY
+            });
+        };
 
-        if (typeof window === 'undefined') {
-            // Update the final position
-            onUpdate(note.id, { x: rawX, y: rawY });
-            return;
-        }
+        const handlePointerUp = (e: PointerEvent) => {
+            if (!dragRef.current) return;
+            
+            const deltaX = e.clientX - dragRef.current.startX;
+            const deltaY = e.clientY - dragRef.current.startY;
+            
+            const rawX = dragRef.current.noteX + deltaX;
+            const rawY = dragRef.current.noteY + deltaY;
 
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
+            // Clamp to viewport
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+            const minVisible = 40;
+            const noteWidth = note.isMinimized ? 200 : note.width;
+            const noteHeight = note.isMinimized ? 40 : note.height;
 
-        const minVisibleX = 40;
-        const minVisibleY = 40;
+            const clampedX = Math.min(Math.max(rawX, minVisible - noteWidth), viewportWidth - minVisible);
+            const clampedY = Math.min(Math.max(rawY, minVisible - noteHeight), viewportHeight - minVisible);
 
-        const noteWidth = note.isMinimized ? 200 : note.width;
-        const noteHeight = note.isMinimized ? 40 : note.height;
+            onUpdate(note.id, { x: clampedX, y: clampedY });
+            setIsDragging(false);
+            dragRef.current = null;
+            document.body.style.cursor = '';
+        };
 
-        const clampedX = Math.min(
-            Math.max(rawX, minVisibleX - noteWidth),
-            viewportWidth - minVisibleX
-        );
+        window.addEventListener('pointermove', handlePointerMove);
+        window.addEventListener('pointerup', handlePointerUp);
+        document.body.style.cursor = 'grabbing';
 
-        const clampedY = Math.min(
-            Math.max(rawY, minVisibleY - noteHeight),
-            viewportHeight - minVisibleY
-        );
+        return () => {
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerUp);
+            document.body.style.cursor = '';
+        };
+    }, [isDragging, note.id, note.width, note.height, note.isMinimized, onUpdate]);
 
-        // Update the final position
-        onUpdate(note.id, {
-            x: clampedX,
-            y: clampedY
-        });
-    };
-
-    const handleDragStart = () => {
+    const handleDragStart = useCallback((e: React.PointerEvent) => {
+        if (isResizing || isEditing) return;
+        const target = e.target as HTMLElement;
+        if (target.closest('button')) return;
+        
+        e.preventDefault();
         onFocus(note.id);
-        scale.set(1.02);
-    };
+        dragRef.current = {
+            startX: e.clientX,
+            startY: e.clientY,
+            noteX: position.x,
+            noteY: position.y
+        };
+        setIsDragging(true);
+    }, [isResizing, isEditing, note.id, position.x, position.y, onFocus]);
 
     return (
-        <motion.div
+        <div
             ref={noteRef}
-            initial={{ opacity: 0, scale: 0.9, y: note.y + 20 }}
-            animate={{ 
-                opacity: 1, 
-                scale: 1,
-                y: note.y, // Ensure y is controlled here for the initial entry
-                rotate: 0 // Reset rotation when not dragging
-            }}
             style={{
                 position: 'fixed',
                 top: 0,
                 left: 0,
-                x, // Use motion value for performant drag
-                y, // Use motion value
-                rotate, // Apply physics-based rotation
+                transform: `translate(${position.x}px, ${position.y}px) scale(${isDragging ? 1.02 : 1})`,
                 width: note.isMinimized ? 200 : note.width,
                 height: note.isMinimized ? 40 : note.height,
                 zIndex: note.zIndex,
-                scale // Bind scale spring
             }}
-            drag={!isResizing && !isEditing}
-            dragControls={dragControls}
-            dragListener={false} // We use the header to initiate drag
-            dragMomentum={false} // Disable momentum for precise "sticky" feel
-            dragElastic={0.1} // Slight elasticity when hitting edges if we had constraints
-            onDragEnd={handleDragEnd}
-            onDragStart={handleDragStart}
             onMouseDown={() => onFocus(note.id)}
             className={`
                 group flex flex-col overflow-hidden
                 rounded-lg 
-                shadow-lg hover:shadow-xl transition-shadow duration-300
+                shadow-lg hover:shadow-xl transition-shadow duration-200
                 backdrop-blur-sm
                 ${theme.bg} ${theme.border} ${theme.text}
                 border border-opacity-50
                 ${isEditing ? 'shadow-2xl ring-2 ring-black/10 dark:ring-white/10' : ''}
+                ${isDragging ? '' : 'transition-transform duration-100'}
             `}
         >
             {/* Header / Drag Handle */}
@@ -185,13 +174,7 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
                     transition-colors duration-200
                     ${note.isMinimized ? 'bg-black/5 dark:bg-white/5' : 'hover:bg-black/5 dark:hover:bg-white/5'}
                 `}
-                onPointerDown={(e) => {
-                    if (isResizing || isEditing) return;
-                    // Prevent drag if clicking a button
-                    const target = e.target as HTMLElement;
-                    if (target.closest('button')) return;
-                    dragControls.start(e);
-                }}
+                onPointerDown={handleDragStart}
             >
                 <div className="flex items-center gap-2 overflow-hidden flex-1">
                     <GripVertical size={14} className="opacity-40 group-hover:opacity-60 transition-opacity" />
@@ -335,7 +318,7 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
                     </>
                 )}
             </div>
-        </motion.div>
+        </div>
     );
 });
 

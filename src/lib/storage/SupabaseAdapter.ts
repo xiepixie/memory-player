@@ -450,15 +450,22 @@ export class SupabaseAdapter implements DataService {
       });
     }
 
-    // Fetch existing cards to compare content for stability adjustment
+    // Fetch existing cards (both active and soft-deleted) to compare content for stability adjustment
     const { data: existingCards } = await this.supabase
       .from('cards')
-      .select('cloze_index, content_raw, stability')
+      .select('cloze_index, content_raw, stability, is_deleted')
       .eq('note_id', noteId);
 
-    const existingMap = new Map<number, { content_raw: string; stability: number }>();
+    // Track both active cards and all cards (for resurrection logic)
+    const activeCardsMap = new Map<number, { content_raw: string; stability: number }>();
+    const allCardsSet = new Set<number>();
     if (existingCards) {
-      existingCards.forEach((c: any) => existingMap.set(c.cloze_index, c));
+      existingCards.forEach((c: any) => {
+        allCardsSet.add(c.cloze_index);
+        if (!c.is_deleted) {
+          activeCardsMap.set(c.cloze_index, c);
+        }
+      });
     }
 
     // Prepare Upsert Data
@@ -475,23 +482,23 @@ export class SupabaseAdapter implements DataService {
         updated_at: new Date().toISOString()
       };
 
-      // Check for significant content change
-      const existing = existingMap.get(card.cloze_index);
-      if (existing) {
-        if (existing.content_raw !== card.content_raw) {
-          const similarity = this.calculateSimilarity(existing.content_raw, card.content_raw);
+      // Check for significant content change against ACTIVE cards only
+      const existingActive = activeCardsMap.get(card.cloze_index);
+      if (existingActive) {
+        if (existingActive.content_raw !== card.content_raw) {
+          const similarity = this.calculateSimilarity(existingActive.content_raw, card.content_raw);
           // Threshold for "significant": similarity < 0.60 (more than 40% changed)
           if (similarity < 0.60) {
-            const newStability = (existing.stability || 0) * 0.75;
-            // Include stability in update to apply penalty
-            return { ...base, stability: newStability };
+            const newStability = (existingActive.stability || 0) * 0.75;
+            return { ...base, stability: newStability, _isExisting: true };
           }
         }
-        // Existing card: preserve state (don't include state/due/etc in update)
-        return base;
+        return { ...base, _isExisting: true };
+      } else if (allCardsSet.has(card.cloze_index)) {
+        // Card exists but is soft-deleted - resurrect it
+        return { ...base, _needsResurrection: true };
       } else {
-        // New Card: Must provide initial FSRS state
-        // defaults: state=0 (New), due=Now
+        // Truly new card: provide initial FSRS state
         return {
           ...base,
           state: 0,
@@ -503,23 +510,80 @@ export class SupabaseAdapter implements DataService {
           learning_steps: 0,
           reps: 0,
           lapses: 0,
-          last_review: null
+          last_review: null,
+          _isNew: true
         };
       }
     });
 
     if (upsertRows.length > 0) {
-      // We want to update Content/Tags but PRESERVE FSRS State (unless penalized).
-      const { error: cardError } = await this.supabase
-        .from('cards')
-        .upsert(upsertRows, {
-          onConflict: 'note_id,cloze_index', // The stable anchor
-          ignoreDuplicates: false
-        });
+      // Split into three categories based on flags
+      const rowsToUpdate = upsertRows.filter(r => (r as any)._isExisting);
+      const rowsToResurrect = upsertRows.filter(r => (r as any)._needsResurrection);
+      const rowsToInsert = upsertRows.filter(r => (r as any)._isNew);
 
-      if (cardError) {
-        console.error('Sync Cards Error', cardError);
-        throw cardError;
+      // 1. UPDATE existing active cards
+      for (const row of rowsToUpdate) {
+        const { _isExisting, ...rowData } = row as any;
+        const updatePayload: Record<string, any> = {
+          content_raw: rowData.content_raw,
+          section_path: rowData.section_path,
+          tags: rowData.tags,
+          block_id: rowData.block_id,
+          is_deleted: false,
+          updated_at: rowData.updated_at,
+        };
+        if (typeof rowData.stability === 'number') {
+          updatePayload.stability = rowData.stability;
+        }
+        const { error: updateError } = await this.supabase
+          .from('cards')
+          .update(updatePayload)
+          .eq('note_id', rowData.note_id)
+          .eq('cloze_index', rowData.cloze_index)
+          .eq('is_deleted', false);
+
+        if (updateError) {
+          console.error('Update Card Error', updateError);
+        }
+      }
+
+      // 2. RESURRECT soft-deleted cards (update without is_deleted filter)
+      for (const row of rowsToResurrect) {
+        const { _needsResurrection, ...rowData } = row as any;
+        const { error: resurrectError } = await this.supabase
+          .from('cards')
+          .update({
+            content_raw: rowData.content_raw,
+            section_path: rowData.section_path,
+            tags: rowData.tags,
+            block_id: rowData.block_id,
+            is_deleted: false,
+            updated_at: rowData.updated_at,
+          })
+          .eq('note_id', rowData.note_id)
+          .eq('cloze_index', rowData.cloze_index);
+
+        if (resurrectError) {
+          console.error('Resurrect Card Error', resurrectError);
+        }
+      }
+
+      // 3. INSERT truly new cards
+      if (rowsToInsert.length > 0) {
+        // Strip internal flags before inserting
+        const cleanRows = rowsToInsert.map(r => {
+          const { _isNew, ...clean } = r as any;
+          return clean;
+        });
+        const { error: insertError } = await this.supabase
+          .from('cards')
+          .insert(cleanRows);
+
+        if (insertError) {
+          console.error('Insert Cards Error', insertError);
+          // Don't throw - the card might have been created by another request
+        }
       }
     }
 

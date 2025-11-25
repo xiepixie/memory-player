@@ -230,10 +230,16 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
     clearCurrentPreviewHighlight();
 
+    // Use a single RAF to batch class changes - avoid forced reflow
     elements.forEach((el) => {
         el.classList.remove('cloze-target-highlight');
-        void el.offsetWidth;
-        el.classList.add('cloze-target-highlight');
+    });
+    
+    // Second RAF ensures browser has time to process removal before adding
+    requestAnimationFrame(() => {
+      elements.forEach((el) => {
+          el.classList.add('cloze-target-highlight');
+      });
     });
 
     highlightedPreviewElementsRef.current = elements;
@@ -246,48 +252,6 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cursorUpdateRafRef = useRef<number | null>(null);
 
-  // Helper to calculate exact pixel offset of a character index in the textarea
-  // This is necessary because simple line counting (split \n) fails when lines wrap.
-  const getCaretCoordinates = (element: HTMLTextAreaElement, position: number) => {
-    const div = document.createElement('div');
-    const style = getComputedStyle(element);
-    
-    // Copy styling
-    const properties = [
-      'direction', 'boxSizing', 'width', 'height', 'overflowX', 'overflowY',
-      'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderStyle',
-      'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-      'fontStyle', 'fontVariant', 'fontWeight', 'fontStretch', 'fontSize', 'fontSizeAdjust', 'lineHeight', 'fontFamily',
-      'textAlign', 'textTransform', 'textIndent', 'textDecoration', 'letterSpacing', 'wordSpacing',
-      'tabSize', 'MozTabSize'
-    ];
-
-    properties.forEach(prop => {
-        div.style[prop as any] = style.getPropertyValue(prop) || style[prop as any];
-    });
-
-    div.style.position = 'absolute';
-    div.style.top = '0px';
-    div.style.left = '0px';
-    div.style.visibility = 'hidden';
-    div.style.whiteSpace = 'pre-wrap';
-    div.style.wordWrap = 'break-word'; // Important for textarea wrapping behavior
-
-    // Content up to the cursor
-    div.textContent = element.value.substring(0, position);
-    
-    // Add a span to mark the end position
-    const span = document.createElement('span');
-    span.textContent = element.value.substring(position) || '.'; // Ensure span has height
-    div.appendChild(span);
-
-    document.body.appendChild(div);
-    const top = span.offsetTop + parseInt(style.borderTopWidth);
-    document.body.removeChild(div);
-    
-    return top;
-  };
-
   const scrollToCloze = (id: number) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -295,7 +259,7 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     const val = textarea.value;
     const pattern = `{{c${id}::`;
     
-    // Find all occurrences in editor
+    // Find all occurrences in editor - optimized single pass
     const indices: number[] = [];
     let pos = val.indexOf(pattern);
     while (pos !== -1) {
@@ -308,35 +272,39 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     // Cycle logic: Find the next occurrence after the current cursor
     const currentStart = textarea.selectionStart;
     let targetIndex = indices.findIndex(idx => idx > currentStart);
-    
-    // Wrap around if we are past the last one (or currently AT the last one)
-    if (targetIndex === -1) {
-        targetIndex = 0;
-    }
+    if (targetIndex === -1) targetIndex = 0;
 
     const targetPos = indices[targetIndex];
 
-    // 1. Scroll Editor & Select (select the opening tag for quick orientation)
-    textarea.focus();
-    textarea.setSelectionRange(targetPos, targetPos + pattern.length);
-    
-    // Accurate Scroll Position Logic
-    const targetTop = getCaretCoordinates(textarea, targetPos);
-    const clientHeight = textarea.clientHeight;
-    // Position at 30% from top for better context visibility
-    textarea.scrollTop = Math.max(0, targetTop - clientHeight * 0.3);
+    // Batch all DOM operations in a single RAF for performance
+    requestAnimationFrame(() => {
+      // 1. Focus and select
+      textarea.focus();
+      textarea.setSelectionRange(targetPos, targetPos + pattern.length);
+      
+      // 2. Fast scroll calculation using line count (avoids mirror div)
+      const textBefore = val.substring(0, targetPos);
+      const lineCount = (textBefore.match(/\n/g) || []).length;
+      const lineHeight = 24; // Approximate line height
+      const targetTop = lineCount * lineHeight;
+      textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
 
-    // 2. Scroll Preview (Sync with the specific instance index)
-    const previewElements = document.querySelectorAll(`[data-cloze-id="${id}"]`) as NodeListOf<HTMLElement>;
-    const targetEl = previewElements[targetIndex];
-    
-    if (targetEl) {
-      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-    
-    // Highlight ALL occurrences of this cloze ID temporarily
-    flashPreviewCloze(id);
-    setTargetClozeId(id);
+      // 3. Scroll Preview - use instant scroll to avoid layout thrashing
+      const previewPane = document.querySelector('.group\/preview .overflow-y-auto');
+      const previewElements = document.querySelectorAll(`[data-cloze-id="${id}"]`);
+      const targetEl = previewElements[targetIndex] as HTMLElement | undefined;
+      if (targetEl && previewPane) {
+        // Manual scroll calculation avoids expensive smooth scroll layout recalculations
+        const paneRect = previewPane.getBoundingClientRect();
+        const elRect = targetEl.getBoundingClientRect();
+        const scrollOffset = elRect.top - paneRect.top - paneRect.height / 2 + elRect.height / 2;
+        previewPane.scrollTop += scrollOffset;
+      }
+      
+      // 4. Highlight and update state
+      flashPreviewCloze(id);
+      setTargetClozeId(id);
+    });
   };
   
   const jumpToSiblingCloze = (direction: 'next' | 'prev') => {
@@ -345,58 +313,68 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       
       const full = textarea.value;
       const currentPos = textarea.selectionStart;
-      const regex = /{{c(\d+)::/g;
-      const indices: { pos: number, id: number }[] = [];
-      let match;
       
+      // Optimized: Build index in single pass
+      const indices: { pos: number, id: number }[] = [];
+      const regex = /{{c(\d+)::/g;
+      let match;
       while ((match = regex.exec(full)) !== null) {
           indices.push({ pos: match.index, id: parseInt(match[1], 10) });
       }
       
       if (indices.length === 0) return;
       
-      let targetIndex = -1;
-      
+      // Find target based on direction
+      let targetIndex: number;
       if (direction === 'next') {
-          // Find first index > currentPos
           targetIndex = indices.findIndex(item => item.pos > currentPos);
-          if (targetIndex === -1) targetIndex = 0; // Wrap to start
+          if (targetIndex === -1) targetIndex = 0;
       } else {
-          // Find last index < currentPos
-          const prevIndices = indices.map((item, idx) => ({...item, idx})).filter(item => item.pos < currentPos);
-          if (prevIndices.length > 0) {
-              targetIndex = prevIndices[prevIndices.length - 1].idx;
-          } else {
-              targetIndex = indices.length - 1; // Wrap to end
+          targetIndex = -1;
+          for (let i = indices.length - 1; i >= 0; i--) {
+              if (indices[i].pos < currentPos) {
+                  targetIndex = i;
+                  break;
+              }
           }
+          if (targetIndex === -1) targetIndex = indices.length - 1;
       }
       
       const target = indices[targetIndex];
-      // Manual jump logic to ensure precise positioning
       const pattern = `{{c${target.id}::`;
-      textarea.focus();
-      textarea.setSelectionRange(target.pos, target.pos + pattern.length);
       
-      // Scroll Editor - Middle-Top Alignment (30%)
-      const targetTop = getCaretCoordinates(textarea, target.pos);
-      // Position at 30% from top for better context visibility
-      textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
-      
-      // Scroll Preview
-      let instanceIndex = 0;
-      for(let i=0; i<targetIndex; i++) {
-          if (indices[i].id === target.id) instanceIndex++;
-      }
-      
-      const previewElements = document.querySelectorAll(`[data-cloze-id="${target.id}"]`) as NodeListOf<HTMLElement>;
-      const targetEl = previewElements[instanceIndex];
-      
-      if (targetEl) {
-          targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      // Batch DOM operations in RAF
+      requestAnimationFrame(() => {
+          textarea.focus();
+          textarea.setSelectionRange(target.pos, target.pos + pattern.length);
+          
+          // Fast scroll using line count
+          const textBefore = full.substring(0, target.pos);
+          const lineCount = (textBefore.match(/\n/g) || []).length;
+          const lineHeight = 24;
+          const targetTop = lineCount * lineHeight;
+          textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
+          
+          // Calculate instance index for preview sync
+          let instanceIndex = 0;
+          for (let i = 0; i < targetIndex; i++) {
+              if (indices[i].id === target.id) instanceIndex++;
+          }
+          
+          // Use instant scroll for preview to avoid layout thrashing
+          const previewPane = document.querySelector('.group\/preview .overflow-y-auto');
+          const previewElements = document.querySelectorAll(`[data-cloze-id="${target.id}"]`);
+          const targetEl = previewElements[instanceIndex] as HTMLElement | undefined;
+          if (targetEl && previewPane) {
+              const paneRect = previewPane.getBoundingClientRect();
+              const elRect = targetEl.getBoundingClientRect();
+              const scrollOffset = elRect.top - paneRect.top - paneRect.height / 2 + elRect.height / 2;
+              previewPane.scrollTop += scrollOffset;
+          }
 
-      flashPreviewCloze(target.id);
-      setTargetClozeId(target.id);
+          flashPreviewCloze(target.id);
+          setTargetClozeId(target.id);
+      });
   };
 
   const stateRef = useRef({ content, currentNote });
@@ -1016,50 +994,49 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     
-    // Left Click: JUST Jump & Highlight (No Menu)
-    setTargetClozeId(id);
-
     const full = textarea.value;
     const info = ClozeUtils.findClozeByIdAndOccurrence(full, id, occurrenceIndex);
 
-    if (info) {
-        const { answerStart, answerEnd } = info;
+    // Batch all DOM operations in RAF for performance
+    requestAnimationFrame(() => {
+      setTargetClozeId(id);
+      
+      if (info) {
+          const { answerStart, answerEnd } = info;
+          textarea.focus();
+          textarea.setSelectionRange(answerStart, answerEnd);
 
-        textarea.focus();
-        textarea.setSelectionRange(answerStart, answerEnd);
+          // Fast scroll using line count instead of mirror div
+          const textBefore = full.substring(0, answerStart);
+          const lineCount = (textBefore.match(/\n/g) || []).length;
+          const lineHeight = 24;
+          const targetTop = lineCount * lineHeight;
+          textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
 
-        // Scroll to center based on answer start (30% from top)
-        const targetTop = getCaretCoordinates(textarea, answerStart);
-        textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
+          flashPreviewCloze(id);
+          return;
+      }
 
-        flashPreviewCloze(id);
-        return;
-    }
+      // Fallback: previous behavior if we failed to locate the cloze instance
+      const indices = ClozeUtils.findClozeIndices(full, id);
+      if (indices.length === 0) return;
 
-    // Fallback: previous behavior if we failed to locate the cloze instance
-    const indices = ClozeUtils.findClozeIndices(full, id);
-    if (indices.length === 0) return;
+      const safeIndex = ((occurrenceIndex % indices.length) + indices.length) % indices.length;
+      const start = indices[safeIndex];
+      const pattern = `{{c${id}::`;
+      
+      textarea.focus();
+      textarea.setSelectionRange(start, start + pattern.length);
+      
+      const textBefore = full.substring(0, start);
+      const lineCount = (textBefore.match(/\n/g) || []).length;
+      const lineHeight = 24;
+      const targetTop = lineCount * lineHeight;
+      textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
 
-    // Guard against out-of-range occurrenceIndex by wrapping
-    const safeIndex = ((occurrenceIndex % indices.length) + indices.length) % indices.length;
-    const start = indices[safeIndex];
-    const tail = full.substring(start);
-    const localRegex = new RegExp(ClozeUtils.CLOZE_REGEX.source);
-    const match = localRegex.exec(tail);
-    
-    let length = `{{c${id}::`.length;
-    if (match && match.index === 0) {
-        length = match[0].length;
-    }
-
-    textarea.focus();
-    textarea.setSelectionRange(start, start + length);
-    
-    const targetTop = getCaretCoordinates(textarea, start);
-    textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
-
-    flashPreviewCloze(id);
-  }, []);
+      flashPreviewCloze(id);
+    });
+  }, [flashPreviewCloze]);
 
   if (!currentNote || !currentFilepath) return null;
 

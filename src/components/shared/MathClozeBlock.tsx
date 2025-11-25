@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo, memo } from 'react';
 import katex from 'katex';
 import clsx from 'clsx';
 
@@ -11,7 +11,20 @@ interface MathClozeBlockProps {
     className?: string;
 }
 
-export const MathClozeBlock: React.FC<MathClozeBlockProps> = ({
+// Memoize KaTeX HTML rendering to avoid re-parsing on every state change
+const renderKatexToString = (latex: string): string => {
+    try {
+        return katex.renderToString(latex, {
+            displayMode: true,
+            throwOnError: false,
+            trust: false
+        });
+    } catch {
+        return `<span class="text-error">${latex}</span>`;
+    }
+};
+
+export const MathClozeBlock: React.FC<MathClozeBlockProps> = memo(({
     id,
     latex,
     isRevealed,
@@ -21,21 +34,15 @@ export const MathClozeBlock: React.FC<MathClozeBlockProps> = ({
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
 
-    // Render KaTeX when revealed or if always visible (EditMode)
+    // Memoize the rendered HTML so it doesn't re-render on reveal state changes
+    const renderedHtml = useMemo(() => renderKatexToString(latex), [latex]);
+
+    // Set innerHTML only when needed (revealed or non-interactive)
     useEffect(() => {
         if ((!isInteractive || isRevealed) && containerRef.current) {
-            try {
-                katex.render(latex, containerRef.current, {
-                    displayMode: true,
-                    throwOnError: false,
-                    trust: false
-                });
-            } catch (e) {
-                console.error('KaTeX rendering error:', e);
-                containerRef.current.innerText = latex;
-            }
+            containerRef.current.innerHTML = renderedHtml;
         }
-    }, [latex, isRevealed, isInteractive]);
+    }, [renderedHtml, isRevealed, isInteractive]);
 
     const shouldShowContent = !isInteractive || isRevealed;
 
@@ -94,4 +101,4 @@ export const MathClozeBlock: React.FC<MathClozeBlockProps> = ({
             </div>
         </div>
     );
-};
+});

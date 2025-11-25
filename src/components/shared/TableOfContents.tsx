@@ -63,16 +63,7 @@ export const TableOfContents = () => {
                 });
             });
 
-            const nextHeaders = extracted;
-
-            // Debug: trace header collection for TOC
-            console.debug('[TableOfContents] collectHeaders', {
-                count: nextHeaders.length,
-                ids: nextHeaders.map(h => h.id),
-                levels: nextHeaders.map(h => h.level),
-            });
-
-            setHeaders((prev) => (headersAreEqual(prev, nextHeaders) ? prev : nextHeaders));
+            setHeaders((prev) => (headersAreEqual(prev, extracted) ? prev : extracted));
         };
 
         collectHeaders();
@@ -119,7 +110,6 @@ export const TableOfContents = () => {
     const scrollToHeader = (id: string) => {
         const container = document.getElementById('note-scroll-container');
         if (!container) {
-            console.warn(`[TableOfContents] Scroll container not found when trying to scroll to id "${id}"`);
             return;
         }
 
@@ -130,38 +120,34 @@ export const TableOfContents = () => {
             element = candidates.find((el) => el.id === id) ?? null;
         }
 
-        const foundInsideContainer = !!element && container.contains(element);
-
         if (!element) {
-            console.warn(`[TableOfContents] Scroll target not found for id "${id}"`);
             return;
         }
 
-        console.debug('[TableOfContents] scrollToHeader', {
-            id,
-            hasContainer: !!container,
-            foundInsideContainer,
-        });
-
-        // Let the browser find the nearest scroll container and respect `scroll-margin-top` (scroll-mt-20)
-        element.scrollIntoView({
-            behavior: 'smooth',
-            block: 'start',
-        });
+        // Use manual scroll calculation to avoid expensive smooth scroll layout recalculations
+        // This is much more performant than scrollIntoView({ behavior: 'smooth' }) for large documents
+        const containerRect = container.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        const scrollMarginTop = 80; // scroll-mt-20 = 5rem = 80px
+        const targetScroll = container.scrollTop + elementRect.top - containerRect.top - scrollMarginTop;
+        container.scrollTop = Math.max(0, targetScroll);
 
         // UX: Highlight the target heading to assist visual scanning
-        document.querySelectorAll('.toc-target-highlight').forEach(el => {
-            el.classList.remove('toc-target-highlight');
+        // Use RAF to batch DOM operations and avoid layout thrashing
+        requestAnimationFrame(() => {
+            document.querySelectorAll('.toc-target-highlight').forEach(el => {
+                el.classList.remove('toc-target-highlight');
+            });
+
+            // Second RAF ensures browser processes removal before adding
+            requestAnimationFrame(() => {
+                element!.classList.add('toc-target-highlight');
+            });
         });
-
-        // Force reflow to allow restarting animation if clicking same link
-        void element.offsetWidth;
-
-        element.classList.add('toc-target-highlight');
 
         // Clean up after animation
         setTimeout(() => {
-            element.classList.remove('toc-target-highlight');
+            element!.classList.remove('toc-target-highlight');
         }, 1500);
     };
 
