@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, memo } from 'react';
+import React, { useMemo, memo } from 'react';
 import katex from 'katex';
 import clsx from 'clsx';
 
@@ -32,27 +32,17 @@ export const MathClozeBlock: React.FC<MathClozeBlockProps> = memo(({
     onToggle,
     className
 }) => {
-    const containerRef = useRef<HTMLDivElement>(null);
-
     // Memoize the rendered HTML so it doesn't re-render on reveal state changes
     const renderedHtml = useMemo(() => renderKatexToString(latex), [latex]);
 
-    // Set innerHTML only when needed (revealed or non-interactive)
-    useEffect(() => {
-        if ((!isInteractive || isRevealed) && containerRef.current) {
-            containerRef.current.innerHTML = renderedHtml;
-        }
-    }, [renderedHtml, isRevealed, isInteractive]);
-
-    const shouldShowContent = !isInteractive || isRevealed;
+    // Determine visual state
+    const showContent = !isInteractive || isRevealed;
 
     return (
         <div 
             className={clsx(
-                "my-6 relative group transition-all duration-300",
-                isInteractive 
-                    ? "cursor-pointer hover:-translate-y-0.5 hover:shadow-lg"
-                    : "cursor-default",
+                "my-4 relative group math-cloze-block", // Reduced margin + CSS containment class
+                isInteractive ? "cursor-pointer" : "cursor-default",
                 className
             )}
             onClick={(e) => {
@@ -62,40 +52,62 @@ export const MathClozeBlock: React.FC<MathClozeBlockProps> = memo(({
                 }
             }}
         >
-            {/* Badge Indicator */}
-            <div className="absolute -top-3 left-4 z-10">
+            {/* Badge Indicator - unified with text cloze style */}
+            <div className="absolute -top-2.5 left-3 z-10">
                 <span className={clsx(
-                    "badge badge-sm font-mono font-bold shadow-sm transition-colors duration-300 text-[10px]",
-                    !isInteractive && "badge-neutral text-neutral-content/80",
-                    isInteractive && !isRevealed && "badge-primary text-primary-content group-hover:scale-105",
-                    isInteractive && isRevealed && "badge-success text-success-content group-hover:scale-105"
+                    "text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border transition-colors duration-150",
+                    // Non-interactive (EditMode, context view)
+                    !isInteractive && "bg-neutral text-neutral-content/80 border-transparent",
+                    // Interactive hidden - primary accent
+                    isInteractive && !isRevealed && "bg-primary/10 text-primary border-primary/20 group-hover:bg-primary/20 group-hover:border-primary/40",
+                    // Interactive revealed - success accent
+                    isInteractive && isRevealed && "bg-success/15 text-success border-success/30"
                 )}>
                     c{id}
                 </span>
             </div>
 
-            {/* Content Container */}
+            {/* Content Container - unified styling with text cloze */}
             <div 
                 className={clsx(
-                    "rounded-lg border-2 p-4 min-h-[4rem] flex items-center justify-center overflow-x-auto transition-all duration-300",
+                    "rounded-lg border-2 px-4 overflow-x-auto",
+                    "transition-all duration-200 ease-out",
                     // Preview / non-interactive (EditMode, context)
-                    !isInteractive && "bg-base-100 border-base-200 shadow-sm group-hover:border-primary/30 group-hover:bg-base-100/90",
-                    // Interactive target - revealed state
-                    isInteractive && isRevealed && "bg-success/10 border-success/60 text-success",
-                    // Interactive target - hidden state
-                    isInteractive && !isRevealed && "bg-base-200/60 border-primary/40 hover:bg-base-200 hover:border-primary/80 shadow-inner"
+                    !isInteractive && "bg-base-100 border-base-200 py-3",
+                    // Interactive - revealed (match text cloze success style)
+                    isInteractive && isRevealed && "bg-success/15 border-success/50 py-3 shadow-sm shadow-success/20",
+                    // Interactive - hidden: ENHANCED hover effect for better visibility
+                    isInteractive && !isRevealed && [
+                        "bg-base-200/60 border-base-300 py-6",
+                        // Hover: primary accent background + border + shadow glow
+                        "hover:bg-primary/10 hover:border-primary/40 hover:shadow-md hover:shadow-primary/10",
+                        // Focus ring for keyboard accessibility
+                        "focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2",
+                        // Active press feedback
+                        "active:scale-[0.995] active:bg-primary/15"
+                    ]
                 )}
+                tabIndex={isInteractive && !isRevealed ? 0 : undefined}
+                role={isInteractive ? "button" : undefined}
+                aria-pressed={isInteractive ? isRevealed : undefined}
+                onKeyDown={(e) => {
+                    if (isInteractive && onToggle && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault();
+                        onToggle();
+                    }
+                }}
             >
-                {shouldShowContent ? (
-                    <div ref={containerRef} className="w-full text-center" />
+                {/* Hidden: mystery placeholder | Revealed: actual KaTeX formula */}
+                {showContent ? (
+                    <div 
+                        className="w-full text-center"
+                        dangerouslySetInnerHTML={{ __html: renderedHtml }}
+                    />
                 ) : (
-                    <div className="flex flex-col items-center gap-2 text-base-content/50 select-none">
-                        <span className="text-xs font-medium uppercase tracking-widest opacity-70">
-                            Math Formula
-                        </span>
-                        <span className="text-[11px] opacity-60">
-                            Click to Reveal
-                        </span>
+                    <div className="flex items-center justify-center gap-3 text-base-content/50 font-mono select-none">
+                        <span className="text-2xl opacity-30 group-hover:opacity-70 group-hover:text-primary transition-all duration-200">∫</span>
+                        <span className="text-sm uppercase tracking-wider group-hover:text-primary font-medium transition-all duration-200">Click to Reveal</span>
+                        <span className="text-2xl opacity-30 group-hover:opacity-70 group-hover:text-primary transition-all duration-200">Σ</span>
                     </div>
                 )}
             </div>

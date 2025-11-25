@@ -7,6 +7,7 @@ import { useEffect } from 'react';
 export const SessionSummary = () => {
     const sessionStats = useAppStore((state) => state.sessionStats);
     const setViewMode = useAppStore((state) => state.setViewMode);
+    const setQueue = useAppStore((state) => state.setQueue);
 
     // Trigger big confetti on mount
     useEffect(() => {
@@ -109,7 +110,11 @@ export const SessionSummary = () => {
 
                 <button
                     className="btn btn-primary btn-lg w-full rounded-full shadow-lg hover:shadow-xl transition-all gap-3"
-                    onClick={() => setViewMode('library')}
+                    onClick={() => {
+                        // Clear the queue to reset session state, so ActionCenter shows fresh start options
+                        setQueue([]);
+                        setViewMode('library');
+                    }}
                 >
                     <Home size={20} />
                     Back to Library

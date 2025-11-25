@@ -16,54 +16,45 @@ import { Card } from 'ts-fsrs';
 const DashboardLazy = lazy(() => import('./Dashboard').then((m) => ({ default: m.Dashboard })));
 
 export const LibraryView = () => {
-  const {
-    rootPath,
-    files,
-    fileMetadatas,
-    setRootPath,
-    setFiles,
-    loadNote,
-    loadSettings,
-    loadVaults,
-    recentVaults,
-    removeRecentVault,
-    syncMode,
-    lastSyncAt,
-    currentUser,
-    signOut,
-    vaults,
-    updateLastSync,
-    loadAllMetadata,
-    fetchDueCards,
-    manualSyncPendingNotes,
-    createVault,
-    loadReviewHistory,
-  } = useAppStore(
-    useShallow((state) => ({
-      rootPath: state.rootPath,
-      files: state.files,
-      fileMetadatas: state.fileMetadatas,
-      setRootPath: state.setRootPath,
-      setFiles: state.setFiles,
-      loadNote: state.loadNote,
-      loadSettings: state.loadSettings,
-      loadVaults: state.loadVaults,
-      recentVaults: state.recentVaults,
-      removeRecentVault: state.removeRecentVault,
-      syncMode: state.syncMode,
-      lastSyncAt: state.lastSyncAt,
-      currentUser: state.currentUser,
-      signOut: state.signOut,
-      vaults: state.vaults,
-      updateLastSync: state.updateLastSync,
-      loadAllMetadata: state.loadAllMetadata,
-      fetchDueCards: state.fetchDueCards,
-      manualSyncPendingNotes: state.manualSyncPendingNotes,
-      createVault: state.createVault,
-      loadReviewHistory: state.loadReviewHistory,
-    })),
+  // ============================================================
+  // ZUSTAND SELECTORS - Optimized based on Zustand best practices
+  // ============================================================
+  
+  // 1. ACTIONS - Single selectors (stable references, never cause re-renders)
+  // Actions in Zustand are stable by design, no need for useShallow
+  const setRootPath = useAppStore((s) => s.setRootPath);
+  const setFiles = useAppStore((s) => s.setFiles);
+  const loadNote = useAppStore((s) => s.loadNote);
+  const loadSettings = useAppStore((s) => s.loadSettings);
+  const loadVaults = useAppStore((s) => s.loadVaults);
+  const removeRecentVault = useAppStore((s) => s.removeRecentVault);
+  const signOut = useAppStore((s) => s.signOut);
+  const updateLastSync = useAppStore((s) => s.updateLastSync);
+  const loadAllMetadata = useAppStore((s) => s.loadAllMetadata);
+  const fetchDueCards = useAppStore((s) => s.fetchDueCards);
+  const manualSyncPendingNotes = useAppStore((s) => s.manualSyncPendingNotes);
+  const createVault = useAppStore((s) => s.createVault);
+  const loadReviewHistory = useAppStore((s) => s.loadReviewHistory);
+  const dataService = useAppStore((s) => s.dataService);
+
+  // 2. LOW-FREQUENCY DATA - Grouped with useShallow
+  // These change infrequently (user actions like switching vaults, login/logout)
+  const { rootPath, files, recentVaults, syncMode, currentUser, vaults } = useAppStore(
+    useShallow((s) => ({
+      rootPath: s.rootPath,
+      files: s.files,
+      recentVaults: s.recentVaults,
+      syncMode: s.syncMode,
+      currentUser: s.currentUser,
+      vaults: s.vaults,
+    }))
   );
-  const dataService = useAppStore((state) => state.dataService);
+
+  // 3. HIGH-FREQUENCY DATA - Individual selectors
+  // fileMetadatas changes on every review - isolate to prevent cascading re-renders
+  // Zustand returns the same reference if content unchanged, so this is safe
+  const fileMetadatas = useAppStore((s) => s.fileMetadatas);
+  const lastSyncAt = useAppStore((s) => s.lastSyncAt);
   const addToast = useToastStore((state) => state.addToast);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -77,7 +68,7 @@ export const LibraryView = () => {
 
   useEffect(() => {
     loadSettings();
-  }, []);
+  }, [loadSettings]); // loadSettings is a stable reference from Zustand
 
   useEffect(() => {
     if (rootPath && rootPath !== 'DEMO_VAULT') {
@@ -238,57 +229,62 @@ export const LibraryView = () => {
     }
   };
 
-  const grouped = filteredFiles.reduce((acc, file) => {
-    const meta = fileMetadatas[file];
-    if (!meta || !meta.cards) {
-        acc.new.push(file); // Treat untracked as new
-        return acc;
-    }
+  // PERFORMANCE: Memoize grouped calculation to prevent recalculation on every render
+  // This is critical for 200+ files - O(N*M) date operations where N=files, M=cards per file
+  const grouped = useMemo(() => {
+    return filteredFiles.reduce((acc, file) => {
+      const meta = fileMetadatas[file];
+      if (!meta || !meta.cards) {
+          acc.new.push(file); // Treat untracked as new
+          return acc;
+      }
 
-    const cards = Object.values(meta.cards);
-    if (cards.length === 0) {
-         acc.new.push(file);
-         return acc;
-    }
+      const cards = Object.values(meta.cards);
+      if (cards.length === 0) {
+           acc.new.push(file);
+           return acc;
+      }
 
-    let hasOverdue = false;
-    let hasToday = false;
-    let hasNew = false;
+      let hasOverdue = false;
+      let hasToday = false;
+      let hasNew = false;
 
-    cards.forEach(card => {
-        if (!card.due) {
-            if ((card as any).reps === 0) hasNew = true;
-            return;
-        }
+      for (const card of cards) {
+          if (!card.due) {
+              if ((card as any).reps === 0) hasNew = true;
+              continue;
+          }
 
-        const due = new Date(card.due as any);
-        if (isNaN(due.getTime())) {
-            if ((card as any).reps === 0) hasNew = true;
-            return;
-        }
+          const due = new Date(card.due as any);
+          if (isNaN(due.getTime())) {
+              if ((card as any).reps === 0) hasNew = true;
+              continue;
+          }
 
-        const isNewCard = (card as any).reps === 0;
+          const isNewCard = (card as any).reps === 0;
 
-        if (isNewCard) {
-            if (isToday(due)) {
-                hasToday = true;
-            } else {
-                hasNew = true;
-            }
-        } else if (isPast(due) && !isToday(due)) {
-            hasOverdue = true;
-        } else if (isToday(due)) {
-            hasToday = true;
-        }
-    });
+          if (isNewCard) {
+              if (isToday(due)) {
+                  hasToday = true;
+              } else {
+                  hasNew = true;
+              }
+          } else if (isPast(due) && !isToday(due)) {
+              hasOverdue = true;
+              break; // Overdue is highest priority, no need to check more cards
+          } else if (isToday(due)) {
+              hasToday = true;
+          }
+      }
 
-    if (hasOverdue) acc.overdue.push(file);
-    else if (hasToday) acc.today.push(file);
-    else if (hasNew) acc.new.push(file);
-    else acc.future.push(file);
-    
-    return acc;
-  }, { overdue: [] as string[], today: [] as string[], new: [] as string[], future: [] as string[] });
+      if (hasOverdue) acc.overdue.push(file);
+      else if (hasToday) acc.today.push(file);
+      else if (hasNew) acc.new.push(file);
+      else acc.future.push(file);
+      
+      return acc;
+    }, { overdue: [] as string[], today: [] as string[], new: [] as string[], future: [] as string[] });
+  }, [filteredFiles, fileMetadatas]);
 
   const handleClearHistory = () => {
     setSearchHistoryByVault((prev: Record<string, string[]>) => {
@@ -395,6 +391,7 @@ export const LibraryView = () => {
         onSelectHistory={handleSelectHistory}
         onSync={handleManualSync}
         isSyncing={syncing}
+        isDemo={rootPath === 'DEMO_VAULT'}
       />
 
       <div className="flex-1 overflow-y-auto relative">
@@ -547,24 +544,25 @@ export const LibraryView = () => {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -20, scale: 0.98 }}
               transition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
-              className="p-4 md:p-6 max-w-7xl mx-auto w-full absolute inset-0 overflow-y-auto"
+              className="p-4 md:p-6 max-w-7xl mx-auto w-full min-h-full"
             >
               <div className="flex items-center justify-between mb-6 px-1">
               <div className="relative flex p-1 bg-base-200/50 rounded-xl border border-base-300/50">
+                 {/* Sliding pill indicator - CSS transition instead of layoutId */}
+                 <div
+                    className="absolute top-1 bottom-1 bg-base-100 shadow-sm rounded-lg border border-base-200/50 transition-all duration-200 ease-out"
+                    style={{
+                      width: 'calc(50% - 4px)',
+                      left: dashboardTab === 'focus' ? '4px' : 'calc(50%)',
+                    }}
+                 />
                  {['focus', 'insights'].map((tab) => (
                     <button
                         key={tab}
                         onClick={() => setDashboardTab(tab as 'focus' | 'insights')}
-                        className={`relative px-4 py-1.5 text-sm font-medium transition-colors z-10 ${dashboardTab === tab ? 'text-base-content' : 'text-base-content/50 hover:text-base-content/70'}`}
+                        className={`relative px-4 py-1.5 text-sm font-medium transition-colors duration-150 z-10 ${dashboardTab === tab ? 'text-base-content' : 'text-base-content/50 hover:text-base-content/70'}`}
                     >
-                        {dashboardTab === tab && (
-                            <motion.div
-                                layoutId="dashboard-tab-pill"
-                                className="absolute inset-0 bg-base-100 shadow-sm rounded-lg border border-base-200/50"
-                                transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                            />
-                        )}
-                        <span className="relative z-10 capitalize">{tab}</span>
+                        <span className="capitalize">{tab}</span>
                     </button>
                  ))}
               </div>
@@ -705,26 +703,18 @@ export const LibraryView = () => {
   );
 };
 
+/**
+ * FileSection component optimized for performance.
+ * 
+ * Performance optimizations based on Motion best practices:
+ * - Removed whileHover/whileTap from individual items (expensive with 200+ items)
+ * - Using CSS transitions instead of Framer Motion for hover effects
+ * - Kept container AnimatePresence for open/close animation only
+ */
 const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color, collapsed = false, viewType = 'list' }: any) => {
   const [isOpen, setIsOpen] = useState(!collapsed);
   
   if (files.length === 0) return null;
-
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.03,
-        delayChildren: 0.1
-      }
-    }
-  };
-
-  const itemVariants = {
-    hidden: { opacity: 0, y: 10 },
-    visible: { opacity: 1, y: 0 }
-  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -740,28 +730,24 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
             <div className="h-px bg-base-300 flex-1 ml-2 opacity-50"></div>
         </div>
 
-        <AnimatePresence>
-            {isOpen && (
-                <motion.div
-                    initial="hidden"
-                    animate="visible"
-                    exit="hidden"
-                    variants={containerVariants}
-                    className="overflow-hidden"
-                >
-                    {viewType === 'list' ? (
-                        <div className="grid grid-cols-1 gap-1 pl-2">
-                            {files.map((file: string, idx: number) => {
-                                const meta = metadatas[file];
-                                return (
-                                    <motion.div 
-                                        key={idx}
-                                        variants={itemVariants}
-                                        onClick={() => loadNote(file)}
-                                        whileHover={{ scale: 1.01, x: 4 }}
-                                        whileTap={{ scale: 0.98 }}
-                                        className="group flex items-center gap-4 p-3 rounded-lg bg-base-100/40 hover:bg-base-100 cursor-pointer border border-base-content/5 hover:border-primary/20 transition-colors backdrop-blur-sm"
-                                    >
+        {/* Using CSS transitions instead of AnimatePresence for better performance with 200+ items */}
+        <div 
+            className={`overflow-hidden transition-all duration-200 ease-out
+                ${isOpen ? 'max-h-[9999px] opacity-100' : 'max-h-0 opacity-0'}`}
+        >
+            {viewType === 'list' ? (
+                <div className="grid grid-cols-1 gap-1 pl-2">
+                    {files.map((file: string, idx: number) => {
+                        const meta = metadatas[file];
+                        return (
+                            <div 
+                                key={idx}
+                                onClick={() => loadNote(file)}
+                                className="group flex items-center gap-4 p-3 rounded-lg bg-base-100/40 cursor-pointer border border-base-content/5 backdrop-blur-sm
+                                    transition-all duration-150 ease-out
+                                    hover:bg-base-100 hover:border-primary/20 hover:translate-x-1 hover:scale-[1.005]
+                                    active:scale-[0.98] active:bg-base-200/80"
+                            >
                                         <div className={`w-8 h-8 rounded flex items-center justify-center bg-base-200/50 text-base-content/50 group-hover:text-${color === 'neutral' ? 'primary' : color}`}>
                                             <FileText size={16} />
                                         </div>
@@ -770,46 +756,46 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
                                                 {file.replace(rootPath || '', '').replace(/^\//, '')}
                                             </div>
                                         </div>
-                                        {(() => {
-                                            if (!meta?.cards) return null;
-                                            const cards = Object.values(meta.cards) as Card[];
-                                            if (cards.length === 0) return null;
+                                {(() => {
+                                    if (!meta?.cards) return null;
+                                    const cards = Object.values(meta.cards) as Card[];
+                                    if (cards.length === 0) return null;
 
-                                            const scheduled = cards.filter((c) => c.reps > 0 && c.due);
-                                            if (scheduled.length === 0) return null;
+                                    const scheduled = cards.filter((c) => c.reps > 0 && c.due);
+                                    if (scheduled.length === 0) return null;
 
-                                            const earliest = scheduled.reduce((prev, curr) => {
-                                                return new Date(prev.due) < new Date(curr.due) ? prev : curr;
-                                            });
+                                    const earliest = scheduled.reduce((prev, curr) => {
+                                        return new Date(prev.due) < new Date(curr.due) ? prev : curr;
+                                    });
 
-                                            const earliestDate = new Date(earliest.due);
-                                            if (!earliestDate || isNaN(earliestDate.getTime())) return null;
+                                    const earliestDate = new Date(earliest.due);
+                                    if (!earliestDate || isNaN(earliestDate.getTime())) return null;
 
-                                            return (
-                                                <div className="text-xs font-mono opacity-50 bg-base-200 px-2 py-1 rounded flex gap-2 items-center">
-                                                    <span>{cards.length} cards</span>
-                                                    <span>•</span>
-                                                    <span>{formatDistanceToNow(earliestDate, { addSuffix: true })}</span>
-                                                </div>
-                                            );
-                                        })()}
-                                    </motion.div>
-                                );
-                            })}
-                        </div>
-                    ) : (
-                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 pb-4">
-                            {files.map((file: string, idx: number) => {
-                            const meta = metadatas[file];
-                            return (
-                                <motion.div
-                                key={idx}
-                                variants={itemVariants}
-                                onClick={() => loadNote(file)}
-                                whileHover={{ scale: 1.03, y: -4 }}
-                                whileTap={{ scale: 0.95 }}
-                                className="card bg-base-100/60 hover:bg-base-100 transition-colors cursor-pointer p-4 flex flex-col gap-3 h-36 justify-between shadow-sm hover:shadow-md border border-base-200 hover:border-primary/20 backdrop-blur-sm"
-                                >
+                                    return (
+                                        <div className="text-xs font-mono opacity-50 bg-base-200 px-2 py-1 rounded flex gap-2 items-center">
+                                            <span>{cards.length} cards</span>
+                                            <span>•</span>
+                                            <span>{formatDistanceToNow(earliestDate, { addSuffix: true })}</span>
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                        );
+                    })}
+                </div>
+            ) : (
+                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 pb-4">
+                    {files.map((file: string, idx: number) => {
+                    const meta = metadatas[file];
+                    return (
+                        <div
+                        key={idx}
+                        onClick={() => loadNote(file)}
+                        className="card bg-base-100/60 cursor-pointer p-4 flex flex-col gap-3 h-36 justify-between shadow-sm border border-base-200 backdrop-blur-sm
+                            transition-all duration-150 ease-out
+                            hover:bg-base-100 hover:shadow-md hover:border-primary/20 hover:scale-[1.02] hover:-translate-y-1
+                            active:scale-[0.97]"
+                        >
                                 <div className="flex justify-between items-start">
                                     <div className={`p-2 rounded-lg bg-${color === 'neutral' ? 'base-200' : color + '/10'} text-${color === 'neutral' ? 'base-content' : color}`}>
                                         <FileText size={20} />
@@ -838,16 +824,14 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
                                     })()}
                                 </div>
                                 <span className="font-bold text-sm line-clamp-2 leading-snug" title={file}>
-                                    {file.replace(rootPath || '', '').replace(/^\//, '')}
-                                </span>
-                                </motion.div>
-                            );
-                            })}
+                            {file.replace(rootPath || '', '').replace(/^\//, '')}
+                        </span>
                         </div>
-                    )}
-                </motion.div>
+                    );
+                    })}
+                </div>
             )}
-        </AnimatePresence>
+        </div>
     </div>
   );
 };

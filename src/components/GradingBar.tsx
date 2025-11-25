@@ -1,6 +1,7 @@
-import { useAppStore } from '../store/appStore';
+import { useAppStore, isDemoMode } from '../store/appStore';
 import { motion } from 'framer-motion';
 import { useCallback, useEffect, useState } from 'react';
+import { FlaskConical } from 'lucide-react';
 
 interface GradeOption {
   label: string;
@@ -22,6 +23,7 @@ export const GradingBar = () => {
   const currentMetadata = useAppStore(state => state.currentMetadata);
   const isGrading = useAppStore(state => state.isGrading);
   const getSchedulingPreview = useAppStore(state => state.getSchedulingPreview);
+  const isDemo = useAppStore(state => isDemoMode({ rootPath: state.rootPath, currentFilepath: state.currentFilepath }));
   
   // Local state to store the preview intervals
   const [previews, setPreviews] = useState<Record<number, { interval: string }>>({});
@@ -67,6 +69,14 @@ export const GradingBar = () => {
         animate={{ y: 0, opacity: 1, scale: 1 }}
         className="pointer-events-auto"
       >
+        {/* Demo Mode Hint */}
+        {isDemo && (
+          <div className="flex items-center justify-center gap-1.5 mb-2 text-xs text-warning">
+            <FlaskConical size={12} />
+            <span>Demo Mode - Progress won't be saved</span>
+          </div>
+        )}
+        
         {/* Glassmorphism Capsule */}
         <div className="flex items-center p-1.5 gap-1 bg-base-100/90 backdrop-blur-md border border-base-200 shadow-2xl rounded-full">
             {gradeOptions.map((opt) => {

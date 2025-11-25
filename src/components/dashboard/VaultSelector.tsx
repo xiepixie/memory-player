@@ -1,18 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Layers, Plus, Link2, Check, ChevronDown, Box, FolderGit2, AlertCircle, X } from 'lucide-react';
 import { useAppStore } from '../../store/appStore';
 import { useToastStore } from '../../store/toastStore';
-import { motion, AnimatePresence } from 'framer-motion';
 
 export const VaultSelector = () => {
-  const { vaults, currentVault, setCurrentVault, rootPath, loadVaults } = useAppStore(
+  const { vaults, currentVault, setCurrentVault, rootPath } = useAppStore(
     useShallow((state) => ({
       vaults: state.vaults,
       currentVault: state.currentVault,
       setCurrentVault: state.setCurrentVault,
       rootPath: state.rootPath,
-      loadVaults: state.loadVaults,
     })),
   );
   const createVault = useAppStore((state) => state.createVault);
@@ -23,8 +21,10 @@ export const VaultSelector = () => {
   const [isCreating, setIsCreating] = useState(false);
   const [newVaultName, setNewVaultName] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -43,11 +43,58 @@ export const VaultSelector = () => {
     }
   }, [isCreating]);
 
-  const handleSelect = (id: string) => {
+  // Reset focus when dropdown closes
+  useEffect(() => {
+    if (!isOpen) {
+      setFocusedIndex(-1);
+      setIsCreating(false);
+    }
+  }, [isOpen]);
+
+  const handleSelect = useCallback((id: string) => {
     const next = vaults.find((v) => v.id === id) || null;
     setCurrentVault(next);
     setIsOpen(false);
-  };
+    // Return focus to trigger button for accessibility
+    requestAnimationFrame(() => buttonRef.current?.focus());
+  }, [vaults, setCurrentVault]);
+
+  // Keyboard navigation for accessibility
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (!isOpen) {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        setIsOpen(true);
+        setFocusedIndex(0);
+      }
+      return;
+    }
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setFocusedIndex(prev => Math.min(prev + 1, vaults.length - 1));
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setFocusedIndex(prev => Math.max(prev - 1, 0));
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (focusedIndex >= 0 && focusedIndex < vaults.length) {
+          handleSelect(vaults[focusedIndex].id);
+        }
+        break;
+      case 'Escape':
+        e.preventDefault();
+        setIsOpen(false);
+        buttonRef.current?.focus();
+        break;
+      case 'Tab':
+        setIsOpen(false);
+        break;
+    }
+  }, [isOpen, focusedIndex, vaults, handleSelect]);
 
   const handleCreate = async () => {
     if (!newVaultName.trim()) return;
@@ -89,10 +136,14 @@ export const VaultSelector = () => {
   const hasRootPath = !!rootPath && rootPath !== 'DEMO_VAULT';
 
   return (
-    <div className="relative z-50" ref={dropdownRef}>
+    <div className="relative z-50" ref={dropdownRef} onKeyDown={handleKeyDown}>
       <button
+        ref={buttonRef}
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all border ${
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-label={currentVault ? `Current vault: ${currentVault.name}` : 'Select a vault'}
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-150 border ${
           isOpen
             ? 'bg-base-100 border-primary/30 shadow-sm ring-1 ring-primary/10'
             : 'bg-base-200/50 border-transparent hover:bg-base-200 hover:border-base-300'
@@ -131,42 +182,48 @@ export const VaultSelector = () => {
         />
       </button>
 
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: 4, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 4, scale: 0.98 }}
-            transition={{ duration: 0.1 }}
-            className="absolute top-full left-0 mt-2 w-64 bg-base-100 rounded-xl shadow-xl border border-base-200 overflow-hidden flex flex-col"
-          >
+      {/* Dropdown - CSS transitions instead of Framer Motion */}
+      <div
+        role="listbox"
+        aria-label="Vault list"
+        className={`absolute top-full left-0 mt-2 w-64 bg-base-100 rounded-xl shadow-xl border border-base-200 overflow-hidden flex flex-col
+          transition-all duration-150 origin-top
+          ${isOpen ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto' : 'opacity-0 scale-[0.98] -translate-y-1 pointer-events-none'}
+        `}
+      >
             <div className="px-3 py-2 bg-base-200/30 border-b border-base-200 text-[10px] font-bold uppercase tracking-wider text-base-content/40 flex justify-between items-center">
               <span>Your Vaults</span>
               <span className="bg-base-200 px-1.5 py-0.5 rounded text-base-content/60">{vaults.length}</span>
             </div>
             <div className="max-h-60 overflow-y-auto py-1">
-              {vaults.map((v) => {
+              {vaults.map((v, index) => {
                 const isActive = currentVault?.id === v.id;
+                const isFocused = focusedIndex === index;
                 return (
                   <button
                     key={v.id}
+                    role="option"
+                    aria-selected={isActive}
                     onClick={() => handleSelect(v.id)}
-                    className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-base-200/50 transition-colors ${
-                      isActive ? 'bg-primary/5 text-primary font-bold' : 'text-base-content/80'
-                    }`}
+                    onMouseEnter={() => setFocusedIndex(index)}
+                    className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors duration-100 ${
+                      isActive ? 'bg-primary/10 text-primary font-bold' : 'text-base-content/80'
+                    } ${isFocused && !isActive ? 'bg-base-200/70' : ''}
+                    hover:bg-base-200/50`}
                   >
                     <div className="flex items-center gap-3 truncate">
-                      <Box size={14} className={isActive ? 'fill-primary/20' : 'opacity-50'} />
+                      <Box size={14} className={isActive ? 'fill-primary/20 text-primary' : 'opacity-50'} />
                       <span className="truncate">{v.name}</span>
                     </div>
-                    {isActive && <Check size={14} />}
+                    {isActive && <Check size={14} className="shrink-0" />}
                   </button>
                 );
               })}
               {vaults.length === 0 && (
                 <div className="px-4 py-6 text-center text-base-content/40 text-xs flex flex-col items-center gap-2">
                   <Layers size={24} className="opacity-20" />
-                  No vaults yet. Create one to start syncing.
+                  <span>No vaults yet.</span>
+                  <span className="text-[10px]">Create one to start syncing your notes.</span>
                 </div>
               )}
             </div>
@@ -209,20 +266,21 @@ export const VaultSelector = () => {
                 </button>
               )}
               {hasRootPath && currentVault && !isRootLinked && !isCreating && (
-                <motion.button
-                  layout
+                <button
                   onClick={handleLinkRoot}
                   disabled={isBusy}
-                  className="btn btn-xs btn-warning btn-outline w-full justify-start gap-2 bg-warning/5"
+                  className="btn btn-xs btn-warning btn-outline w-full justify-start gap-2 bg-warning/5 transition-all duration-150"
                 >
-                  <Link2 size={14} />
+                  {isBusy ? (
+                    <span className="loading loading-spinner loading-xs" />
+                  ) : (
+                    <Link2 size={14} />
+                  )}
                   Link "{rootPath!.split(/[\\/]/).pop()}" Here
-                </motion.button>
+                </button>
               )}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
     </div>
   );
 }

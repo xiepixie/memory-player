@@ -51,17 +51,49 @@ export const NoteRenderer = () => {
             skipCurrentCard: state.skipCurrentCard,
         })),
     );
+    const currentClozeIndex = useAppStore((state) => state.currentClozeIndex);
+    const sessionStats = useAppStore((state) => state.sessionStats);
     const [immersive, setImmersive] = useState(false);
     const [isPeeking, setIsPeeking] = useState(false);
     const [stickyOpen, setStickyOpen] = useState(false);
+    const [isHydrating, setIsHydrating] = useState(false);
     const addToast = useToastStore((state) => state.addToast);
+
+    // Check for stale session - redirect to library to show Resume/Discard UI
+    // This effect needs to run when session state is restored by persist middleware
+    const STALE_SESSION_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 hours
+    const [staleCheckDone, setStaleCheckDone] = useState(false);
+    useEffect(() => {
+        // Only check once after session state is available
+        if (staleCheckDone) return;
+        if (queue.length === 0 && sessionStats.timeStarted === 0) return; // Wait for persist to restore
+        
+        setStaleCheckDone(true);
+        
+        const hasUnfinishedSession = queue.length > 0 && sessionIndex < queue.length;
+        const sessionAge = sessionStats.timeStarted ? Date.now() - sessionStats.timeStarted : Infinity;
+        const isSessionStale = hasUnfinishedSession && sessionAge > STALE_SESSION_THRESHOLD_MS;
+        
+        // If session is stale and we're in study mode, redirect to library for Resume/Discard decision
+        if (isSessionStale && (viewMode === 'test' || viewMode === 'master')) {
+            setViewMode('library');
+            addToast('Your session was paused. Resume or discard it from the dashboard.', 'info');
+        }
+    }, [queue.length, sessionStats.timeStarted, sessionIndex, viewMode, staleCheckDone, setViewMode, addToast]);
 
     // Restore note content if we have a filepath but no parsed note yet (e.g. after app restart)
     useEffect(() => {
         if (currentFilepath && !currentNote && viewMode !== 'library') {
-            loadNote(currentFilepath);
+            setIsHydrating(true);
+            // Restore with session context (clozeIndex) if available
+            const targetCloze = queue.length > 0 && sessionIndex < queue.length 
+                ? queue[sessionIndex]?.clozeIndex 
+                : currentClozeIndex;
+            loadNote(currentFilepath, targetCloze).finally(() => {
+                setIsHydrating(false);
+            });
         }
-    }, [currentFilepath, currentNote, loadNote]);
+    }, [currentFilepath, currentNote, loadNote, viewMode, queue, sessionIndex, currentClozeIndex]);
 
 
     const isStudyMode = viewMode === 'test' || viewMode === 'master';
@@ -108,6 +140,23 @@ export const NoteRenderer = () => {
 
     if (viewMode === 'summary') {
         return <SessionSummary />;
+    }
+
+    // Show loading state during hydration (cold start after page refresh)
+    if (isHydrating || (currentFilepath && !currentNote)) {
+        return (
+            <div className="h-full w-full flex flex-col items-center justify-center bg-base-100">
+                <div className="flex flex-col items-center gap-4">
+                    <div className="loading loading-spinner loading-lg text-primary" />
+                    <div className="text-sm text-base-content/60">Restoring your session...</div>
+                    {hasSessionInProgress && (
+                        <div className="text-xs text-base-content/40 font-mono">
+                            Card {sessionIndex + 1} of {sessionTotal}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
     }
 
     const progressPercentage = hasSessionInProgress
@@ -201,42 +250,57 @@ export const NoteRenderer = () => {
 
                 {/* Central Controls */}
                 <div className="flex-1 flex justify-center">
-                    <div className="flex items-center bg-base-200/50 p-1 rounded-full border border-base-content/5 isolate">
-                        {[
+                    {/* Mode Toggle - only show when not in session-paused state */}
+                    {!(hasSessionInProgress && !isStudyMode) && (() => {
+                        const modes = [
                             { id: 'edit', label: 'Write', icon: PenTool, color: 'text-primary' },
                             { id: 'test', label: 'Cloze', icon: Brain, color: 'text-secondary' },
                             { id: 'master', label: 'Blur', icon: Eye, color: 'text-info' },
-                        ]
-                        .filter(m => !hasSessionInProgress || (isStudyMode && m.id !== 'edit'))
-                        .map((mode) => {
-                            const isActive = viewMode === mode.id;
-                            return (
-                                <button
-                                    key={mode.id}
-                                    onClick={() => setViewMode(mode.id as any)}
-                                    className={`relative btn btn-sm rounded-full px-4 border-none transition-all duration-200 ${
-                                        isActive 
-                                            ? `${mode.color} bg-base-100 shadow-sm` 
-                                            : 'bg-transparent text-base-content/60 hover:text-base-content hover:bg-base-100/50'
-                                    }`}
-                                >
-                                    <mode.icon size={14} className="mr-2" />
-                                    {mode.label}
-                                </button>
-                            );
-                        })}
+                        ].filter(m => !hasSessionInProgress || (isStudyMode && m.id !== 'edit'));
                         
-                        {/* Resume Button for Session Paused State */}
-                        {hasSessionInProgress && !isStudyMode && (
-                             <button
-                                className="btn btn-sm btn-secondary gap-2 rounded-full shadow-sm ml-2"
-                                onClick={() => setViewMode('test')}
-                            >
-                                <Brain size={14} />
-                                Resume Study
-                            </button>
-                        )}
-                    </div>
+                        const activeIndex = modes.findIndex(m => m.id === viewMode);
+                        
+                        return (
+                            <div className="relative flex items-center bg-base-200/40 p-1 rounded-full border border-base-content/5">
+                                {/* Sliding Background Indicator */}
+                                <div
+                                    className="absolute top-1 bottom-1 bg-base-100 shadow-sm rounded-full border border-base-200/50 transition-all duration-200 ease-out"
+                                    style={{
+                                        width: `calc(${100 / modes.length}% - 4px)`,
+                                        left: activeIndex >= 0 ? `calc(${(activeIndex / modes.length) * 100}% + 2px)` : '2px',
+                                    }}
+                                />
+                                {modes.map((mode) => {
+                                    const isActive = viewMode === mode.id;
+                                    return (
+                                        <button
+                                            key={mode.id}
+                                            onClick={() => setViewMode(mode.id as any)}
+                                            className={`relative z-10 btn btn-sm rounded-full px-4 border-none bg-transparent transition-colors duration-150 ${
+                                                isActive 
+                                                    ? mode.color
+                                                    : 'text-base-content/60 hover:text-base-content'
+                                            }`}
+                                        >
+                                            <mode.icon size={14} className="mr-2" />
+                                            {mode.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })()}
+                    
+                    {/* Resume Button - standalone when session is paused */}
+                    {hasSessionInProgress && !isStudyMode && (
+                        <button
+                            className="btn btn-sm btn-secondary gap-2 rounded-full shadow-md"
+                            onClick={() => setViewMode('test')}
+                        >
+                            <Brain size={14} />
+                            Resume Study
+                        </button>
+                    )}
                 </div>
 
                 {/* Right Side Actions */}
@@ -335,7 +399,7 @@ export const NoteRenderer = () => {
                         </div>
                     </div>
 
-                    {/* Layer 2: Review (Cloze/Blur) */}
+                    {/* Layer 2: Review (Cloze/Blur) - Both stay mounted for instant switching */}
                     <div
                         id="note-scroll-container"
                         className={`absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden bg-base-100 transition-all duration-300 ease-out ${
@@ -347,22 +411,34 @@ export const NoteRenderer = () => {
                          <div className={`min-h-full mx-auto transition-all duration-300 ${
                             immersive ? 'max-w-5xl' : 'max-w-3xl'
                         }`}>
-                            {/* Blur Mode content with CSS blur */}
-                            {(viewMode === 'test' || viewMode === 'master' || (hasSessionInProgress && viewMode !== 'edit')) && (
-                                <div
-                                    className={`transition-[filter] duration-200 ${
-                                        viewMode === 'master' && !isPeeking ? 'blur-[5px]' : 'blur-0'
-                                    }`}
-                                >
-                                    <Suspense fallback={null}>
-                                        {viewMode === 'master' ? (
-                                            <BlurModeLazy immersive={immersive} />
-                                        ) : (
-                                            <ClozeModeLazy immersive={immersive} />
-                                        )}
-                                    </Suspense>
-                                </div>
-                            )}
+                            {/* Cloze Mode Layer - stays mounted when in review modes */}
+                            {/* aria-hidden on inactive layer prevents TOC from collecting duplicate headings */}
+                            <div
+                                className={`transition-all duration-200 ease-out ${
+                                    viewMode === 'test' 
+                                        ? 'opacity-100 pointer-events-auto' 
+                                        : 'opacity-0 pointer-events-none absolute inset-0'
+                                }`}
+                                aria-hidden={viewMode !== 'test'}
+                            >
+                                <Suspense fallback={null}>
+                                    <ClozeModeLazy immersive={immersive} />
+                                </Suspense>
+                            </div>
+                            
+                            {/* Blur Mode Layer - stays mounted when in review modes */}
+                            <div
+                                className={`transition-all duration-200 ease-out ${
+                                    viewMode === 'master' 
+                                        ? 'opacity-100 pointer-events-auto' 
+                                        : 'opacity-0 pointer-events-none absolute inset-0'
+                                } ${viewMode === 'master' && !isPeeking ? 'blur-[5px]' : 'blur-0'}`}
+                                aria-hidden={viewMode !== 'master'}
+                            >
+                                <Suspense fallback={null}>
+                                    <BlurModeLazy immersive={immersive} />
+                                </Suspense>
+                            </div>
                         </div>
                     </div>
                 </div>

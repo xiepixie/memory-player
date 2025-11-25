@@ -1,7 +1,8 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Brain, FolderOpen, Search, X, Clock, Cloud, 
-  LayoutGrid, List, FolderTree, LogOut, ChevronDown, RefreshCw
+  LayoutGrid, List, FolderTree, LogOut, ChevronDown, RefreshCw,
+  CloudOff, CheckCircle, Folder, FlaskConical
 } from 'lucide-react';
 import { VaultSelector } from './dashboard/VaultSelector';
 import { ThemeController } from './shared/ThemeController';
@@ -27,6 +28,7 @@ interface Props {
   onSelectHistory: (q: string) => void;
   onSync?: () => void;
   isSyncing?: boolean;
+  isDemo?: boolean;
 }
 
 export const LibraryHeader = ({
@@ -47,7 +49,8 @@ export const LibraryHeader = ({
   onClearHistory,
   onSelectHistory,
   onSync,
-  isSyncing = false
+  isSyncing = false,
+  isDemo = false
 }: Props) => {
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
@@ -149,12 +152,19 @@ export const LibraryHeader = ({
     }
   };
 
-  const syncLabel = syncMode === 'supabase' ? 'Cloud (Supabase)' : 'Local-only';
-  const lastSyncText = syncMode === 'supabase' 
-    ? lastSyncAt 
-      ? `Last cloud sync ${formatDistanceToNow(lastSyncAt, { addSuffix: true })}`
-      : 'No cloud sync yet'
-    : 'Cloud sync disabled';
+  // Demo mode overrides sync label
+  const syncLabel = isDemo 
+    ? 'Demo Mode' 
+    : syncMode === 'supabase' 
+      ? 'Cloud (Supabase)' 
+      : 'Local-only';
+  const lastSyncText = isDemo
+    ? 'Data will not be saved'
+    : syncMode === 'supabase' 
+      ? lastSyncAt 
+        ? `Last cloud sync ${formatDistanceToNow(lastSyncAt, { addSuffix: true })}`
+        : 'No cloud sync yet'
+      : 'Cloud sync disabled';
 
   return (
     <motion.div 
@@ -195,7 +205,19 @@ export const LibraryHeader = ({
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.1 }}
             >
-              <VaultSelector />
+              {/* Show VaultSelector only in cloud mode, otherwise show folder name */}
+              {syncMode === 'supabase' ? (
+                <VaultSelector />
+              ) : (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-base-200/50 rounded-lg border border-transparent">
+                  <div className="p-1 rounded-md bg-base-300 text-base-content/50">
+                    <Folder size={14} />
+                  </div>
+                  <span className="text-xs font-bold leading-none max-w-[120px] truncate text-base-content/80" title={rootPath}>
+                    {rootPath === 'DEMO_VAULT' ? 'Demo Vault' : rootPath.split(/[\\/]/).pop()}
+                  </span>
+                </div>
+              )}
               <motion.button
                 whileHover={{ scale: 1.05, backgroundColor: "var(--fallback-b2,oklch(var(--b2)/0.5))" }}
                 whileTap={{ scale: 0.95 }}
@@ -218,27 +240,26 @@ export const LibraryHeader = ({
       {/* CENTER: Search */}
       {rootPath && (
         <motion.div 
-          className="flex-1 max-w-xl mx-auto group relative z-20"
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.1 }}
+          className="flex-1 max-w-xl mx-auto relative z-20"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.1, duration: 0.2 }}
         >
-          <motion.div 
-            layoutId="search-container"
-            className={`relative rounded-xl transition-all duration-300 ${isSearchFocused ? 'shadow-lg ring-2 ring-primary/20' : ''}`}
-          >
-              <div className={`absolute inset-0 bg-primary/5 rounded-xl blur-lg transition-opacity duration-300 ${isSearchFocused ? 'opacity-100' : 'opacity-0'}`} />
-              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors z-10 ${isSearchFocused ? 'text-primary' : 'text-base-content/40'}`} />
+          <div className="relative">
+              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors duration-150 z-10 pointer-events-none ${isSearchFocused ? 'text-primary' : 'text-base-content/40'}`} />
               <input
                 ref={searchInputRef}
                 type="text"
                 placeholder="Search notes..."
                 id="library-note-search"
                 name="libraryNoteSearch"
-                className={`input input-sm h-10 w-full pl-10 pr-8 bg-base-200/50 focus:bg-base-100 border-transparent focus:border-primary/20 rounded-xl transition-all shadow-sm text-sm relative z-10 placeholder:text-base-content/30`}
+                autoComplete="off"
+                className={`input input-sm h-10 w-full pl-10 pr-8 rounded-xl text-sm transition-colors duration-150
+                  bg-base-200/50 border-transparent placeholder:text-base-content/30
+                  focus:bg-base-100 focus:border-primary/30 focus:ring-2 focus:ring-primary/10`}
                 value={searchQuery}
                 onFocus={() => setIsSearchFocused(true)}
-                onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
+                onBlur={() => setTimeout(() => setIsSearchFocused(false), 150)}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
               />
@@ -246,49 +267,46 @@ export const LibraryHeader = ({
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-base-content/40 hover:text-base-content/70 transition-colors z-10"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-md text-base-content/40 hover:text-base-content hover:bg-base-300/50 transition-colors z-10"
                   aria-label="Clear search"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               )}
-          </motion.div>
-
-          {/* Search History Dropdown */}
+          </div>
 
           {/* Search History Dropdown */}
           {isSearchFocused && searchHistory.length > 0 && (
             <motion.div 
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
-              className="absolute left-0 right-0 top-full mt-2 rounded-xl shadow-xl bg-base-100 border border-base-200/80 backdrop-blur-xl overflow-hidden z-30"
+              transition={{ duration: 0.15 }}
+              className="absolute left-0 right-0 top-full mt-1.5 rounded-xl shadow-xl bg-base-100 border border-base-200 overflow-hidden z-30"
             >
-              <div className="flex items-center justify-between px-3 py-2 text-[10px] uppercase tracking-wide text-base-content/40 bg-base-200/30">
-                <span>Recent searches</span>
+              <div className="flex items-center justify-between px-3 py-2 text-[10px] uppercase tracking-wider text-base-content/40 bg-base-200/30 border-b border-base-200/50">
+                <span className="font-bold">Recent</span>
                 <button
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={onClearHistory}
-                  className="text-[10px] font-medium normal-case text-primary hover:text-primary/80 transition-colors"
+                  className="text-[10px] font-medium normal-case text-error/60 hover:text-error transition-colors"
                 >
-                  Clear history
+                  Clear
                 </button>
               </div>
-              <ul className="max-h-60 overflow-y-auto py-1">
+              <ul className="max-h-48 overflow-y-auto py-1">
                 {searchHistory.map((query, index) => (
                   <li key={`${query}-${index}`}>
                     <button
                       type="button"
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => onSelectHistory(query)}
-                      className={`flex w-full items-center justify-between px-4 py-2 text-left transition-colors text-sm group/item ${
-                        index === historyIndex ? 'bg-base-200/80 text-primary' : 'hover:bg-primary/5'
+                      className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors text-sm ${
+                        index === historyIndex ? 'bg-primary/10 text-primary' : 'hover:bg-base-200/50'
                       }`}
                     >
-                      <span className={`truncate transition-colors ${index === historyIndex ? 'text-primary font-medium' : 'group-hover/item:text-primary'}`}>
-                        {query}
-                      </span>
-                      <Clock size={12} className={`text-base-content/30 ${index === historyIndex ? 'text-primary/50' : 'group-hover/item:text-primary/50'}`} />
+                      <Clock size={12} className="text-base-content/30 shrink-0" />
+                      <span className="truncate">{query}</span>
                     </button>
                   </li>
                 ))}
@@ -334,101 +352,123 @@ export const LibraryHeader = ({
               ))}
             </div>
 
-            {/* Account Status */}
-            <div className="relative account-dropdown flex items-center gap-2">
-              {syncMode === 'supabase' && currentUser ? (
-                <>
+            {/* Account & Sync Status - Unified Design */}
+            <div className="relative account-dropdown flex items-center">
+              {/* Demo Mode Indicator - Takes priority over other states */}
+              {isDemo ? (
+                <div
+                  className="flex items-center gap-2 px-3 py-1.5 bg-warning/10 rounded-xl text-xs border border-warning/30"
+                  title="Demo Mode - Data will not be saved"
+                >
+                  <FlaskConical size={14} className="text-warning" />
+                  <span className="font-medium text-warning hidden sm:inline">Demo Mode</span>
+                </div>
+              ) : syncMode === 'supabase' && currentUser ? (
+                <div className="flex items-center gap-1 bg-base-200/30 rounded-xl p-1 border border-base-200/50">
+                  {/* Sync Button */}
                   {onSync && (
                     <button
                       onClick={onSync}
-                      className={`btn btn-circle btn-xs btn-ghost ${isSyncing ? 'animate-spin text-primary' : 'text-base-content/50 hover:text-primary'}`}
                       disabled={isSyncing}
-                      title="Sync now"
+                      className={`btn btn-sm btn-ghost gap-1.5 h-8 px-2.5 rounded-lg transition-all
+                        ${isSyncing ? 'text-primary' : 'text-base-content/60 hover:text-primary hover:bg-primary/10'}`}
+                      title={isSyncing ? 'Syncing...' : `Sync now • ${lastSyncText}`}
                     >
-                      <RefreshCw size={16} />
+                      <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+                      <span className="text-xs font-medium hidden lg:inline">
+                        {isSyncing ? 'Syncing' : 'Sync'}
+                      </span>
                     </button>
                   )}
+                  
+                  {/* Divider */}
+                  <div className="w-px h-5 bg-base-300/50" />
+                  
+                  {/* Account Button */}
                   <button
                     onClick={() => setIsAccountOpen(!isAccountOpen)}
-                    className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full hover:bg-base-200 transition-all border border-transparent hover:border-base-300 group"
+                    className={`flex items-center gap-2 px-2 py-1 rounded-lg transition-all
+                      ${isAccountOpen ? 'bg-base-300/50' : 'hover:bg-base-300/30'}`}
                   >
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary-focus text-primary-content flex items-center justify-center text-xs font-bold shadow-md ring-2 ring-base-100 group-hover:ring-primary/30 transition-all">
-                      {(currentUser.email || '?').slice(0, 1).toUpperCase()}
+                    <div className="relative">
+                      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary to-primary/70 text-primary-content flex items-center justify-center text-[11px] font-bold shadow-sm">
+                        {(currentUser.email || '?').slice(0, 1).toUpperCase()}
+                      </div>
+                      {/* Online indicator */}
+                      <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-success ring-2 ring-base-100" />
                     </div>
-                    <div className="flex flex-col items-start leading-none mr-1">
-                      <span className="text-[11px] font-bold opacity-90">My Vault</span>
-                      <span className="text-[9px] font-mono opacity-50 flex items-center gap-1">
-                        <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-                        Synced
-                      </span>
-                    </div>
-                    <ChevronDown size={14} className={`opacity-40 transition-transform duration-300 ${isAccountOpen ? 'rotate-180' : ''}`} />
+                    <ChevronDown size={12} className={`text-base-content/40 transition-transform duration-200 ${isAccountOpen ? 'rotate-180' : ''}`} />
                   </button>
 
+                  {/* Account Dropdown */}
                   <AnimatePresence>
                     {isAccountOpen && (
                       <motion.div
-                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                        initial={{ opacity: 0, y: 8, scale: 0.96 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                        transition={{ duration: 0.2 }}
-                        className="absolute right-0 top-full mt-3 w-72 bg-base-100 rounded-2xl shadow-2xl border border-base-200 overflow-hidden z-50"
+                        exit={{ opacity: 0, y: 8, scale: 0.96 }}
+                        transition={{ duration: 0.15, ease: 'easeOut' }}
+                        className="absolute right-0 top-full mt-2 w-72 bg-base-100 rounded-2xl shadow-2xl border border-base-200 overflow-hidden z-50"
                       >
-                        <div className="p-5 bg-gradient-to-br from-base-200/50 to-base-200/10 border-b border-base-200">
-                          <div className="flex items-center gap-3 mb-3">
-                            <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary to-primary-focus text-primary-content flex items-center justify-center text-lg font-bold shadow-inner">
+                        {/* User Info Header */}
+                        <div className="p-4 bg-gradient-to-br from-primary/5 to-transparent border-b border-base-200/50">
+                          <div className="flex items-center gap-3">
+                            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-primary to-primary/70 text-primary-content flex items-center justify-center text-base font-bold shadow-inner">
                               {(currentUser.email || '?').slice(0, 1).toUpperCase()}
                             </div>
-                            <div className="min-w-0">
-                                <div className="text-xs font-bold text-base-content/60 uppercase tracking-wider mb-0.5">
-                                  Signed in as
-                                </div>
-                                <div className="font-bold truncate text-sm">{currentUser.email}</div>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-bold text-sm truncate">{currentUser.email}</div>
+                              <div className="text-[10px] text-base-content/50 font-mono truncate mt-0.5">
+                                {currentUser.id.slice(0, 8)}...
+                              </div>
                             </div>
                           </div>
-                          <div className="text-[10px] opacity-50 font-mono bg-base-100/50 px-2 py-1 rounded-md truncate border border-base-200/50">
-                            ID: {currentUser.id}
+                        </div>
+
+                        {/* Sync Status Card */}
+                        <div className="p-3">
+                          <div className="bg-base-200/30 rounded-xl p-3 border border-base-200/50">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2 text-sm font-medium">
+                                <Cloud size={14} className="text-primary" />
+                                Cloud Sync
+                              </div>
+                              <div className="flex items-center gap-1.5 text-[10px] font-bold text-success bg-success/10 px-2 py-0.5 rounded-full">
+                                <CheckCircle size={10} />
+                                Active
+                              </div>
+                            </div>
+                            <div className="text-[11px] text-base-content/50">
+                              {lastSyncText}
+                            </div>
                           </div>
                         </div>
                         
-                        <div className="p-2 space-y-1">
-                          <div className="px-3 py-2.5 text-xs flex justify-between items-center bg-base-200/30 rounded-xl border border-base-200/30">
-                            <div className="flex items-center gap-2 opacity-70">
-                                <Cloud size={14} />
-                                <span>Sync Status</span>
-                            </div>
-                            <span className="text-success font-bold bg-success/10 px-2 py-0.5 rounded-full text-[10px]">
-                              Active
-                            </span>
-                          </div>
-                          <div className="px-3 py-1 text-[10px] opacity-40 text-right">{lastSyncText}</div>
-                        </div>
-                        
-                        <div className="divider my-0 opacity-50" />
-                        
-                        <div className="p-2">
+                        {/* Actions */}
+                        <div className="p-2 pt-0 space-y-1">
                           <button
                             onClick={async () => {
                               setIsAccountOpen(false);
                               await signOut();
                             }}
-                            className="btn btn-sm btn-ghost w-full text-error justify-start gap-3 hover:bg-error/10 h-10 rounded-xl"
+                            className="btn btn-sm btn-ghost w-full text-error/80 justify-start gap-2.5 hover:bg-error/10 hover:text-error h-9 rounded-lg"
                           >
-                            <LogOut size={16} />
+                            <LogOut size={14} />
                             Sign out
                           </button>
                         </div>
                       </motion.div>
                     )}
                   </AnimatePresence>
-                </>
+                </div>
               ) : (
+                /* Local-only mode indicator */
                 <div
-                  className="flex items-center gap-2 px-3 py-1.5 bg-base-200/50 rounded-full text-xs opacity-60 border border-base-300/50"
-                  title="Cloud sync disabled"
+                  className="flex items-center gap-2 px-3 py-1.5 bg-base-200/30 rounded-xl text-xs border border-base-200/50"
+                  title="Cloud sync disabled - Sign in to enable"
                 >
-                  <Cloud size={14} />
-                  <span className="hidden sm:inline font-medium">{syncLabel}</span>
+                  <CloudOff size={14} className="text-base-content/40" />
+                  <span className="font-medium text-base-content/50 hidden sm:inline">{syncLabel}</span>
                 </div>
               )}
             </div>

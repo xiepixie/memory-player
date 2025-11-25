@@ -219,38 +219,52 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
     if (elements.length === 0) {
         if (attempt >= MAX_HIGHLIGHT_RETRIES) return;
-
-        if (attempt === 0) {
-            requestAnimationFrame(() => flashPreviewCloze(id, attempt + 1));
-        } else {
-            setTimeout(() => flashPreviewCloze(id, attempt + 1), HIGHLIGHT_RETRY_DELAY);
-        }
+        // Use setTimeout for retries to avoid blocking
+        setTimeout(() => flashPreviewCloze(id, attempt + 1), HIGHLIGHT_RETRY_DELAY);
         return;
     }
 
     clearCurrentPreviewHighlight();
 
-    // Use a single RAF to batch class changes - avoid forced reflow
+    // Directly add class without nested RAFs - outline doesn't need removal first
     elements.forEach((el) => {
-        el.classList.remove('cloze-target-highlight');
-    });
-    
-    // Second RAF ensures browser has time to process removal before adding
-    requestAnimationFrame(() => {
-      elements.forEach((el) => {
-          el.classList.add('cloze-target-highlight');
-      });
+        el.classList.add('cloze-target-highlight');
     });
 
     highlightedPreviewElementsRef.current = elements;
 
     highlightTimerRef.current = setTimeout(() => {
         clearCurrentPreviewHighlight();
-    }, 2000); // Match animation duration roughly (longer is fine, class handles it)
+    }, 1800);
   };
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cursorUpdateRafRef = useRef<number | null>(null);
+
+  // Helper: Calculate actual line height from textarea computed style
+  const getLineHeight = useCallback((textarea: HTMLTextAreaElement): number => {
+    const computed = getComputedStyle(textarea);
+    const lineHeight = computed.lineHeight;
+    if (lineHeight === 'normal') {
+      // For 'normal', use fontSize * 1.2 as approximation
+      return parseFloat(computed.fontSize) * 1.2;
+    }
+    return parseFloat(lineHeight);
+  }, []);
+
+  // Helper: Scroll textarea to show target at ~20% from top (upper-middle)
+  const scrollTextareaToLine = useCallback((textarea: HTMLTextAreaElement, charPos: number) => {
+    const val = textarea.value;
+    const textBefore = val.substring(0, charPos);
+    const lineCount = (textBefore.match(/\n/g) || []).length;
+    const lineHeight = getLineHeight(textarea);
+    const targetTop = lineCount * lineHeight;
+    // Position at 20% from top for better visibility (upper-middle)
+    const scrollTarget = Math.max(0, targetTop - textarea.clientHeight * 0.2);
+    
+    // Use smooth scroll behavior for better UX
+    textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+  }, [getLineHeight]);
 
   const scrollToCloze = (id: number) => {
     const textarea = textareaRef.current;
@@ -282,23 +296,19 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       textarea.focus();
       textarea.setSelectionRange(targetPos, targetPos + pattern.length);
       
-      // 2. Fast scroll calculation using line count (avoids mirror div)
-      const textBefore = val.substring(0, targetPos);
-      const lineCount = (textBefore.match(/\n/g) || []).length;
-      const lineHeight = 24; // Approximate line height
-      const targetTop = lineCount * lineHeight;
-      textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
+      // 2. Scroll editor to target
+      scrollTextareaToLine(textarea, targetPos);
 
-      // 3. Scroll Preview - use instant scroll to avoid layout thrashing
-      const previewPane = document.querySelector('.group\/preview .overflow-y-auto');
+      // 3. Scroll Preview - smooth scroll for better UX
+      const previewPane = document.querySelector('.group\\/preview .overflow-y-auto');
       const previewElements = document.querySelectorAll(`[data-cloze-id="${id}"]`);
       const targetEl = previewElements[targetIndex] as HTMLElement | undefined;
       if (targetEl && previewPane) {
-        // Manual scroll calculation avoids expensive smooth scroll layout recalculations
+        // Scroll to position element at ~20% from top (matching editor)
         const paneRect = previewPane.getBoundingClientRect();
         const elRect = targetEl.getBoundingClientRect();
-        const scrollOffset = elRect.top - paneRect.top - paneRect.height / 2 + elRect.height / 2;
-        previewPane.scrollTop += scrollOffset;
+        const scrollOffset = elRect.top - paneRect.top - paneRect.height * 0.2;
+        previewPane.scrollTo({ top: previewPane.scrollTop + scrollOffset, behavior: 'smooth' });
       }
       
       // 4. Highlight and update state
@@ -348,12 +358,8 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           textarea.focus();
           textarea.setSelectionRange(target.pos, target.pos + pattern.length);
           
-          // Fast scroll using line count
-          const textBefore = full.substring(0, target.pos);
-          const lineCount = (textBefore.match(/\n/g) || []).length;
-          const lineHeight = 24;
-          const targetTop = lineCount * lineHeight;
-          textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
+          // Scroll editor to target (upper-middle position)
+          scrollTextareaToLine(textarea, target.pos);
           
           // Calculate instance index for preview sync
           let instanceIndex = 0;
@@ -361,15 +367,15 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
               if (indices[i].id === target.id) instanceIndex++;
           }
           
-          // Use instant scroll for preview to avoid layout thrashing
-          const previewPane = document.querySelector('.group\/preview .overflow-y-auto');
+          // Scroll preview with smooth animation
+          const previewPane = document.querySelector('.group\\/preview .overflow-y-auto');
           const previewElements = document.querySelectorAll(`[data-cloze-id="${target.id}"]`);
           const targetEl = previewElements[instanceIndex] as HTMLElement | undefined;
           if (targetEl && previewPane) {
               const paneRect = previewPane.getBoundingClientRect();
               const elRect = targetEl.getBoundingClientRect();
-              const scrollOffset = elRect.top - paneRect.top - paneRect.height / 2 + elRect.height / 2;
-              previewPane.scrollTop += scrollOffset;
+              const scrollOffset = elRect.top - paneRect.top - paneRect.height * 0.2;
+              previewPane.scrollTo({ top: previewPane.scrollTop + scrollOffset, behavior: 'smooth' });
           }
 
           flashPreviewCloze(target.id);
@@ -969,13 +975,9 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       textarea.focus();
       textarea.setSelectionRange(start, end);
 
-      // Scroll to center
-      const textBefore = val.substring(0, start);
-      const lines = textBefore.split('\n').length;
-      const lineHeight = 24;
-      const targetTop = (lines - 1) * lineHeight;
-      textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight / 2);
-  }, [clozeStats]);
+      // Scroll to target (upper-middle position)
+      scrollTextareaToLine(textarea, start);
+  }, [clozeStats, scrollTextareaToLine]);
 
   const handlePreviewClozeContextMenu = useCallback((id: number, occurrenceIndex: number, target: HTMLElement, _event: React.MouseEvent) => {
       // Trigger Menu on Right Click
@@ -1006,12 +1008,8 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           textarea.focus();
           textarea.setSelectionRange(answerStart, answerEnd);
 
-          // Fast scroll using line count instead of mirror div
-          const textBefore = full.substring(0, answerStart);
-          const lineCount = (textBefore.match(/\n/g) || []).length;
-          const lineHeight = 24;
-          const targetTop = lineCount * lineHeight;
-          textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
+          // Scroll to target (upper-middle position)
+          scrollTextareaToLine(textarea, answerStart);
 
           flashPreviewCloze(id);
           return;
@@ -1028,15 +1026,12 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       textarea.focus();
       textarea.setSelectionRange(start, start + pattern.length);
       
-      const textBefore = full.substring(0, start);
-      const lineCount = (textBefore.match(/\n/g) || []).length;
-      const lineHeight = 24;
-      const targetTop = lineCount * lineHeight;
-      textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight * 0.3);
+      // Scroll to target (upper-middle position)
+      scrollTextareaToLine(textarea, start);
 
       flashPreviewCloze(id);
     });
-  }, [flashPreviewCloze]);
+  }, [flashPreviewCloze, scrollTextareaToLine]);
 
   if (!currentNote || !currentFilepath) return null;
 
@@ -1304,8 +1299,8 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
       {/* Split View */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Editor Pane */}
-        <div className="flex-1 flex flex-col min-w-[300px] border-r border-base-200 bg-base-100 relative group/editor">
+        {/* Editor Pane - 45% width for more editing space */}
+        <div className="w-[45%] flex flex-col min-w-[400px] border-r border-base-200 bg-base-100 relative group/editor">
              <MetadataEditor content={content} onChange={handleMetadataChange} />
              
              {/* Pane Header - Removed as it is redundant with MetadataEditor header area */}
@@ -1399,8 +1394,8 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
             />
         </div>
 
-        {/* Preview Pane */}
-        <div className="flex-1 flex flex-col bg-base-200/30 relative group/preview">
+        {/* Preview Pane - 45% width */}
+        <div className="w-[45%] flex-1 flex flex-col bg-base-200/30 relative group/preview">
            {/* Pane Header */}
            <div className="h-8 min-h-[2rem] border-b border-base-200 bg-base-100/50 flex items-center px-4 justify-between select-none backdrop-blur-sm z-10">
                 <span className="text-[10px] font-bold uppercase tracking-widest opacity-40">Preview</span>

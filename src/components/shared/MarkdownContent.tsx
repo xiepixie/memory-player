@@ -232,8 +232,8 @@ export const MarkdownContent = memo(({ content, components, className, disableId
                                     id={`cloze-item-${id}`}
                                     data-cloze-id={id}
                                     className={clsx(
-                                        "inline-flex items-center gap-1.5 mx-1 align-baseline group relative transition-all",
-                                        onClozeClick ? "cursor-pointer hover:scale-105 active:scale-95" : "cursor-help"
+                                        "inline-flex items-center gap-1.5 mx-1 align-baseline group relative",
+                                        onClozeClick ? "cursor-pointer" : "cursor-help"
                                     )}
                                     title={hint ? `Hint: ${hint}` : `Cloze #${id}`}
                                     onClick={(e) => {
@@ -255,9 +255,9 @@ export const MarkdownContent = memo(({ content, components, className, disableId
                                         {id}
                                     </span>
                                     <span className={clsx(
-                                        "font-medium px-1 rounded transition-colors border-b-2 border-transparent -translate-y-0.5",
-                                        "bg-primary/10 text-primary hover:bg-primary/20 border-primary/20",
-                                        onClozeClick && "group-hover:bg-primary/30 group-hover:border-primary/40"
+                                        "font-medium px-1.5 py-0.5 rounded border-b-2 border-transparent transition-colors duration-100",
+                                        "bg-primary/10 text-primary border-primary/20",
+                                        onClozeClick && "hover:bg-primary/20 active:bg-primary/30"
                                     )}>
                                         {children}
                                     </span>

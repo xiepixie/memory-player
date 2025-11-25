@@ -27,6 +27,7 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
         startSession,
         queue,
         sessionIndex,
+        sessionStats,
         loadNote,
         setViewMode,
         reviewHistory,
@@ -39,6 +40,7 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
             startSession: state.startSession,
             queue: state.queue,
             sessionIndex: state.sessionIndex,
+            sessionStats: state.sessionStats,
             loadNote: state.loadNote,
             setViewMode: state.setViewMode,
             reviewHistory: state.reviewHistory,
@@ -179,7 +181,13 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
         }
     };
 
-    const hasSessionInProgress = queue.length > 0 && sessionIndex < queue.length;
+    // Determine if there's a session to resume
+    // A session is considered "stale" if it was started more than 4 hours ago
+    const STALE_SESSION_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 hours
+    const sessionAge = sessionStats.timeStarted ? Date.now() - sessionStats.timeStarted : Infinity;
+    const hasUnfinishedSession = queue.length > 0 && sessionIndex < queue.length;
+    const isSessionStale = hasUnfinishedSession && sessionAge > STALE_SESSION_THRESHOLD_MS;
+    const hasActiveSession = hasUnfinishedSession && !isSessionStale;
 
     return (
         <div className="max-w-7xl mx-auto w-full space-y-6 py-8 px-6 pb-32">
@@ -209,22 +217,25 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
 
             {/* Focus Zone */}
             {mode !== 'insights-only' && (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-500 slide-in-from-bottom-2">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
                     {/* Main Action Center - 9/12 cols */}
-                    <div className="lg:col-span-9 h-full">
+                    <div className="lg:col-span-9">
                         <ActionCenter
                             dueItems={dashboardData.dueItems}
                             overdueItems={dashboardData.overdueItems}
                             newItems={dashboardData.newItems}
-                            sessionInProgress={hasSessionInProgress}
+                            sessionInProgress={hasActiveSession}
+                            hasStaleSession={isSessionStale}
+                            staleSessionCount={hasUnfinishedSession ? queue.length - sessionIndex : 0}
                             onResume={handleResumeSession}
                             onStart={handleStartSession}
+                            onDiscardSession={() => setQueue([])}
                             streak={dashboardData.currentStreak}
                         />
                     </div>
 
                     {/* Auxiliary Panel (Recycle Bin) - 3/12 cols */}
-                    <div className="lg:col-span-3 h-full min-h-[240px]">
+                    <div className="lg:col-span-3">
                         <RecycleBin />
                     </div>
                 </div>
@@ -232,7 +243,7 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
 
             {/* Insights Grid */}
             {mode !== 'hero-only' && (
-                <div className="space-y-6 animate-in fade-in duration-700 slide-in-from-bottom-8">
+                <div className="space-y-6">
 
                     {/* 1. Vital Signs Row */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

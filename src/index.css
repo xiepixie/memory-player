@@ -26,31 +26,28 @@
 
 @keyframes cloze-flash {
   0% {
-    border-color: transparent;
-    box-shadow: 0 0 0 2px transparent;
-    transform: scale(1);
+    outline-color: transparent;
+    outline-offset: 0px;
   }
-  20% {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 2px var(--color-primary);
-    transform: scale(1.02);
+  15% {
+    outline-color: var(--color-primary);
+    outline-offset: 2px;
   }
-  80% {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 2px var(--color-primary);
-    transform: scale(1.02);
+  85% {
+    outline-color: var(--color-primary);
+    outline-offset: 2px;
   }
   100% {
-    border-color: transparent;
-    box-shadow: 0 0 0 2px transparent;
-    transform: scale(1);
+    outline-color: transparent;
+    outline-offset: 0px;
   }
 }
 
 .cloze-target-highlight {
     animation: cloze-flash 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    outline: 2px solid transparent;
+    outline-offset: 0px;
     border-radius: 4px;
-    border: 1px solid transparent; /* Base border */
 }
 
 /* Custom Scrollbar */
@@ -79,4 +76,56 @@
 .mask-linear-fade {
   mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
+}
+
+/* ===== Display Math Styling ($$...$$) ===== */
+/* Unified container styling for all display math blocks */
+.katex-display {
+  /* Container styling matching MathClozeBlock */
+  display: block;
+  margin: 1.5rem 0;
+  padding: 1rem 1.5rem;
+  background: color-mix(in srgb, var(--color-base-200) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-base-300) 80%, transparent);
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  
+  /* Hover interaction */
+  transition: all 0.2s ease-out;
+  cursor: default;
+  
+  /* Performance optimization */
+  contain: layout style;
+}
+
+.katex-display:hover {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
+  box-shadow: 0 4px 6px -1px color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+
+/* ===== Performance Optimizations for Long Math Documents ===== */
+
+/* Cloze performance: Contain layout to prevent reflow cascade */
+[data-cloze-key] {
+  contain: layout;
+}
+
+/* Math cloze blocks: Isolate repaint boundaries */
+.math-cloze-block {
+  contain: layout style paint;
+  isolation: isolate;
+}
+
+/* Optimize scrolling containers for long documents */
+#note-scroll-container {
+  /* GPU acceleration for smooth scrolling */
+  transform: translateZ(0);
+  /* Reduce repaint area during scroll */
+  will-change: scroll-position;
+}
+
+/* Reduce layout thrashing during hover state changes */
+.group:hover {
+  will-change: background-color, border-color;
 }

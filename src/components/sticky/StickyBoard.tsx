@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { StickyNoteData } from './types';
 import { StickyNote } from './StickyNote';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Keyboard } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 interface StickyBoardProps {
@@ -12,6 +12,8 @@ interface StickyBoardProps {
 export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
     const [notes, setNotes] = useState<StickyNoteData[]>([]);
     const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+    const [showHint, setShowHint] = useState(false);
+    const hintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
         const el = document.getElementById('sticky-controls-portal');
@@ -145,6 +147,37 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
         });
     }, []);
 
+    // Keyboard shortcuts for StickyBoard
+    useEffect(() => {
+        if (!isOpen) return;
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Ctrl/Cmd + N: Add new note
+            if ((e.ctrlKey || e.metaKey) && e.key === 'n' && !e.shiftKey) {
+                // Only if not in an input/textarea
+                if (document.activeElement?.tagName !== 'TEXTAREA' && document.activeElement?.tagName !== 'INPUT') {
+                    e.preventDefault();
+                    addNote();
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isOpen]);
+
+    // Show keyboard hint briefly when board opens
+    useEffect(() => {
+        if (isOpen && notes.length > 0) {
+            setShowHint(true);
+            hintTimeoutRef.current = setTimeout(() => setShowHint(false), 3000);
+        } else {
+            setShowHint(false);
+        }
+        return () => {
+            if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
+        };
+    }, [isOpen]);
 
     if (!isOpen && notes.length === 0) return null;
 
@@ -168,9 +201,9 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
                         <div className="flex items-center gap-1 overflow-hidden animate-in fade-in slide-in-from-left-2 duration-200">
                              <div className="w-px h-4 bg-base-content/10 mx-1" />
                              <button
-                                className="btn btn-xs btn-ghost btn-circle"
+                                className="btn btn-xs btn-ghost btn-circle hover:bg-primary/10 hover:text-primary"
                                 onClick={addNote}
-                                title="Add Sticky Note"
+                                title="Add Sticky Note (Ctrl+N)"
                             >
                                 <Plus size={14} />
                             </button>
@@ -188,6 +221,18 @@ export const StickyBoard = ({ identity, isOpen }: StickyBoardProps) => {
                             </span>
                         </div>,
                         portalTarget
+                    )}
+                    
+                    {/* Keyboard Shortcut Hint */}
+                    {showHint && (
+                        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[1200] animate-in fade-in slide-in-from-bottom-2 duration-300">
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-base-100/90 backdrop-blur-sm rounded-full shadow-lg border border-base-200 text-xs">
+                                <Keyboard size={12} className="opacity-50" />
+                                <span className="opacity-70">Press</span>
+                                <kbd className="px-1.5 py-0.5 bg-base-200 rounded text-[10px] font-mono">Ctrl+N</kbd>
+                                <span className="opacity-70">for new note</span>
+                            </div>
+                        </div>
                     )}
                 </>
             )}

@@ -6,6 +6,10 @@ import type { NoteMetadata } from '../../lib/storage/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CardHeader } from './Shared';
 
+// Match ActionCenter timing for coordinated appearance
+const PARENT_SETTLE_DELAY = 0.25;
+const SMOOTH_EASE: [number, number, number, number] = [0.25, 0.1, 0.25, 1];
+
 export const RecycleBin = () => {
   const dataService = useAppStore((state) => state.dataService);
   const restoreNote = useAppStore((state) => state.restoreNote);
@@ -46,8 +50,13 @@ export const RecycleBin = () => {
   };
 
   return (
-    <div className="card bg-base-100 shadow-sm border border-base-200 h-full">
-      <div className="card-body p-6 flex flex-col gap-3">
+    <motion.div 
+      className="card bg-base-100 shadow-sm border border-base-200 h-full min-h-[200px]"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: PARENT_SETTLE_DELAY + 0.08, ease: SMOOTH_EASE }}
+    >
+      <div className="card-body p-5 flex flex-col h-full">
         <CardHeader
           icon={Trash2}
           title="Recycle Bin"
@@ -66,9 +75,9 @@ export const RecycleBin = () => {
         />
 
         {items.length === 0 && !isLoading && (
-          <div className="flex-1 flex flex-col items-center justify-center text-xs opacity-60 text-center py-6">
-            <Trash2 size={24} className="mb-2 opacity-40" />
-            <p>Recycle bin is empty. No deleted notes yet.</p>
+          <div className="flex-1 flex flex-col items-center justify-center text-xs text-base-content/50 text-center">
+            <Trash2 size={20} className="mb-2 opacity-30" />
+            <p className="opacity-70">No deleted notes</p>
           </div>
         )}
 
@@ -129,6 +138,6 @@ export const RecycleBin = () => {
           </div>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }

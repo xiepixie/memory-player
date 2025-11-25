@@ -16,6 +16,12 @@ export type ViewMode = 'library' | 'review' | 'test' | 'master' | 'edit' | 'summ
 
 export const MAX_CONTENT_CACHE_ENTRIES = 200;
 
+// --- Demo Mode Helpers ---
+// Demo mode is when the user is browsing the DEMO_VAULT (read-only demo content).
+// In demo mode: data should NOT be synced to the cloud, and UI should show appropriate hints.
+export const isDemoMode = (state: { rootPath: string | null; currentFilepath: string | null }) => 
+  state.rootPath === 'DEMO_VAULT' || state.currentFilepath?.startsWith('/Demo/') || false;
+
 const isBrowser = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 
 const isIndexedDBAvailable = () =>
@@ -583,24 +589,15 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
   currentVault: null,
 
   loadSettings: () => {
-    const persistedStore = localStorage.getItem('app-store');
-    if (persistedStore) {
-      return;
-    }
-
-    const savedPath = localStorage.getItem('rootPath');
-    const savedRecents = localStorage.getItem('recentVaults');
-    const savedFiles = localStorage.getItem('cachedFiles');
-
-    set({
-      rootPath: savedPath,
-      recentVaults: savedRecents ? JSON.parse(savedRecents) : [],
-      files: savedFiles ? JSON.parse(savedFiles) : []
-    });
-
-    localStorage.removeItem('rootPath');
-    localStorage.removeItem('recentVaults');
-    localStorage.removeItem('cachedFiles');
+    // NOTE: This function is now a no-op.
+    // State persistence is handled entirely by Zustand's persist middleware with IndexedDB.
+    // The old localStorage-based migration logic was removed because:
+    // 1. persist middleware now uses IndexedDB (async), not localStorage
+    // 2. The old check `localStorage.getItem('app-store')` always returned null
+    // 3. This caused rootPath to be incorrectly reset to null on every refresh
+    //
+    // If legacy migration from localStorage is still needed, it should be handled
+    // in the persist middleware's `migrate` function or `onRehydrateStorage` callback.
   },
 
   setRootPath: (path) => {
@@ -753,7 +750,16 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
         currentVault,
         updateLastSync,
         markNoteSynced,
+        rootPath,
       } = get();
+
+      // DEMO MODE: Skip cloud sync entirely
+      const demoMode = isDemoMode({ rootPath, currentFilepath: filepath });
+      if (demoMode) {
+        // Still update cache for demo files, but skip backend sync
+        updateCacheAndIds(set, filepath, content, noteId);
+        return;
+      }
 
       // 1. Update cache and ID mappings for this note (LRU behavior included)
       updateCacheAndIds(set, filepath, content, noteId);
@@ -1168,14 +1174,18 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
       });
 
       // Background Network Call (Fire-and-forget)
-      dataService.saveReview(noteId, currentClozeIndex, record.card, record.log, durationMs)
-        .catch(e => {
-           console.error("Background save review failed", e);
-           useToastStore.getState().addToast(
-             "Review sync failed|Your grade was saved locally and will sync later.",
-             'warning',
-           );
-        });
+      // DEMO MODE: Skip cloud sync entirely - demo data should not persist
+      const demoMode = isDemoMode({ rootPath: get().rootPath, currentFilepath });
+      if (!demoMode) {
+        dataService.saveReview(noteId, currentClozeIndex, record.card, record.log, durationMs)
+          .catch(e => {
+             console.error("Background save review failed", e);
+             useToastStore.getState().addToast(
+               "Review sync failed|Your grade was saved locally and will sync later.",
+               'warning',
+             );
+          });
+      }
 
       // Navigation Logic
       const inSession = sessionStats.timeStarted > 0;
@@ -1366,8 +1376,10 @@ async function loadContentFromSource(
     return { content: contentCache[filepath], noteId: pathMap[filepath] || null };
   }
 
-  // 2. Check Demo Vault
-  if (rootPath === 'DEMO_VAULT') {
+  // 2. Check Demo Vault - use both rootPath AND filepath pattern for robustness
+  // (filepath pattern check handles race condition during async persist rehydration)
+  const isDemoFile = rootPath === 'DEMO_VAULT' || filepath.startsWith('/Demo/');
+  if (isDemoFile) {
     const fileName = filepath.split('/').pop() || 'Demo';
     const noteId = pathMap[filepath] || null;
     return { content: getDemoContent(fileName), noteId };
@@ -1536,6 +1548,12 @@ const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
         currentNote: parseNote(content),
       } as Partial<AppState>;
     });
+
+    // DEMO MODE: Skip cloud sync entirely - demo data should not persist
+    const demoMode = isDemoMode({ rootPath: get().rootPath, currentFilepath });
+    if (demoMode) {
+      return;
+    }
 
     const noteId = pathMap[currentFilepath];
     if (noteId && dataService) {

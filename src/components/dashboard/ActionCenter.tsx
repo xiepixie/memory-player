@@ -3,26 +3,37 @@ import { useAppStore } from '../../store/appStore';
 import { useShallow } from 'zustand/react/shallow';
 import {
     Play, Zap, Activity, CheckCircle, Flame, Target,
-    Brain, GraduationCap, Layers, Clock
+    Brain, GraduationCap, Layers, Clock, RotateCcw, Trash2
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { QueueItem } from '../../lib/storage/types';
 import { CardHeader } from './Shared';
 
+// Smooth entry animations - no spring bounce to avoid "jump" feel
+// Delay accounts for parent container's entry animation
+const PARENT_SETTLE_DELAY = 0.25; // Let LibraryView container stabilize
+const SMOOTH_EASE: [number, number, number, number] = [0.25, 0.1, 0.25, 1];
+
 const containerVariants = {
     hidden: { opacity: 0 },
     visible: {
         opacity: 1,
-        transition: { staggerChildren: 0.1 }
+        transition: { 
+            delayChildren: PARENT_SETTLE_DELAY,
+            staggerChildren: 0.08,
+        }
     }
 };
 
 const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
+    hidden: { opacity: 0, y: 12 },
     visible: { 
         opacity: 1, 
         y: 0,
-        transition: { type: "spring" as const, stiffness: 300, damping: 24 }
+        transition: { 
+            duration: 0.4,
+            ease: SMOOTH_EASE
+        }
     }
 };
 
@@ -31,16 +42,22 @@ export const ActionCenter = ({
     newItems,
     overdueItems,
     sessionInProgress,
+    hasStaleSession = false,
+    staleSessionCount = 0,
     onResume,
     onStart,
+    onDiscardSession,
     streak
 }: {
     dueItems: QueueItem[],
     newItems: QueueItem[],
     overdueItems: QueueItem[],
     sessionInProgress: boolean,
+    hasStaleSession?: boolean,
+    staleSessionCount?: number,
     onResume: () => void,
     onStart: (items: QueueItem[], mode: 'all' | 'today' | 'new') => void,
+    onDiscardSession?: () => void,
     streak: number
 }) => {
     const { queue, sessionIndex, reviewHistory } = useAppStore(
@@ -69,15 +86,62 @@ export const ActionCenter = ({
     const estReviewTime = Math.ceil(Math.min(dueItems.length, sessionSize) * 10 / 60);
     const estLearnTime = Math.ceil(Math.min(newItems.length, sessionSize) * 30 / 60); // New cards take longer
 
+    // Show stale session recovery prompt
+    if (hasStaleSession && staleSessionCount > 0) {
+        return (
+            <motion.div
+                key="session-stale"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: PARENT_SETTLE_DELAY, ease: SMOOTH_EASE }}
+                className="card bg-gradient-to-r from-warning/5 via-base-100 to-base-100 shadow-xl border-l-4 border-warning overflow-hidden relative h-full min-h-[200px]"
+            >
+                <div className="absolute top-0 right-0 p-4 opacity-5">
+                    <RotateCcw size={120} />
+                </div>
+                <div className="card-body relative z-10 flex flex-col justify-between">
+                    <div>
+                        <div className="badge badge-warning badge-outline mb-2 gap-1 font-bold">
+                            <Clock size={12} /> Unfinished Session
+                        </div>
+                        <h2 className="card-title text-2xl mb-1">Welcome Back!</h2>
+                        <p className="text-base-content/60 text-sm">
+                            You have an unfinished session with <span className="font-bold text-warning">{staleSessionCount} cards</span> remaining.
+                        </p>
+                    </div>
+
+                    <div className="flex gap-3 mt-4">
+                        <button 
+                            onClick={onResume} 
+                            className="btn btn-warning flex-1 gap-2 shadow-lg shadow-warning/20 group border-0"
+                        >
+                            <RotateCcw size={18} className="group-hover:scale-110 transition-transform" />
+                            Continue Session
+                        </button>
+                        {onDiscardSession && (
+                            <button 
+                                onClick={onDiscardSession} 
+                                className="btn btn-ghost gap-2 text-base-content/60 hover:text-error hover:bg-error/10"
+                            >
+                                <Trash2 size={16} />
+                                Discard
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </motion.div>
+        );
+    }
+
     if (sessionInProgress) {
         const progress = queue.length > 0 ? (sessionIndex / queue.length) * 100 : 0;
 
         return (
             <motion.div
                 key="session-active"
-                layout
-                initial={{ opacity: 0, y: 20 }}
+                initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: PARENT_SETTLE_DELAY, ease: SMOOTH_EASE }}
                 className="card bg-gradient-to-r from-primary/10 via-base-100 to-base-100 shadow-xl border-l-4 border-primary overflow-hidden relative"
             >
                 <div className="absolute top-0 right-0 p-4 opacity-5">
@@ -121,9 +185,9 @@ export const ActionCenter = ({
         return (
             <motion.div
                 key="chill-mode"
-                initial={{ scale: 0.95, opacity: 0, y: 10 }}
-                animate={{ scale: 1, opacity: 1, y: 0 }}
-                transition={{ type: "spring", duration: 0.6 }}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: PARENT_SETTLE_DELAY, ease: SMOOTH_EASE }}
                 className="card bg-gradient-to-br from-success/5 via-base-100 to-base-100 border border-success/10 shadow-lg relative overflow-hidden"
             >
                 <div className="absolute -right-10 -top-10 text-success/5 rotate-12">
@@ -131,8 +195,9 @@ export const ActionCenter = ({
                 </div>
                 <div className="card-body items-center text-center py-12 relative z-10">
                     <motion.div
-                        initial={{ scale: 0 }} animate={{ scale: 1 }}
-                        transition={{ type: "spring", duration: 0.6, delay: 0.2 }}
+                        initial={{ opacity: 0, scale: 0.9 }} 
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.35, delay: PARENT_SETTLE_DELAY + 0.15, ease: SMOOTH_EASE }}
                         className="w-20 h-20 bg-gradient-to-br from-success/20 to-success/5 rounded-full flex items-center justify-center mb-6 text-success ring-4 ring-success/10"
                     >
                         <CheckCircle size={40} className="drop-shadow-md" />
