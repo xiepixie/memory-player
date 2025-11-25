@@ -40,3 +40,24 @@ export function generateSlug(text: string): string {
         .replace(/[^\w\u4e00-\u9fa5]+/g, '-')
         .replace(/^-+|-+$/g, '');
 }
+
+/**
+ * Extracts a display-friendly note title.
+ * If the rawTitle looks like a filepath (contains path separators), extracts just the filename.
+ * Also strips .md extension for cleaner display.
+ * 
+ * @param rawTitle - The raw title string (may be a filepath or actual title)
+ * @param fallback - Fallback string if title is empty (default: 'Untitled Note')
+ * @returns A clean display title
+ */
+export function getNoteDisplayTitle(rawTitle: unknown, fallback = 'Untitled Note'): string {
+    if (!rawTitle || typeof rawTitle !== 'string') return fallback;
+    
+    // If title looks like a filepath (contains path separators), extract filename
+    if (/[\\/]/.test(rawTitle)) {
+        const filename = rawTitle.split(/[\\/]/).pop()?.replace(/\.md$/i, '');
+        return filename || fallback;
+    }
+    
+    return rawTitle;
+}

@@ -17,6 +17,9 @@ export interface ClozeItem {
   hint?: string;    // Hint if {{c1::Answer::Hint}}
 }
 
+/**
+ * Parse raw markdown into a structured note object.
+ */
 export const parseNote = (rawMarkdown: string): ParsedNote => {
   const { content, data: frontmatter } = matter(rawMarkdown);
 

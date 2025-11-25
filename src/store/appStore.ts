@@ -1188,16 +1188,23 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
       }
 
       // Navigation Logic
-      const inSession = sessionStats.timeStarted > 0;
+      // Use queue.length > 0 as the primary check (more reliable than sessionStats.timeStarted)
+      const hasMoreCards = queue.length > 0;
 
-      if (inSession && queue.length > 0) {
+      if (hasMoreCards) {
         const nextIndex = sessionIndex + 1;
 
         if (nextIndex < queue.length) {
           set({ sessionIndex: nextIndex });
           const nextItem = queue[nextIndex];
-          // Fire-and-forget load of the next card
-          loadNote(nextItem.filepath, nextItem.clozeIndex);
+          // IMPORTANT: Await loadNote to prevent UI flicker and double-render
+          // Keep isGrading=true until the next card is fully loaded
+          try {
+            await loadNote(nextItem.filepath, nextItem.clozeIndex);
+          } catch (loadError) {
+            console.error("Failed to load next card", loadError);
+            // Still allow user to continue - the card might load on retry
+          }
         } else {
           // Session Complete
           set({
@@ -1264,12 +1271,6 @@ const createSessionSlice: AppStateCreator<SessionSlice> = (set, get) => ({
 function getDemoContent(fileName: string): string {
   return `---
 title: ${fileName.replace('.md', '')}
-tags: [demo, spaced-repetition]
----
-
-# ${fileName.replace('.md', '')}
----
-title: Welcome
 tags: [demo, spaced-repetition]
 ---
 

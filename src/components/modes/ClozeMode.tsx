@@ -6,6 +6,7 @@ import confetti from 'canvas-confetti';
 import { getThemeColors } from '../../lib/themeUtils';
 import { MathClozeBlock } from '../shared/MathClozeBlock';
 import { InlineCloze } from '../shared/InlineCloze';
+import { getNoteDisplayTitle } from '../../lib/stringUtils';
 
 // Delay before confetti fires (ms) - minimal delay for instant feedback feel
 const CONFETTI_DELAY_MS = 50;
@@ -242,7 +243,7 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
               immersive ? 'text-2xl' : 'text-4xl'
             }`}
           >
-            {currentNote.frontmatter.title || 'Untitled Note'}
+            {getNoteDisplayTitle(currentNote.frontmatter.title)}
           </h1>
           {currentClozeIndex !== null && (
             <span className="text-xs font-mono text-primary/70 uppercase tracking-widest">
@@ -274,6 +275,7 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
       >
         <MarkdownContent
           content={currentNote.renderableContent}
+          hideFirstH1
           components={{
             a: ({ href, children, title }) => {
               if (href?.startsWith('#cloze-')) {

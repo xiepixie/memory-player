@@ -15,6 +15,8 @@ interface MarkdownContentProps {
     components?: Components;
     className?: string;
     disableIds?: boolean;
+    /** Hide the first H1 heading (useful when title is already displayed separately) */
+    hideFirstH1?: boolean;
     onClozeClick?: (id: number, occurrenceIndex: number, target: HTMLElement) => void;
     onClozeContextMenu?: (id: number, occurrenceIndex: number, target: HTMLElement, event: React.MouseEvent) => void;
     onErrorLinkClick?: (kind: 'unclosed' | 'malformed' | 'dangling', occurrenceIndex: number, target?: HTMLElement) => void;
@@ -28,13 +30,15 @@ const extractText = (children: any): string => {
     return '';
 };
 
-export const MarkdownContent = memo(({ content, components, className, disableIds = false, onClozeClick, onClozeContextMenu, onErrorLinkClick }: MarkdownContentProps) => {
+export const MarkdownContent = memo(({ content, components, className, disableIds = false, hideFirstH1 = false, onClozeClick, onClozeContextMenu, onErrorLinkClick }: MarkdownContentProps) => {
     const slugCounts = useRef<Record<string, number>>({});
     const clozeCounts = useRef<Record<number, number>>({});
+    const h1Count = useRef<number>(0);
     
-    // Reset slug and cloze counts on every render
+    // Reset slug, cloze, and h1 counts on every render
     slugCounts.current = {};
     clozeCounts.current = {};
+    h1Count.current = 0;
 
     const generateId = (children: any) => {
         if (disableIds) return undefined;
@@ -70,6 +74,11 @@ export const MarkdownContent = memo(({ content, components, className, disableId
                     th: ({ children }) => <th className="px-4 py-3 text-sm font-bold tracking-wide whitespace-nowrap align-middle">{children}</th>,
                     td: ({ children }) => <td className="px-4 py-3 text-sm align-top leading-relaxed">{children}</td>,
                     h1: ({ children }) => {
+                        h1Count.current += 1;
+                        // Skip first H1 if hideFirstH1 is enabled (title shown separately)
+                        if (hideFirstH1 && h1Count.current === 1) {
+                            return null;
+                        }
                         const id = generateId(children);
                         return <h1 id={id} className="font-serif text-3xl font-bold mt-8 mb-4 text-base-content scroll-mt-20">{children}</h1>;
                     },

@@ -19,7 +19,6 @@ export const NoteRenderer = () => {
     const {
         viewMode,
         setViewMode,
-        sessionTotal,
         sessionIndex,
         closeNote,
         currentFilepath,
@@ -36,7 +35,6 @@ export const NoteRenderer = () => {
         useShallow((state) => ({
             viewMode: state.viewMode,
             setViewMode: state.setViewMode,
-            sessionTotal: state.sessionTotal,
             sessionIndex: state.sessionIndex,
             closeNote: state.closeNote,
             currentFilepath: state.currentFilepath,
@@ -98,6 +96,8 @@ export const NoteRenderer = () => {
 
     const isStudyMode = viewMode === 'test' || viewMode === 'master';
     const hasSessionInProgress = queue.length > 0 && sessionIndex < queue.length;
+    // Use queue.length as source of truth since sessionTotal might be stale/0 after resume
+    const effectiveTotal = queue.length;
     const currentQueueItem = queue[sessionIndex];
     const canSuspendCurrent = !!currentQueueItem?.cardId;
 
@@ -151,7 +151,7 @@ export const NoteRenderer = () => {
                     <div className="text-sm text-base-content/60">Restoring your session...</div>
                     {hasSessionInProgress && (
                         <div className="text-xs text-base-content/40 font-mono">
-                            Card {sessionIndex + 1} of {sessionTotal}
+                            Card {sessionIndex + 1} of {effectiveTotal}
                         </div>
                     )}
                 </div>
@@ -160,14 +160,15 @@ export const NoteRenderer = () => {
     }
 
     const progressPercentage = hasSessionInProgress
-        ? Math.round(((Math.min(sessionIndex + 1, sessionTotal)) / sessionTotal) * 100)
+        ? Math.round(((Math.min(sessionIndex + 1, effectiveTotal)) / effectiveTotal) * 100)
         : 0;
 
     const remainingCards = hasSessionInProgress
-        ? Math.max(sessionTotal - Math.min(sessionIndex + 1, sessionTotal), 0)
+        ? Math.max(effectiveTotal - Math.min(sessionIndex + 1, effectiveTotal), 0)
         : 0;
 
-    const noteName = currentFilepath?.split('/').pop() || 'Untitled';
+    // Cross-platform filename extraction (Windows uses \, Unix uses /)
+    const noteName = currentFilepath?.split(/[\\/]/).pop()?.replace(/\.md$/i, '') || 'Untitled';
 
     const hints: string[] = (currentNote?.hints || []) as string[];
 
@@ -242,7 +243,7 @@ export const NoteRenderer = () => {
                         <span className="font-bold text-sm truncate">{noteName}</span>
                         {hasSessionInProgress && (
                             <span className="text-[10px] opacity-50 font-mono">
-                                {Math.min(sessionIndex + 1, sessionTotal)} / {sessionTotal}
+                                {sessionIndex + 1} / {effectiveTotal}
                             </span>
                         )}
                     </div>

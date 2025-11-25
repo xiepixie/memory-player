@@ -69,10 +69,21 @@ export const ActionCenter = ({
     );
     const [sessionSize, setSessionSize] = useState(20);
 
-    const passRate = useMemo(() => {
-        const totalReviews = reviewHistory.length;
-        const passedReviews = reviewHistory.filter(log => log.rating >= 3).length;
-        return totalReviews > 0 ? (passedReviews / totalReviews) * 100 : 0;
+    // Calculate today's accuracy (rating >= 3 = Good/Easy)
+    const { todayAccuracy, todayReviewCount } = useMemo(() => {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        
+        const todayReviews = reviewHistory.filter(log => {
+            const reviewDate = new Date(log.review);
+            return reviewDate >= todayStart;
+        });
+        
+        const passed = todayReviews.filter(log => log.rating >= 3).length;
+        return {
+            todayAccuracy: todayReviews.length > 0 ? (passed / todayReviews.length) * 100 : 0,
+            todayReviewCount: todayReviews.length
+        };
     }, [reviewHistory]);
 
     // Determine the "Hero" action based on user state
@@ -214,7 +225,7 @@ export const ActionCenter = ({
                             </div>
                         )}
                         <div className="badge badge-lg badge-ghost gap-2 p-4 text-success bg-success/10 border-success/20">
-                            <Target size={16} /> {passRate.toFixed(0)}% Accuracy
+                            <Target size={16} /> {todayAccuracy.toFixed(0)}% Today
                         </div>
                     </div>
                 </div>
@@ -414,13 +425,14 @@ export const ActionCenter = ({
                         <div>
                             <div className="flex justify-between text-xs mb-1.5">
                                 <span className="opacity-60 font-medium">Today's Accuracy</span>
-                                <span className="font-bold text-success">{passRate.toFixed(0)}%</span>
+                                <span className="font-bold text-success">
+                                    {todayReviewCount > 0 ? `${todayAccuracy.toFixed(0)}%` : '—'}
+                                </span>
                             </div>
                             <div className="w-full bg-base-200 rounded-full h-2 overflow-hidden">
-                                <motion.div
-                                    initial={{ width: 0 }}
-                                    animate={{ width: `${passRate}%` }}
-                                    className="bg-success h-full rounded-full"
+                                <div
+                                    className="bg-success h-full rounded-full transition-all duration-500"
+                                    style={{ width: `${todayReviewCount > 0 ? todayAccuracy : 0}%` }}
                                 />
                             </div>
                         </div>

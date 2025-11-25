@@ -3,6 +3,7 @@ import { MarkdownContent } from '../shared/MarkdownContent';
 import { ModeActionHint } from '../shared/ModeActionHint';
 import { useFileWatcher } from '../../hooks/useFileWatcher';
 import { useShallow } from 'zustand/react/shallow';
+import { getNoteDisplayTitle } from '../../lib/stringUtils';
 
 export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
   const { currentNote, currentFilepath, loadNote } = useAppStore(
@@ -40,7 +41,7 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
 
       <div className={`flex justify-between items-center transition-all duration-300 ${immersive ? 'mb-6 opacity-0 hover:opacity-100' : 'border-b border-white/5 mb-8 pb-6'}`}>
         <h1 className={`font-serif font-bold tracking-tight m-0 transition-all duration-300 ${immersive ? 'text-2xl' : 'text-4xl'}`}>
-          {currentNote.frontmatter.title || 'Untitled Note'}
+          {getNoteDisplayTitle(currentNote.frontmatter.title)}
         </h1>
         {!immersive && (
             <ModeActionHint 
@@ -57,6 +58,7 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
           <MarkdownContent 
             content={cleanContent(currentNote.content)} 
             disableIds={false}
+            hideFirstH1
           />
         </div>
       </div>

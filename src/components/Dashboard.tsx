@@ -74,13 +74,17 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
             if (!meta || !meta.cards) return;
 
             Object.entries(meta.cards).forEach(([indexStr, card]) => {
-                const due = new Date(card.due);
+                // Handle null/undefined due dates - treat as "due now" (New cards)
+                // This can happen for cards created before FSRS defaults were properly set
+                const due = card.due ? new Date(card.due) : new Date();
+                // Validate the date - if invalid, treat as "due now"
+                const validDue = isNaN(due.getTime()) ? new Date() : due;
                 const clozeIdx = parseInt(indexStr, 10);
                 const item: QueueItem = {
                     noteId: meta.noteId || '',
                     filepath: f,
                     clozeIndex: clozeIdx,
-                    due: due
+                    due: validDue
                 };
 
                 const normalizedPath = f.replace(/\\/g, '/');
@@ -103,25 +107,25 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
 
                 if (card.lapses > 5) leeches.push(item);
 
-                const isDueOrPast = due <= now;
+                const isDueOrPast = validDue <= now;
 
                 if (card.state === 0) {
                     newItems.push(item);
 
                     if (isDueOrPast) {
                         dueItems.push(item);
-                        if (differenceInDays(now, due) >= 1) overdueItems.push(item);
+                        if (differenceInDays(now, validDue) >= 1) overdueItems.push(item);
                         futureCounts[todayKey] = (futureCounts[todayKey] || 0) + 1;
                     } else {
-                        const dateKey = format(due, 'yyyy-MM-dd');
+                        const dateKey = format(validDue, 'yyyy-MM-dd');
                         futureCounts[dateKey] = (futureCounts[dateKey] || 0) + 1;
                     }
                 } else if (isDueOrPast) {
                     dueItems.push(item);
-                    if (differenceInDays(now, due) >= 1) overdueItems.push(item);
+                    if (differenceInDays(now, validDue) >= 1) overdueItems.push(item);
                     futureCounts[todayKey] = (futureCounts[todayKey] || 0) + 1;
                 } else {
-                    const dateKey = format(due, 'yyyy-MM-dd');
+                    const dateKey = format(validDue, 'yyyy-MM-dd');
                     futureCounts[dateKey] = (futureCounts[dateKey] || 0) + 1;
                 }
             });
@@ -248,14 +252,46 @@ export const Dashboard = ({ mode = 'full' }: { mode?: 'full' | 'hero-only' | 'in
                     {/* 1. Vital Signs Row */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         {[
-                            { label: 'Retention', val: `${dashboardData.retentionRate.toFixed(0)}%`, icon: Brain, color: 'text-success' },
-                            { label: 'Mature Cards', val: dashboardData.stats.review, icon: CheckCircle, color: 'text-info' },
-                            { label: 'Total Reviews', val: reviewHistory.length, icon: Activity, color: 'text-primary' },
-                            { label: 'Total Notes', val: files.length, icon: Layers, color: 'text-secondary' },
+                            { 
+                                label: 'Retention', 
+                                val: `${dashboardData.retentionRate.toFixed(0)}%`, 
+                                icon: Brain, 
+                                color: 'text-success',
+                                tooltip: 'Percentage of reviews where you remembered the card (Hard/Good/Easy)'
+                            },
+                            { 
+                                label: 'Mature Cards', 
+                                val: dashboardData.stats.review, 
+                                icon: CheckCircle, 
+                                color: 'text-info',
+                                tooltip: 'Cards that have graduated from learning phase'
+                            },
+                            { 
+                                label: 'Total Reviews', 
+                                val: reviewHistory.length, 
+                                icon: Activity, 
+                                color: 'text-primary',
+                                tooltip: 'Total number of reviews in the last 365 days'
+                            },
+                            { 
+                                label: 'Total Notes', 
+                                val: files.length, 
+                                icon: Layers, 
+                                color: 'text-secondary',
+                                tooltip: 'Number of markdown files in your vault'
+                            },
                         ].map((stat, i) => (
-                            <div key={i} className="card bg-base-100 border border-base-200 shadow-sm p-4 flex flex-col gap-1 hover:border-base-300 transition-colors">
+                            <div 
+                                key={i} 
+                                className="card bg-base-100 border border-base-200 shadow-sm p-4 flex flex-col gap-1 hover:border-base-300 transition-colors group relative"
+                                title={stat.tooltip}
+                            >
                                 <StatLabelIcon icon={stat.icon} label={stat.label} iconClassName={stat.color} />
                                 <div className="text-2xl font-black text-base-content">{stat.val}</div>
+                                {/* Hover tooltip */}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-base-300 text-base-content text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                                    {stat.tooltip}
+                                </div>
                             </div>
                         ))}
                     </div>

@@ -1,6 +1,7 @@
 import { useAppStore } from '../../store/appStore';
 import ReactMarkdown from 'react-markdown';
 import { MarkdownImage } from '../shared/MarkdownImage';
+import { getNoteDisplayTitle } from '../../lib/stringUtils';
 
 export const ReviewMode = () => {
   const currentNote = useAppStore((state) => state.currentNote);
@@ -10,7 +11,7 @@ export const ReviewMode = () => {
   return (
     <div className="prose prose-lg max-w-4xl mx-auto py-10 px-6">
       <h1 className="font-serif mb-4 text-4xl border-b pb-4 border-base-content/10">
-        {currentNote.frontmatter.title || 'Untitled Note'}
+        {getNoteDisplayTitle(currentNote.frontmatter.title)}
       </h1>
       <div className="font-sans leading-relaxed opacity-90">
         <ReactMarkdown
@@ -27,5 +28,7 @@ export const ReviewMode = () => {
 
 function cleanContent(content: string): string {
     let cleaned = content.replace(/\{\{c\d+::([\s\S]*?)(?:::(.*?))?\}\}/g, '$1');
+    // Strip first H1 heading (title is shown separately)
+    cleaned = cleaned.replace(/^#\s+[^\n]*\n?/, '');
     return cleaned;
 }

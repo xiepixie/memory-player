@@ -155,21 +155,119 @@ for (const card of cards) {
 
 ## 三、未来优化方向
 
-### 高优先级
+### ⚠️ 高优先级优化影响分析
 
-| 优化项 | 描述 | 预期收益 |
-|--------|------|----------|
-| **虚拟滚动** | 使用 `react-window` 渲染长文档 | 支持 10000+ 行 |
-| **KaTeX Web Worker** | 后台线程批量渲染数学公式 | -50% 首屏时间 |
-| **parseNote 状态机** | 单次遍历替代多次正则扫描 | -60% 解析时间 |
+以下是原计划的高优先级优化项的详细影响评估：
+
+#### 1. 虚拟滚动 (react-window) - ❌ 暂不实施
+
+**影响范围**：
+| 功能 | 影响 | 严重程度 |
+|------|------|----------|
+| TOC 导航 | 依赖 `getElementById` 定位，虚拟化后未渲染元素不存在 | 🔴 破坏性 |
+| Cloze 滚动 | 81 处 scroll 相关代码，依赖完整 DOM | 🔴 破坏性 |
+| Header 提取 | `MutationObserver` 监听 DOM 变化 | 🔴 需重写 |
+| Edit 同步 | 40 处 scroll 代码用于预览同步 | 🔴 破坏性 |
+
+**根本问题**：ReactMarkdown 整体渲染，Markdown 块高度不固定无法预计算
+
+**结论**：需要架构级重构，风险远超收益
+
+#### 2. KaTeX Web Worker - ❌ 暂不实施
+
+**问题**：
+- `rehype-katex` 是 ReactMarkdown 同步插件，无法改为异步
+- Web Worker 无法操作 DOM（KaTeX 需要字体测量）
+- MathClozeBlock 已有 `useMemo` 缓存
+
+**结论**：当前实现已较优，改动风险高
+
+#### 3. parseNote 状态机 - ❌ 暂不实施
+
+**问题**：
+- 正则引擎是高度优化的 C++ 代码，5 次 O(N) 实际很快
+- 状态机实现复杂，容易引入解析 bug
+- 需要全面测试所有 cloze 边缘情况
+
+**结论**：收益不明确，风险中等
+
+---
+
+### ✅ 实际可行的高优先级优化
+
+| 优化项 | 描述 | 预期收益 | 状态 |
+|--------|------|----------|------|
+| **KaTeX LRU 缓存** | 全局缓存已渲染的公式 HTML (`katexCache.ts`) | -30% 首屏时间 | ✅ 已实施 |
+| **按需加载 KaTeX** | 仅在有数学公式时加载 | -200KB 初始包 | 待实施 |
+
+#### KaTeX LRU 缓存实现
+
+```typescript
+// src/lib/katexCache.ts - 有效的缓存
+class KatexLRUCache {
+  private cache: Map<string, CacheEntry> = new Map();
+  
+  get(latex: string, displayMode: boolean): string | null { ... }
+  set(latex: string, displayMode: boolean, html: string): void { ... }
+}
+
+// MathClozeBlock.tsx 集成
+const renderKatexToString = (latex: string, displayMode: boolean = true): string => {
+    const cached = katexCache.get(latex, displayMode);
+    if (cached !== null) return cached; // 缓存命中，跳过解析
+    
+    const html = katex.renderToString(latex, { displayMode, ... });
+    katexCache.set(latex, displayMode, html);
+    return html;
+};
+```
+
+#### ❌ ParsedNote 缓存 - 已移除
+
+**移除原因**（经过深度分析）：
+
+| 分析项 | 结果 |
+|--------|------|
+| 单次 parseNote 耗时 | **~0.006ms (6微秒)** |
+| EditMode debounce 命中率 | **0%**（内容每次都变） |
+| 重复访问同一笔记 | ~80%，但 6 微秒不值得缓存 |
+| 复杂度 | 需要处理失效、hash 碰撞等 |
+
+**结论**：复杂度高于收益，正则解析已足够快
 
 ### 中优先级
 
-| 优化项 | 描述 |
-|--------|------|
-| **细粒度 Zustand 选择器** | 拆分 LibraryView 的 20+ 属性选择器 |
-| **fileMetadatas 分片** | 按文件夹分片存储，减少更新粒度 |
-| **增量 Markdown AST** | 仅重新解析变化的部分 |
+| 优化项 | 描述 | 状态 |
+|--------|------|------|
+| **细粒度 Zustand 选择器** | 拆分 LibraryView 的 20+ 属性选择器 | ✅ 已完成 |
+| **fileMetadatas 分片** | 按文件夹分片存储，减少更新粒度 | ❌ 暂不实施 |
+| **增量 Markdown AST** | 仅重新解析变化的部分 | ❌ 暂不实施 |
+
+#### fileMetadatas 分片 - 影响分析
+
+**风险**：🔴 极高
+
+| 组件 | 使用次数 | 影响 |
+|------|----------|------|
+| appStore.ts | 24 | 🔴 需重写所有更新逻辑 |
+| LibraryView.tsx | 9 | 🟡 grouped 计算需遍历 |
+| Dashboard.tsx | 6 | 🟡 统计聚合需遍历 |
+| NoteRenderer.tsx | 3 | 🟡 需适配新访问模式 |
+
+**问题**：
+- 组件依赖 `fileMetadatas[path]` 同步访问
+- Dashboard 需要遍历所有 metadata 计算统计
+- 分片会引入异步加载和竞态条件
+
+#### 增量 Markdown AST - 影响分析
+
+**风险**：🔴 极高
+
+**问题**：
+- ReactMarkdown 是整体渲染，无增量 API
+- 需要自定义 Markdown 解析器
+- 影响所有 custom renderers (cloze、math-cloze、error links)
+- MarkdownContent 291 行复杂逻辑需要重写
 
 ### 参考资料
 
