@@ -17,8 +17,9 @@ const MetadataEditor = ({ content, onChange }: { content: string; onChange: (new
     const [tags, setTags] = useState<string[]>([]);
     const [inputValue, setInputValue] = useState('');
     
-    // Parse initial state from content
+    // Parse initial state from content - only when panel is open to avoid wasted parsing
     useEffect(() => {
+        if (!isOpen) return; // Skip parsing when collapsed
         try {
             const { data } = matter(content);
             const parsedTags = Array.isArray(data.tags) 
@@ -28,7 +29,7 @@ const MetadataEditor = ({ content, onChange }: { content: string; onChange: (new
         } catch (e) {
             // ignore parse errors
         }
-    }, [content, isOpen]); // Sync when opening or content changes externally
+    }, [content, isOpen]); // Sync when opening or content changes while open
 
     // Commit the current tag list to the actual markdown content
     const commitToContent = (newTags: string[]) => {
@@ -200,6 +201,56 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   const highlightedPreviewElementsRef = useRef<HTMLElement[]>([]);
   const MAX_HIGHLIGHT_RETRIES = 5;
   const HIGHLIGHT_RETRY_DELAY = 120;
+  
+  // === PERFORMANCE: Preview Pane Cache ===
+  // DOM queries are expensive; cache the preview pane reference
+  // React best practice: useRef for mutable values that don't trigger re-renders
+  const previewPaneRef = useRef<Element | null>(null);
+  const getPreviewPane = useCallback(() => {
+    // Lazy initialization + stale check (element may be removed from DOM)
+    if (!previewPaneRef.current || !previewPaneRef.current.isConnected) {
+      previewPaneRef.current = document.querySelector('.group\\/preview .overflow-y-auto');
+    }
+    return previewPaneRef.current;
+  }, []);
+  
+  // === PERFORMANCE: Cloze Index Cache ===
+  // Build index once when content changes, not on every jump
+  // This is the most impactful optimization for long documents
+  const clozeIndexRef = useRef<{
+    content: string;  // Cache key
+    allClozes: { pos: number; id: number }[];
+    byId: Map<number, number[]>;  // id -> positions array
+  } | null>(null);
+  
+  const getClozeIndex = useCallback((text: string) => {
+    // Return cached if content unchanged (O(1) vs O(n) regex scan)
+    if (clozeIndexRef.current && clozeIndexRef.current.content === text) {
+      return clozeIndexRef.current;
+    }
+    
+    // Build index in single pass - O(n) but only once per content change
+    const allClozes: { pos: number; id: number }[] = [];
+    const byId = new Map<number, number[]>();
+    const regex = /{{c(\d+)::/g;
+    let match;
+    
+    while ((match = regex.exec(text)) !== null) {
+      const id = parseInt(match[1], 10);
+      allClozes.push({ pos: match.index, id });
+      
+      // Group by ID for scrollToCloze cycling
+      const positions = byId.get(id);
+      if (positions) {
+        positions.push(match.index);
+      } else {
+        byId.set(id, [match.index]);
+      }
+    }
+    
+    clozeIndexRef.current = { content: text, allClozes, byId };
+    return clozeIndexRef.current;
+  }, []);
 
   const clearCurrentPreviewHighlight = () => {
     if (highlightedPreviewElementsRef.current.length > 0) {
@@ -214,7 +265,8 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     }
   };
 
-  const flashPreviewCloze = (id: number, attempt = 0) => {
+  // PERFORMANCE: Use useCallback to create stable reference
+  const flashPreviewCloze = useCallback((id: number, attempt = 0) => {
     const elements = Array.from(document.querySelectorAll(`[data-cloze-id="${id}"]`) as NodeListOf<HTMLElement>);
 
     if (elements.length === 0) {
@@ -226,9 +278,12 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
     clearCurrentPreviewHighlight();
 
-    // Directly add class without nested RAFs - outline doesn't need removal first
-    elements.forEach((el) => {
-        el.classList.add('cloze-target-highlight');
+    // PERFORMANCE: Batch classList changes in a single microtask to reduce style recalculations
+    // Using queueMicrotask to defer until after current task completes
+    queueMicrotask(() => {
+        elements.forEach((el) => {
+            el.classList.add('cloze-target-highlight');
+        });
     });
 
     highlightedPreviewElementsRef.current = elements;
@@ -236,35 +291,48 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     highlightTimerRef.current = setTimeout(() => {
         clearCurrentPreviewHighlight();
     }, 1800);
-  };
+  }, []);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cursorUpdateRafRef = useRef<number | null>(null);
-
-  // Helper: Calculate actual line height from textarea computed style
-  const getLineHeight = useCallback((textarea: HTMLTextAreaElement): number => {
-    const computed = getComputedStyle(textarea);
-    const lineHeight = computed.lineHeight;
-    if (lineHeight === 'normal') {
-      // For 'normal', use fontSize * 1.2 as approximation
-      return parseFloat(computed.fontSize) * 1.2;
+  
+  // PERFORMANCE: Cache textarea geometry to avoid repeated getComputedStyle calls
+  // These values rarely change, so we cache them and only update on resize
+  const textareaGeometryRef = useRef<{ lineHeight: number; clientHeight: number } | null>(null);
+  
+  // Get cached geometry, computing only once per session (or on resize)
+  const getTextareaGeometry = useCallback((textarea: HTMLTextAreaElement, forceRecalc = false) => {
+    if (!forceRecalc && textareaGeometryRef.current) {
+      // Return fully cached values - no DOM reads
+      return textareaGeometryRef.current;
     }
-    return parseFloat(lineHeight);
-  }, []);
-
-  // Helper: Scroll textarea to show target at ~20% from top (upper-middle)
-  const scrollTextareaToLine = useCallback((textarea: HTMLTextAreaElement, charPos: number) => {
-    const val = textarea.value;
-    const textBefore = val.substring(0, charPos);
-    const lineCount = (textBefore.match(/\n/g) || []).length;
-    const lineHeight = getLineHeight(textarea);
-    const targetTop = lineCount * lineHeight;
-    // Position at 20% from top for better visibility (upper-middle)
-    const scrollTarget = Math.max(0, targetTop - textarea.clientHeight * 0.2);
     
-    // Use smooth scroll behavior for better UX
-    textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
-  }, [getLineHeight]);
+    // Compute line height once (expensive getComputedStyle call)
+    const computed = getComputedStyle(textarea);
+    const lineHeightStr = computed.lineHeight;
+    let lineHeight: number;
+    if (lineHeightStr === 'normal') {
+      lineHeight = parseFloat(computed.fontSize) * 1.2;
+    } else {
+      lineHeight = parseFloat(lineHeightStr);
+    }
+    
+    const geometry = {
+      lineHeight,
+      clientHeight: textarea.clientHeight
+    };
+    textareaGeometryRef.current = geometry;
+    return geometry;
+  }, []);
+  
+  // Invalidate geometry cache on window resize
+  useEffect(() => {
+    const handleResize = () => {
+      textareaGeometryRef.current = null;
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const scrollToCloze = (id: number) => {
     const textarea = textareaRef.current;
@@ -273,15 +341,11 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     const val = textarea.value;
     const pattern = `{{c${id}::`;
     
-    // Find all occurrences in editor - optimized single pass
-    const indices: number[] = [];
-    let pos = val.indexOf(pattern);
-    while (pos !== -1) {
-        indices.push(pos);
-        pos = val.indexOf(pattern, pos + 1);
-    }
-
-    if (indices.length === 0) return;
+    // PERFORMANCE: Use cached index instead of scanning on every jump
+    const clozeIndex = getClozeIndex(val);
+    const indices = clozeIndex.byId.get(id);
+    
+    if (!indices || indices.length === 0) return;
 
     // Cycle logic: Find the next occurrence after the current cursor
     const currentStart = textarea.selectionStart;
@@ -290,30 +354,51 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
     const targetPos = indices[targetIndex];
 
-    // Batch all DOM operations in a single RAF for performance
+    // PERFORMANCE: Pre-compute ALL geometry BEFORE any RAF to avoid Layout Thrashing
+    // This batches all READ operations together
+    const geometry = getTextareaGeometry(textarea);
+    // PERFORMANCE: Count newlines without creating substring or match array
+    // Old: val.substring(0, targetPos).match(/\n/g)?.length - creates 2 temp objects
+    // New: Simple loop - O(n) but zero allocations
+    let lineCount = 0;
+    for (let i = 0; i < targetPos; i++) {
+      if (val.charCodeAt(i) === 10) lineCount++;  // 10 = '\n'
+    }
+    const targetTop = lineCount * geometry.lineHeight;
+    const scrollTarget = Math.max(0, targetTop - geometry.clientHeight * 0.2);
+
+    // Pre-read preview scroll info BEFORE RAF (avoid read-after-write)
+    // PERFORMANCE: Use cached preview pane reference
+    const previewPane = getPreviewPane();
+    const previewElements = document.querySelectorAll(`[data-cloze-id="${id}"]`);
+    const targetEl = previewElements[targetIndex] as HTMLElement | undefined;
+    let previewScrollOffset: number | null = null;
+    if (targetEl && previewPane) {
+        const paneRect = previewPane.getBoundingClientRect();
+        const elRect = targetEl.getBoundingClientRect();
+        previewScrollOffset = elRect.top - paneRect.top - paneRect.height * 0.2;
+    }
+    const currentPreviewScroll = previewPane?.scrollTop ?? 0;
+
+    // Batch all DOM WRITE operations in a single RAF - no reads inside!
     requestAnimationFrame(() => {
       // 1. Focus and select
       textarea.focus();
       textarea.setSelectionRange(targetPos, targetPos + pattern.length);
       
-      // 2. Scroll editor to target
-      scrollTextareaToLine(textarea, targetPos);
+      // 2. Scroll editor to target (using pre-computed value)
+      textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
 
-      // 3. Scroll Preview - smooth scroll for better UX
-      const previewPane = document.querySelector('.group\\/preview .overflow-y-auto');
-      const previewElements = document.querySelectorAll(`[data-cloze-id="${id}"]`);
-      const targetEl = previewElements[targetIndex] as HTMLElement | undefined;
-      if (targetEl && previewPane) {
-        // Scroll to position element at ~20% from top (matching editor)
-        const paneRect = previewPane.getBoundingClientRect();
-        const elRect = targetEl.getBoundingClientRect();
-        const scrollOffset = elRect.top - paneRect.top - paneRect.height * 0.2;
-        previewPane.scrollTo({ top: previewPane.scrollTop + scrollOffset, behavior: 'smooth' });
+      // 3. Scroll Preview using pre-computed offset
+      if (previewPane && previewScrollOffset !== null) {
+        previewPane.scrollTo({ top: currentPreviewScroll + previewScrollOffset, behavior: 'smooth' });
       }
       
-      // 4. Highlight and update state
+      // 4. Highlight (deferred via queueMicrotask inside flashPreviewCloze)
       flashPreviewCloze(id);
-      setTargetClozeId(id);
+      
+      // 5. Update React state AFTER all DOM operations (separate from DOM writes)
+      queueMicrotask(() => setTargetClozeId(id));
     });
   };
   
@@ -324,13 +409,9 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       const full = textarea.value;
       const currentPos = textarea.selectionStart;
       
-      // Optimized: Build index in single pass
-      const indices: { pos: number, id: number }[] = [];
-      const regex = /{{c(\d+)::/g;
-      let match;
-      while ((match = regex.exec(full)) !== null) {
-          indices.push({ pos: match.index, id: parseInt(match[1], 10) });
-      }
+      // PERFORMANCE: Use cached index - O(1) lookup vs O(n) regex scan
+      const clozeIndex = getClozeIndex(full);
+      const indices = clozeIndex.allClozes;
       
       if (indices.length === 0) return;
       
@@ -353,33 +434,53 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       const target = indices[targetIndex];
       const pattern = `{{c${target.id}::`;
       
-      // Batch DOM operations in RAF
+      // PERFORMANCE: Pre-compute geometry before RAF to avoid Layout Thrashing
+      const geometry = getTextareaGeometry(textarea);
+      // PERFORMANCE: Count newlines without allocations
+      let lineCount = 0;
+      for (let i = 0; i < target.pos; i++) {
+        if (full.charCodeAt(i) === 10) lineCount++;  // 10 = '\n'
+      }
+      const targetTop = lineCount * geometry.lineHeight;
+      const scrollTarget = Math.max(0, targetTop - geometry.clientHeight * 0.2);
+
+      // Calculate instance index for preview sync (before RAF)
+      let instanceIndex = 0;
+      for (let i = 0; i < targetIndex; i++) {
+          if (indices[i].id === target.id) instanceIndex++;
+      }
+      
+      // PERFORMANCE: Pre-read ALL preview geometry BEFORE RAF to avoid Layout Thrashing
+      // Use cached preview pane reference
+      const previewPane = getPreviewPane();
+      const previewElements = document.querySelectorAll(`[data-cloze-id="${target.id}"]`);
+      const targetEl = previewElements[instanceIndex] as HTMLElement | undefined;
+      let previewScrollOffset: number | null = null;
+      if (targetEl && previewPane) {
+          const paneRect = previewPane.getBoundingClientRect();
+          const elRect = targetEl.getBoundingClientRect();
+          previewScrollOffset = elRect.top - paneRect.top - paneRect.height * 0.2;
+      }
+      const currentPreviewScroll = previewPane?.scrollTop ?? 0;
+
+      // Batch all DOM WRITE operations in RAF - no reads inside!
       requestAnimationFrame(() => {
           textarea.focus();
           textarea.setSelectionRange(target.pos, target.pos + pattern.length);
           
-          // Scroll editor to target (upper-middle position)
-          scrollTextareaToLine(textarea, target.pos);
+          // Scroll editor to target (using pre-computed value)
+          textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
           
-          // Calculate instance index for preview sync
-          let instanceIndex = 0;
-          for (let i = 0; i < targetIndex; i++) {
-              if (indices[i].id === target.id) instanceIndex++;
-          }
-          
-          // Scroll preview with smooth animation
-          const previewPane = document.querySelector('.group\\/preview .overflow-y-auto');
-          const previewElements = document.querySelectorAll(`[data-cloze-id="${target.id}"]`);
-          const targetEl = previewElements[instanceIndex] as HTMLElement | undefined;
-          if (targetEl && previewPane) {
-              const paneRect = previewPane.getBoundingClientRect();
-              const elRect = targetEl.getBoundingClientRect();
-              const scrollOffset = elRect.top - paneRect.top - paneRect.height * 0.2;
-              previewPane.scrollTo({ top: previewPane.scrollTop + scrollOffset, behavior: 'smooth' });
+          // Scroll preview using pre-computed offset
+          if (previewPane && previewScrollOffset !== null) {
+              previewPane.scrollTo({ top: currentPreviewScroll + previewScrollOffset, behavior: 'smooth' });
           }
 
+          // Highlight (deferred via queueMicrotask inside flashPreviewCloze)
           flashPreviewCloze(target.id);
-          setTargetClozeId(target.id);
+          
+          // Update React state AFTER all DOM operations
+          queueMicrotask(() => setTargetClozeId(target.id));
       });
   };
 
@@ -912,7 +1013,6 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           target = unclosed[0];
       }
 
-      textarea.focus();
       const val = textarea.value;
       let end = target.index + 2;
       if (typeof (target as any).id === 'number') {
@@ -922,14 +1022,18 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
               end = target.index + prefix.length;
           }
       }
-      textarea.setSelectionRange(target.index, end); // Select the {{
 
-      // Scroll to center
+      // PERFORMANCE: Pre-compute geometry before DOM operations
+      const geometry = getTextareaGeometry(textarea);
       const textBefore = val.substring(0, target.index);
-      const lines = textBefore.split('\n').length;
-      const lineHeight = 24;
-      const targetTop = (lines - 1) * lineHeight;
-      textarea.scrollTop = Math.max(0, targetTop - textarea.clientHeight / 2);
+      const lineCount = (textBefore.match(/\n/g) || []).length;
+      const targetTop = lineCount * geometry.lineHeight;
+      const scrollTarget = Math.max(0, targetTop - geometry.clientHeight * 0.5);
+
+      // Batch DOM write operations
+      textarea.focus();
+      textarea.setSelectionRange(target.index, end);
+      textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
   };
 
   const handlePreviewErrorClick = useCallback((
@@ -972,12 +1076,18 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           end = tentativeEnd;
       }
 
+      // PERFORMANCE: Pre-compute geometry before DOM operations
+      const geometry = getTextareaGeometry(textarea);
+      const textBefore = val.substring(0, start);
+      const lineCount = (textBefore.match(/\n/g) || []).length;
+      const targetTop = lineCount * geometry.lineHeight;
+      const scrollTarget = Math.max(0, targetTop - geometry.clientHeight * 0.2);
+
+      // Batch DOM write operations
       textarea.focus();
       textarea.setSelectionRange(start, end);
-
-      // Scroll to target (upper-middle position)
-      scrollTextareaToLine(textarea, start);
-  }, [clozeStats, scrollTextareaToLine]);
+      textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+  }, [clozeStats, getTextareaGeometry]);
 
   const handlePreviewClozeContextMenu = useCallback((id: number, occurrenceIndex: number, target: HTMLElement, _event: React.MouseEvent) => {
       // Trigger Menu on Right Click
@@ -996,22 +1106,34 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     
+    // PERFORMANCE: Read all geometry info BEFORE RAF to avoid Layout Thrashing
+    // This batches all "read" operations together
     const full = textarea.value;
     const info = ClozeUtils.findClozeByIdAndOccurrence(full, id, occurrenceIndex);
+    
+    // Pre-compute geometry (reading) before RAF (writing)
+    const geometry = getTextareaGeometry(textarea);
+    const computeScrollTarget = (charPos: number) => {
+      const textBefore = full.substring(0, charPos);
+      const lineCount = (textBefore.match(/\n/g) || []).length;
+      const targetTop = lineCount * geometry.lineHeight;
+      return Math.max(0, targetTop - geometry.clientHeight * 0.2);
+    };
 
-    // Batch all DOM operations in RAF for performance
+    // RAF for write operations only - no DOM reads inside
     requestAnimationFrame(() => {
-      setTargetClozeId(id);
-      
       if (info) {
           const { answerStart, answerEnd } = info;
+          const scrollTarget = computeScrollTarget(answerStart);
+          
+          // All DOM write operations first
           textarea.focus();
           textarea.setSelectionRange(answerStart, answerEnd);
-
-          // Scroll to target (upper-middle position)
-          scrollTextareaToLine(textarea, answerStart);
-
+          textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
           flashPreviewCloze(id);
+          
+          // React state update AFTER DOM operations (deferred to avoid blocking)
+          queueMicrotask(() => setTargetClozeId(id));
           return;
       }
 
@@ -1022,16 +1144,18 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       const safeIndex = ((occurrenceIndex % indices.length) + indices.length) % indices.length;
       const start = indices[safeIndex];
       const pattern = `{{c${id}::`;
+      const scrollTarget = computeScrollTarget(start);
       
+      // All DOM write operations first
       textarea.focus();
       textarea.setSelectionRange(start, start + pattern.length);
-      
-      // Scroll to target (upper-middle position)
-      scrollTextareaToLine(textarea, start);
-
+      textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
       flashPreviewCloze(id);
+      
+      // React state update AFTER DOM operations
+      queueMicrotask(() => setTargetClozeId(id));
     });
-  }, [flashPreviewCloze, scrollTextareaToLine]);
+  }, [flashPreviewCloze, getTextareaGeometry]);
 
   if (!currentNote || !currentFilepath) return null;
 
@@ -1252,11 +1376,10 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           </div>
       </div>
 
-      {/* Cloze Navigator (Timeline Style) */}
+      {/* Cloze Navigator (Timeline Style) - merged inner wrappers */}
       {clozeStats.entries.length > 0 && (
          <div className="relative z-20 bg-base-100/80 backdrop-blur-md border-b border-base-200/50">
-            <div className="flex items-center px-2 py-2 overflow-x-auto no-scrollbar gap-1 mask-linear-fade">
-                <div className="flex items-center gap-1 pr-4">
+            <div className="flex items-center px-2 py-2 pr-6 overflow-x-auto no-scrollbar gap-1 mask-linear-fade">
                     {clozeStats.entries.map(({ id, count }) => {
                         const isMulti = count > 1;
                         const isTarget = targetClozeId === id;
@@ -1292,7 +1415,6 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
                         </button>
                         );
                     })}
-                </div>
             </div>
          </div>
       )}

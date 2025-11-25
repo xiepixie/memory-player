@@ -3,12 +3,10 @@ import { Trash2, RefreshCw, RotateCcw, FileText } from 'lucide-react';
 import { useAppStore } from '../../store/appStore';
 import { useToastStore } from '../../store/toastStore';
 import type { NoteMetadata } from '../../lib/storage/types';
-import { motion, AnimatePresence } from 'framer-motion';
+// PERFORMANCE: Removed Framer Motion - using CSS animations instead
 import { CardHeader } from './Shared';
 
-// Match ActionCenter timing for coordinated appearance
-const PARENT_SETTLE_DELAY = 0.25;
-const SMOOTH_EASE: [number, number, number, number] = [0.25, 0.1, 0.25, 1];
+// PERFORMANCE: Using CSS animations for card entry (see index.css .animate-card-entry)
 
 export const RecycleBin = () => {
   const dataService = useAppStore((state) => state.dataService);
@@ -50,11 +48,9 @@ export const RecycleBin = () => {
   };
 
   return (
-    <motion.div 
-      className="card bg-base-100 shadow-sm border border-base-200 h-full min-h-[200px]"
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay: PARENT_SETTLE_DELAY + 0.08, ease: SMOOTH_EASE }}
+    <div 
+      className="card bg-base-100 shadow-sm border border-base-200 h-full min-h-[200px] animate-card-entry"
+      style={{ '--entry-delay': 330 } as React.CSSProperties}
     >
       <div className="card-body p-5 flex flex-col h-full">
         <CardHeader
@@ -83,21 +79,16 @@ export const RecycleBin = () => {
 
         {items.length > 0 && (
           <div className="flex-1 overflow-y-auto space-y-2 text-xs">
-            <AnimatePresence initial={false}>
-              {items.map((note) => {
+              {items.map((note, index) => {
                 const fullPath = note.filepath || '';
                 const fileName = fullPath.split(/[\\/]/).pop() || note.noteId;
                 const parentDir = fullPath && fileName ? fullPath.slice(0, fullPath.lastIndexOf(fileName)) : '';
 
                 return (
-                  <motion.div
+                  <div
                     key={note.noteId}
-                    layout
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -4 }}
-                    transition={{ duration: 0.15 }}
-                    className="py-1.5 rounded-lg bg-base-200/60 border border-base-300/60"
+                    className="py-1.5 rounded-lg bg-base-200/60 border border-base-300/60 animate-fade-slide-in"
+                    style={{ animationDelay: `${index * 30}ms` }}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -131,13 +122,12 @@ export const RecycleBin = () => {
                         )}
                       </button>
                     </div>
-                  </motion.div>
+                  </div>
                 );
               })}
-            </AnimatePresence>
           </div>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }

@@ -3,7 +3,7 @@ import { useToastStore } from '../store/toastStore';
 import { GradingBar } from './GradingBar';
 import { SessionSummary } from './SessionSummary';
 import { ArrowLeft, Maximize2, Minimize2, PenTool, Brain, Eye, StickyNote as StickyNoteIcon } from 'lucide-react';
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, lazy, Suspense, useRef } from 'react';
 import { ThreeColumnLayout } from './shared/ThreeColumnLayout';
 import { TableOfContents } from './shared/TableOfContents';
 import { FileTreeView } from './shared/FileTreeView';
@@ -16,39 +16,40 @@ const BlurModeLazy = lazy(() => import('./modes/BlurMode').then((m) => ({ defaul
 const StickyBoardLazy = lazy(() => import('./sticky/StickyBoard').then((m) => ({ default: m.StickyBoard })));
 
 export const NoteRenderer = () => {
+    // ZUSTAND BEST PRACTICE: 
+    // - Separate high-frequency updates (queue, sessionIndex) from stable refs (actions)
+    // - fileMetadatas moved to FileTreeView for isolation (it changes frequently)
+    // - Actions are stable references, can be grouped
     const {
         viewMode,
         setViewMode,
-        sessionIndex,
         closeNote,
         currentFilepath,
         files,
         loadNote,
-        fileMetadatas,
         rootPath,
         currentNote,
         currentMetadata,
-        queue,
         suspendCard,
         skipCurrentCard,
     } = useAppStore(
         useShallow((state) => ({
             viewMode: state.viewMode,
             setViewMode: state.setViewMode,
-            sessionIndex: state.sessionIndex,
             closeNote: state.closeNote,
             currentFilepath: state.currentFilepath,
             files: state.files,
             loadNote: state.loadNote,
-            fileMetadatas: state.fileMetadatas,
             rootPath: state.rootPath,
             currentNote: state.currentNote,
             currentMetadata: state.currentMetadata,
-            queue: state.queue,
             suspendCard: state.suspendCard,
             skipCurrentCard: state.skipCurrentCard,
         })),
     );
+    // ZUSTAND: Separate subscriptions for frequently changing values
+    const sessionIndex = useAppStore((state) => state.sessionIndex);
+    const queue = useAppStore((state) => state.queue);
     const currentClozeIndex = useAppStore((state) => state.currentClozeIndex);
     const sessionStats = useAppStore((state) => state.sessionStats);
     const [immersive, setImmersive] = useState(false);
@@ -80,18 +81,35 @@ export const NoteRenderer = () => {
     }, [queue.length, sessionStats.timeStarted, sessionIndex, viewMode, staleCheckDone, setViewMode, addToast]);
 
     // Restore note content if we have a filepath but no parsed note yet (e.g. after app restart)
+    // PERFORMANCE: Use ref to prevent duplicate hydration calls when dependencies change
+    const hydrationInProgressRef = useRef<string | null>(null);
     useEffect(() => {
-        if (currentFilepath && !currentNote && viewMode !== 'library') {
-            setIsHydrating(true);
-            // Restore with session context (clozeIndex) if available
-            const targetCloze = queue.length > 0 && sessionIndex < queue.length 
-                ? queue[sessionIndex]?.clozeIndex 
-                : currentClozeIndex;
-            loadNote(currentFilepath, targetCloze).finally(() => {
-                setIsHydrating(false);
-            });
+        // Only hydrate if we have a filepath, no note content, and not in library view
+        if (!currentFilepath || currentNote || viewMode === 'library') {
+            hydrationInProgressRef.current = null;
+            return;
         }
-    }, [currentFilepath, currentNote, loadNote, viewMode, queue, sessionIndex, currentClozeIndex]);
+        
+        // Skip if already hydrating this filepath (prevents duplicate calls)
+        if (hydrationInProgressRef.current === currentFilepath) {
+            return;
+        }
+        
+        hydrationInProgressRef.current = currentFilepath;
+        setIsHydrating(true);
+        
+        // Restore with session context (clozeIndex) if available
+        const targetCloze = queue.length > 0 && sessionIndex < queue.length 
+            ? queue[sessionIndex]?.clozeIndex 
+            : currentClozeIndex;
+            
+        loadNote(currentFilepath, targetCloze).finally(() => {
+            setIsHydrating(false);
+            hydrationInProgressRef.current = null;
+        });
+    // IMPORTANT: Reduced dependencies - only re-run when filepath changes or note becomes null
+    // queue/sessionIndex/currentClozeIndex are read at call time, not reactive triggers
+    }, [currentFilepath, currentNote, viewMode, loadNote]);
 
 
     const isStudyMode = viewMode === 'test' || viewMode === 'master';
@@ -142,18 +160,38 @@ export const NoteRenderer = () => {
         return <SessionSummary />;
     }
 
-    // Show loading state during hydration (cold start after page refresh)
+    // Show loading state during hydration or when note is loading
+    // This provides immediate visual feedback when user clicks a file
     if (isHydrating || (currentFilepath && !currentNote)) {
+        // Cross-platform filename extraction for loading state
+        const loadingNoteName = currentFilepath?.split(/[\\/]/).pop()?.replace(/\.md$/i, '') || 'Loading...';
+        
         return (
-            <div className="h-full w-full flex flex-col items-center justify-center bg-base-100">
-                <div className="flex flex-col items-center gap-4">
-                    <div className="loading loading-spinner loading-lg text-primary" />
-                    <div className="text-sm text-base-content/60">Restoring your session...</div>
-                    {hasSessionInProgress && (
-                        <div className="text-xs text-base-content/40 font-mono">
-                            Card {sessionIndex + 1} of {effectiveTotal}
+            <div className="h-full w-full flex flex-col bg-base-100">
+                {/* Header skeleton with actual file name */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-base-200 bg-base-100/95">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className="w-8 h-8 rounded-full bg-base-200 animate-pulse" />
+                        <div className="flex flex-col min-w-0">
+                            <span className="font-bold text-sm truncate">{loadingNoteName}</span>
+                            {hasSessionInProgress && (
+                                <span className="text-[10px] opacity-50 font-mono">
+                                    {sessionIndex + 1} / {effectiveTotal}
+                                </span>
+                            )}
                         </div>
-                    )}
+                    </div>
+                    <div className="flex justify-center">
+                        <div className="h-8 w-48 rounded-full bg-base-200 animate-pulse" />
+                    </div>
+                    <div className="flex justify-end gap-2 flex-1">
+                        <div className="w-8 h-8 rounded-full bg-base-200/50 animate-pulse" />
+                    </div>
+                </div>
+                
+                {/* Content skeleton */}
+                <div className="flex-1 flex justify-center overflow-hidden">
+                    <ContentSkeleton />
                 </div>
             </div>
         );
@@ -201,11 +239,11 @@ export const NoteRenderer = () => {
                 <div className="text-xs font-bold opacity-40 uppercase tracking-widest text-[10px]">Explorer</div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
+                {/* ZUSTAND: FileTreeView now subscribes to fileMetadatas directly */}
                 <FileTreeView
                     files={files}
                     rootPath={rootPath}
                     loadNote={loadNote}
-                    metadatas={fileMetadatas}
                     className="bg-transparent shadow-none p-0"
                 />
             </div>
@@ -383,9 +421,9 @@ export const NoteRenderer = () => {
                 />
             </Suspense>
 
-            {/* Content Area - Dual Layer Persistent Architecture with CSS transitions */}
+            {/* Content Area - Dual Layer Persistent Architecture */}
             <div className="relative flex-1 w-full h-full overflow-hidden bg-base-100">
-                    {/* Layer 1: Editor (Persistent) */}
+                    {/* Layer 1: Editor - no inner wrapper needed */}
                     <div
                         className={`absolute inset-0 w-full h-full overflow-hidden bg-base-100 transition-all duration-300 ease-out ${
                             viewMode === 'edit' 
@@ -393,14 +431,12 @@ export const NoteRenderer = () => {
                                 : '-translate-x-[5%] opacity-0 scale-[0.98] z-0 pointer-events-none'
                         }`}
                     >
-                        <div className="w-full h-full">
-                            <Suspense fallback={<ContentSkeleton />}>
-                                <EditModeLazy active={viewMode === 'edit'} />
-                            </Suspense>
-                        </div>
+                        <Suspense fallback={<ContentSkeleton />}>
+                            <EditModeLazy active={viewMode === 'edit'} />
+                        </Suspense>
                     </div>
 
-                    {/* Layer 2: Review (Cloze/Blur) - Both stay mounted for instant switching */}
+                    {/* Layer 2: Review - max-width merged into mode wrappers */}
                     <div
                         id="note-scroll-container"
                         className={`absolute inset-0 w-full h-full overflow-y-auto overflow-x-hidden bg-base-100 transition-all duration-300 ease-out ${
@@ -409,37 +445,36 @@ export const NoteRenderer = () => {
                                 : 'translate-x-[5%] opacity-0 scale-[0.98] z-0 pointer-events-none'
                         }`}
                     >
-                         <div className={`min-h-full mx-auto transition-all duration-300 ${
-                            immersive ? 'max-w-5xl' : 'max-w-3xl'
-                        }`}>
-                            {/* Cloze Mode Layer - stays mounted when in review modes */}
-                            {/* aria-hidden on inactive layer prevents TOC from collecting duplicate headings */}
-                            <div
-                                className={`transition-all duration-200 ease-out ${
-                                    viewMode === 'test' 
-                                        ? 'opacity-100 pointer-events-auto' 
-                                        : 'opacity-0 pointer-events-none absolute inset-0'
-                                }`}
-                                aria-hidden={viewMode !== 'test'}
-                            >
-                                <Suspense fallback={null}>
-                                    <ClozeModeLazy immersive={immersive} />
-                                </Suspense>
-                            </div>
-                            
-                            {/* Blur Mode Layer - stays mounted when in review modes */}
-                            <div
-                                className={`transition-all duration-200 ease-out ${
-                                    viewMode === 'master' 
-                                        ? 'opacity-100 pointer-events-auto' 
-                                        : 'opacity-0 pointer-events-none absolute inset-0'
-                                } ${viewMode === 'master' && !isPeeking ? 'blur-[5px]' : 'blur-0'}`}
-                                aria-hidden={viewMode !== 'master'}
-                            >
-                                <Suspense fallback={null}>
-                                    <BlurModeLazy immersive={immersive} />
-                                </Suspense>
-                            </div>
+                        {/* Cloze Mode Layer - max-width moved here from parent wrapper */}
+                        <div
+                            className={`min-h-full mx-auto transition-all duration-200 ease-out ${
+                                immersive ? 'max-w-5xl' : 'max-w-3xl'
+                            } ${
+                                viewMode === 'test' 
+                                    ? 'opacity-100 pointer-events-auto' 
+                                    : 'opacity-0 pointer-events-none absolute inset-0'
+                            }`}
+                            aria-hidden={viewMode !== 'test'}
+                        >
+                            <Suspense fallback={null}>
+                                <ClozeModeLazy immersive={immersive} />
+                            </Suspense>
+                        </div>
+                        
+                        {/* Blur Mode Layer - max-width moved here from parent wrapper */}
+                        <div
+                            className={`min-h-full mx-auto transition-all duration-200 ease-out ${
+                                immersive ? 'max-w-5xl' : 'max-w-3xl'
+                            } ${
+                                viewMode === 'master' 
+                                    ? 'opacity-100 pointer-events-auto' 
+                                    : 'opacity-0 pointer-events-none absolute inset-0'
+                            } ${viewMode === 'master' && !isPeeking ? 'blur-[5px]' : 'blur-0'}`}
+                            aria-hidden={viewMode !== 'master'}
+                        >
+                            <Suspense fallback={null}>
+                                <BlurModeLazy immersive={immersive} />
+                            </Suspense>
                         </div>
                     </div>
                 </div>

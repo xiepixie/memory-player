@@ -1,35 +1,33 @@
 import { useAppStore } from '../store/appStore';
-import { motion } from 'framer-motion';
 import { CheckCircle, Home } from 'lucide-react';
-import confetti from 'canvas-confetti';
-import { useEffect } from 'react';
+import { fireConfetti } from '../lib/confettiService';
+import { useEffect, useState } from 'react';
 
 export const SessionSummary = () => {
     const sessionStats = useAppStore((state) => state.sessionStats);
     const setViewMode = useAppStore((state) => state.setViewMode);
     const setQueue = useAppStore((state) => state.setQueue);
+    const [isVisible, setIsVisible] = useState(false);
 
-    // Trigger big confetti on mount
+    // PERFORMANCE: Trigger celebration confetti bursts using pre-initialized service
+    // Staggered bursts provide celebration effect without blocking UI
     useEffect(() => {
-        const duration = 3000;
-        const animationEnd = Date.now() + duration;
-        const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 };
+        // Trigger initial visibility for CSS animations
+        requestAnimationFrame(() => setIsVisible(true));
 
-        const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+        // Fire celebration confetti bursts
+        const burstTimes = [0, 300, 600, 900, 1200];
+        const timeouts = burstTimes.map((delay, i) => 
+            setTimeout(() => {
+                fireConfetti({
+                    particleCount: 40 - i * 5, // Decreasing particles
+                    spread: 70 + i * 10,
+                    origin: { x: i % 2 === 0 ? 0.3 : 0.7, y: 0.4 }
+                });
+            }, delay)
+        );
 
-        const interval: any = setInterval(function() {
-          const timeLeft = animationEnd - Date.now();
-
-          if (timeLeft <= 0) {
-            return clearInterval(interval);
-          }
-
-          const particleCount = 50 * (timeLeft / duration);
-          confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } });
-          confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } });
-        }, 250);
-
-        return () => clearInterval(interval);
+        return () => timeouts.forEach(clearTimeout);
     }, []);
 
     const now = Date.now();
@@ -40,25 +38,25 @@ export const SessionSummary = () => {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
 
+    // PERFORMANCE: Using CSS animations instead of Framer Motion
+    // Framer Motion's layout system causes expensive recalculations in Tauri WebView
     return (
         <div className="h-full w-full flex flex-col items-center justify-center bg-base-100 p-8 relative overflow-hidden">
             {/* Subtle background glow */}
             <div className="absolute inset-0 bg-gradient-to-b from-base-200/20 to-base-100 z-0" />
             
-            <motion.div
-                initial={{ scale: 0.9, opacity: 0, y: 20 }}
-                animate={{ scale: 1, opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
-                className="text-center max-w-lg w-full z-10 flex flex-col items-center"
+            <div
+                className={`text-center max-w-lg w-full z-10 flex flex-col items-center transition-all duration-500 ease-out ${
+                    isVisible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-5'
+                }`}
             >
-                <motion.div 
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ delay: 0.2, type: "spring", stiffness: 200, damping: 15 }}
-                    className="flex justify-center mb-8 text-success bg-success/10 p-6 rounded-full ring-1 ring-success/20"
+                <div 
+                    className={`flex justify-center mb-8 text-success bg-success/10 p-6 rounded-full ring-1 ring-success/20 transition-transform duration-300 delay-200 ${
+                        isVisible ? 'scale-100' : 'scale-0'
+                    }`}
                 >
                     <CheckCircle size={64} strokeWidth={1.5} />
-                </motion.div>
+                </div>
 
                 <h1 className="text-4xl font-serif font-bold mb-3 tracking-tight">Session Complete</h1>
                 <p className="text-base-content/60 mb-10 text-lg font-light">You've successfully reviewed your cards for now.</p>
@@ -83,7 +81,7 @@ export const SessionSummary = () => {
                     </div>
                 </div>
 
-                {/* Ratings Breakdown */}
+                {/* Ratings Breakdown - CSS animations for bar heights */}
                 <div className="flex justify-center items-end gap-4 mb-12 h-32 w-full px-4">
                     {[1, 2, 3, 4].map(rating => {
                         const count = sessionStats.ratings[rating] || 0;
@@ -96,11 +94,12 @@ export const SessionSummary = () => {
                         return (
                             <div key={rating} className="flex flex-col items-center gap-2 flex-1">
                                 <div className="text-xs font-bold opacity-80">{count > 0 ? count : ''}</div>
-                                <motion.div
-                                    initial={{ height: 0 }}
-                                    animate={{ height: `${Math.max(height, 2)}%` }}
-                                    transition={{ delay: 0.4 + rating * 0.1, duration: 1, ease: "circOut" }}
-                                    className={`w-full max-w-[60px] rounded-t-lg opacity-80 ${colors[rating]} shadow-sm`}
+                                <div
+                                    style={{ 
+                                        height: isVisible ? `${Math.max(height, 2)}%` : '0%',
+                                        transitionDelay: `${400 + rating * 100}ms`
+                                    }}
+                                    className={`w-full max-w-[60px] rounded-t-lg opacity-80 ${colors[rating]} shadow-sm transition-all duration-700 ease-out`}
                                 />
                                 <div className="text-[10px] uppercase tracking-wider font-bold opacity-40">{labels[rating]}</div>
                             </div>
@@ -119,7 +118,7 @@ export const SessionSummary = () => {
                     <Home size={20} />
                     Back to Library
                 </button>
-            </motion.div>
+            </div>
         </div>
     );
 };

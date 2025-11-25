@@ -1,4 +1,4 @@
-import { motion, AnimatePresence } from 'framer-motion';
+// PERFORMANCE: Removed most Framer Motion - using CSS transitions instead
 import { 
   Brain, FolderOpen, Search, X, Clock, Cloud, 
   LayoutGrid, List, FolderTree, LogOut, ChevronDown, RefreshCw,
@@ -167,25 +167,20 @@ export const LibraryHeader = ({
       : 'Cloud sync disabled';
 
   return (
-    <motion.div 
-      className="navbar h-16 min-h-[4rem] bg-base-100/60 backdrop-blur-xl border-b border-white/5 px-4 shrink-0 sticky top-0 z-50 gap-4 justify-between select-none relative"
-      initial={{ y: -20, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.4, ease: "easeOut" }}
+    <div 
+      className="navbar h-16 min-h-[4rem] bg-base-100/60 backdrop-blur-xl border-b border-white/5 px-4 shrink-0 sticky top-0 z-50 gap-4 justify-between select-none relative animate-header-entry"
     >
       {/* Drag Region */}
       <div className="absolute inset-0 z-0" data-tauri-drag-region />
 
       {/* LEFT: Brand + Vault context */}
       <div className="flex items-center gap-4 min-w-0 relative z-10 pointer-events-none">
-        <motion.div
-          className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity shrink-0 pointer-events-auto"
+        <div
+          className="flex items-center gap-3 cursor-pointer hover:opacity-80 hover:scale-[1.02] active:scale-[0.98] transition-all shrink-0 pointer-events-auto"
           onClick={() => {
             setRootPath(null);
             setFiles([]);
           }}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
           title="Return to Home"
         >
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center text-primary shadow-inner ring-1 ring-white/10">
@@ -194,16 +189,13 @@ export const LibraryHeader = ({
           <span className="font-bold text-lg tracking-tight hidden xl:inline bg-clip-text text-transparent bg-gradient-to-r from-base-content to-base-content/70">
             Memory Player
           </span>
-        </motion.div>
+        </div>
 
         {rootPath && (
           <>
             <div className="h-8 w-px bg-base-content/10 mx-1 hidden sm:block" />
-            <motion.div 
-              className="flex items-center gap-2 min-w-0 pointer-events-auto"
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.1 }}
+            <div 
+              className="flex items-center gap-2 min-w-0 pointer-events-auto animate-fade-slide-in"
             >
               {/* Show VaultSelector only in cloud mode, otherwise show folder name */}
               {syncMode === 'supabase' ? (
@@ -218,10 +210,8 @@ export const LibraryHeader = ({
                   </span>
                 </div>
               )}
-              <motion.button
-                whileHover={{ scale: 1.05, backgroundColor: "var(--fallback-b2,oklch(var(--b2)/0.5))" }}
-                whileTap={{ scale: 0.95 }}
-                className="btn btn-sm btn-square btn-ghost text-base-content/60 rounded-lg"
+              <button
+                className="btn btn-sm btn-square btn-ghost text-base-content/60 rounded-lg hover:scale-105 hover:bg-base-200/50 active:scale-95 transition-all"
                 onClick={onOpenFolder}
                 disabled={loading}
                 title="Change folder"
@@ -231,19 +221,16 @@ export const LibraryHeader = ({
                 ) : (
                   <FolderOpen size={18} />
                 )}
-              </motion.button>
-            </motion.div>
+              </button>
+            </div>
           </>
         )}
       </div>
 
       {/* CENTER: Search */}
       {rootPath && (
-        <motion.div 
-          className="flex-1 max-w-xl mx-auto relative z-20"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.1, duration: 0.2 }}
+        <div 
+          className="flex-1 max-w-xl mx-auto relative z-20 animate-fade-slide-in"
         >
           <div className="relative">
               <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors duration-150 z-10 pointer-events-none ${isSearchFocused ? 'text-primary' : 'text-base-content/40'}`} />
@@ -275,14 +262,11 @@ export const LibraryHeader = ({
               )}
           </div>
 
-          {/* Search History Dropdown */}
-          {isSearchFocused && searchHistory.length > 0 && (
-            <motion.div 
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.15 }}
-              className="absolute left-0 right-0 top-full mt-1.5 rounded-xl shadow-xl bg-base-100 border border-base-200 overflow-hidden z-30"
-            >
+          {/* Search History Dropdown - CSS transition */}
+          <div 
+            className={`absolute left-0 right-0 top-full mt-1.5 rounded-xl shadow-xl bg-base-100 border border-base-200 overflow-hidden z-30 dropdown-enter ${isSearchFocused && searchHistory.length > 0 ? 'dropdown-open' : 'dropdown-closed'}`}
+            aria-hidden={!isSearchFocused || searchHistory.length === 0}
+          >
               <div className="flex items-center justify-between px-3 py-2 text-[10px] uppercase tracking-wider text-base-content/40 bg-base-200/30 border-b border-base-200/50">
                 <span className="font-bold">Recent</span>
                 <button
@@ -311,22 +295,27 @@ export const LibraryHeader = ({
                   </li>
                 ))}
               </ul>
-            </motion.div>
-          )}
-        </motion.div>
+          </div>
+        </div>
       )}
 
       {/* RIGHT: Actions */}
       <div className="flex items-center gap-2 shrink-0 relative z-20">
         {rootPath && (
-          <motion.div 
-            className="flex items-center gap-2 mr-2"
-            initial={{ opacity: 0, x: 10 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.2 }}
+          <div 
+            className="flex items-center gap-2 mr-2 animate-fade-slide-in"
+            style={{ animationDelay: '100ms' }}
           >
-            {/* View Toggle */}
-            <div className="bg-base-200/50 p-1 rounded-lg flex gap-1 border border-base-200">
+            {/* View Toggle - CSS transition instead of layoutId for performance */}
+            <div className="relative bg-base-200/50 p-1 rounded-lg flex gap-1 border border-base-200">
+              {/* Sliding pill indicator */}
+              <div
+                className="absolute top-1 bottom-1 bg-base-100 rounded-md border border-base-200/50 shadow-sm transition-all duration-200 ease-out"
+                style={{
+                  width: 'calc(33.333% - 4px)',
+                  left: viewType === 'list' ? '4px' : viewType === 'grid' ? 'calc(33.333% + 2px)' : 'calc(66.666%)',
+                }}
+              />
               {[
                 { id: 'list', icon: List, label: 'List' },
                 { id: 'grid', icon: LayoutGrid, label: 'Grid' },
@@ -335,19 +324,12 @@ export const LibraryHeader = ({
                 <button
                   key={view.id}
                   onClick={() => setViewType(view.id as any)}
-                  className={`relative p-1.5 rounded-md transition-all ${
-                    viewType === view.id ? 'text-primary shadow-sm' : 'text-base-content/50 hover:text-base-content'
+                  className={`relative z-10 p-1.5 rounded-md transition-colors duration-150 ${
+                    viewType === view.id ? 'text-primary' : 'text-base-content/50 hover:text-base-content'
                   }`}
                   title={`${view.label} View`}
                 >
-                  {viewType === view.id && (
-                    <motion.div
-                      layoutId="view-toggle-bg"
-                      className="absolute inset-0 bg-base-100 rounded-md border border-base-200/50 shadow-sm"
-                      transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                    />
-                  )}
-                  <view.icon size={16} className="relative z-10" />
+                  <view.icon size={16} />
                 </button>
               ))}
             </div>
@@ -400,16 +382,11 @@ export const LibraryHeader = ({
                     <ChevronDown size={12} className={`text-base-content/40 transition-transform duration-200 ${isAccountOpen ? 'rotate-180' : ''}`} />
                   </button>
 
-                  {/* Account Dropdown */}
-                  <AnimatePresence>
-                    {isAccountOpen && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 8, scale: 0.96 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 8, scale: 0.96 }}
-                        transition={{ duration: 0.15, ease: 'easeOut' }}
-                        className="absolute right-0 top-full mt-2 w-72 bg-base-100 rounded-2xl shadow-2xl border border-base-200 overflow-hidden z-50"
-                      >
+                  {/* Account Dropdown - CSS transition */}
+                  <div
+                    className={`absolute right-0 top-full mt-2 w-72 bg-base-100 rounded-2xl shadow-2xl border border-base-200 overflow-hidden z-50 dropdown-enter ${isAccountOpen ? 'dropdown-open' : 'dropdown-closed'}`}
+                    aria-hidden={!isAccountOpen}
+                  >
                         {/* User Info Header */}
                         <div className="p-4 bg-gradient-to-br from-primary/5 to-transparent border-b border-base-200/50">
                           <div className="flex items-center gap-3">
@@ -457,9 +434,7 @@ export const LibraryHeader = ({
                             Sign out
                           </button>
                         </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                  </div>
                 </div>
               ) : (
                 /* Local-only mode indicator */
@@ -472,12 +447,12 @@ export const LibraryHeader = ({
                 </div>
               )}
             </div>
-          </motion.div>
+          </div>
         )}
 
         <div className="h-8 w-px bg-base-300 mx-1" />
         <ThemeController />
       </div>
-    </motion.div>
+    </div>
   );
 };

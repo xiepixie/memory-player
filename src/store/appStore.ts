@@ -50,7 +50,20 @@ const getIdbDatabase = (): Promise<IDBDatabase> => {
   return idbDatabasePromise;
 };
 
-const idbSetItem = async (name: string, value: string): Promise<void> => {
+// PERFORMANCE: Throttle IndexedDB writes to prevent excessive I/O in Tauri WebView
+// Each set() call in Zustand triggers a persist write, which can cause severe lag
+const THROTTLE_MS = 500; // Minimum interval between writes
+let pendingWrite: { name: string; value: string } | null = null;
+let writeTimer: ReturnType<typeof setTimeout> | null = null;
+let lastWriteTime = 0;
+
+const flushPendingWrite = async () => {
+  if (!pendingWrite) return;
+  const { name, value } = pendingWrite;
+  pendingWrite = null;
+  writeTimer = null;
+  lastWriteTime = Date.now();
+  
   try {
     const db = await getIdbDatabase();
     await new Promise<void>((resolve, reject) => {
@@ -72,6 +85,45 @@ const idbSetItem = async (name: string, value: string): Promise<void> => {
     }
   }
 };
+
+const idbSetItem = async (name: string, value: string): Promise<void> => {
+  const now = Date.now();
+  const timeSinceLastWrite = now - lastWriteTime;
+  
+  // Store the latest value (overwrites any pending value)
+  pendingWrite = { name, value };
+  
+  // If enough time has passed, write immediately
+  if (timeSinceLastWrite >= THROTTLE_MS) {
+    if (writeTimer) {
+      clearTimeout(writeTimer);
+      writeTimer = null;
+    }
+    await flushPendingWrite();
+    return;
+  }
+  
+  // Otherwise, schedule a write for later (debounce)
+  if (!writeTimer) {
+    writeTimer = setTimeout(() => {
+      flushPendingWrite();
+    }, THROTTLE_MS - timeSinceLastWrite);
+  }
+};
+
+// Ensure pending writes are flushed before page unload
+if (isBrowser()) {
+  window.addEventListener('beforeunload', () => {
+    if (pendingWrite) {
+      // Use synchronous localStorage as fallback for unload
+      try {
+        window.localStorage.setItem(pendingWrite.name, pendingWrite.value);
+      } catch (e) {
+        console.error('Failed to flush pending write on unload', e);
+      }
+    }
+  });
+}
 
 const idbGetItem = async (name: string): Promise<string | null> => {
   try {
@@ -708,36 +760,63 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
         pathMap[filepath] ||
         existingMeta?.noteId ||
         '';
+      
+      const cacheKey = inferredNoteId || filepath;
+      
+      // PERFORMANCE: Use same deduplication as syncNoteMetadata
+      const existingRequest = pendingMetadataRequests.get(cacheKey);
+      if (existingRequest) {
+        await existingRequest;
+        return;
+      }
+      
+      // Check TTL cache - skip if recently fetched
+      const lastFetch = metadataCacheTimestamps.get(cacheKey);
+      if (lastFetch && Date.now() - lastFetch < METADATA_CACHE_TTL_MS && existingMeta) {
+        return;
+      }
 
-      const meta = await dataService.getMetadata(inferredNoteId, filepath);
-      const finalNoteId = meta.noteId || inferredNoteId;
+      const fetchPromise = (async () => {
+        try {
+          const meta = await dataService.getMetadata(inferredNoteId, filepath);
+          const finalNoteId = meta.noteId || inferredNoteId;
+          
+          // Update cache timestamp
+          metadataCacheTimestamps.set(cacheKey, Date.now());
 
-      set((state) => {
-        const files = state.files.includes(filepath)
-          ? state.files
-          : [...state.files, filepath];
+          set((state) => {
+            const files = state.files.includes(filepath)
+              ? state.files
+              : [...state.files, filepath];
 
-        const nextIdMap = { ...state.idMap };
-        const nextPathMap = { ...state.pathMap };
+            const nextIdMap = { ...state.idMap };
+            const nextPathMap = { ...state.pathMap };
 
-        if (finalNoteId) {
-          nextIdMap[finalNoteId] = filepath;
-          nextPathMap[filepath] = finalNoteId;
+            if (finalNoteId) {
+              nextIdMap[finalNoteId] = filepath;
+              nextPathMap[filepath] = finalNoteId;
+            }
+
+            return {
+              files,
+              idMap: nextIdMap,
+              pathMap: nextPathMap,
+              fileMetadatas: {
+                ...state.fileMetadatas,
+                [filepath]: {
+                  ...meta,
+                  noteId: finalNoteId || meta.noteId,
+                },
+              },
+            };
+          });
+        } finally {
+          pendingMetadataRequests.delete(cacheKey);
         }
-
-        return {
-          files,
-          idMap: nextIdMap,
-          pathMap: nextPathMap,
-          fileMetadatas: {
-            ...state.fileMetadatas,
-            [filepath]: {
-              ...meta,
-              noteId: finalNoteId || meta.noteId,
-            },
-          },
-        };
-      });
+      })();
+      
+      pendingMetadataRequests.set(cacheKey, fetchPromise);
+      await fetchPromise;
     } catch (e) {
       console.error(`Failed to refresh metadata for ${filepath}`, e);
     }
@@ -1428,38 +1507,80 @@ function updateCacheAndIds(
   });
 }
 
+// PERFORMANCE: Request deduplication for syncNoteMetadata
+// Prevents multiple concurrent requests for the same noteId
+const pendingMetadataRequests = new Map<string, Promise<void>>();
+const METADATA_CACHE_TTL_MS = 30_000; // 30 seconds - avoid re-fetching recently synced metadata
+const metadataCacheTimestamps = new Map<string, number>();
+
 async function syncNoteMetadata(
   set: (fn: (state: AppState) => Partial<AppState>) => void, 
   get: () => AppState, 
   filepath: string, 
-  noteId: string | null
+  noteId: string | null,
+  forceRefresh = false
 ) {
-  // Pass noteId if available, otherwise fallback to filepath logic inside getMetadata
-  const metadata = await get().dataService.getMetadata(noteId || '', filepath);
-
-  // Inject the real ID if we have it (and it wasn't in the metadata returned?)
-  // Actually dataService.getMetadata usually returns what it found.
-  if (noteId) {
-    metadata.noteId = noteId;
-  }
-
-  set(state => {
-    // If metadata found a noteId that we didn't know, update map? 
-    // (The original logic did `if (noteId) { metadata.noteId = noteId; update fileMetadatas... }`)
-    
-    const nextMetas = { ...state.fileMetadatas, [filepath]: metadata };
-    
-    // If this is still the current file, update currentMetadata
-    const updates: Partial<AppState> = {
-        fileMetadatas: nextMetas
-    };
-
-    if (state.currentFilepath === filepath) {
-        updates.currentMetadata = metadata;
+  const cacheKey = noteId || filepath;
+  
+  // OPTIMIZATION 1: Skip if we have fresh cached metadata (within TTL)
+  if (!forceRefresh) {
+    const lastFetch = metadataCacheTimestamps.get(cacheKey);
+    if (lastFetch && Date.now() - lastFetch < METADATA_CACHE_TTL_MS) {
+      // Use existing metadata from store if available
+      const existingMeta = get().fileMetadatas[filepath];
+      if (existingMeta) {
+        // Still update currentMetadata if this is the current file
+        set(state => {
+          if (state.currentFilepath === filepath) {
+            return { currentMetadata: existingMeta };
+          }
+          return {};
+        });
+        return;
+      }
     }
+  }
+  
+  // OPTIMIZATION 2: Deduplicate concurrent requests for same noteId
+  const existingRequest = pendingMetadataRequests.get(cacheKey);
+  if (existingRequest) {
+    await existingRequest;
+    return;
+  }
+  
+  const fetchPromise = (async () => {
+    try {
+      // Pass noteId if available, otherwise fallback to filepath logic inside getMetadata
+      const metadata = await get().dataService.getMetadata(noteId || '', filepath);
 
-    return updates;
-  });
+      // Inject the real ID if we have it
+      if (noteId) {
+        metadata.noteId = noteId;
+      }
+      
+      // Update cache timestamp
+      metadataCacheTimestamps.set(cacheKey, Date.now());
+
+      set(state => {
+        const nextMetas = { ...state.fileMetadatas, [filepath]: metadata };
+        
+        const updates: Partial<AppState> = {
+            fileMetadatas: nextMetas
+        };
+
+        if (state.currentFilepath === filepath) {
+            updates.currentMetadata = metadata;
+        }
+
+        return updates;
+      });
+    } finally {
+      pendingMetadataRequests.delete(cacheKey);
+    }
+  })();
+  
+  pendingMetadataRequests.set(cacheKey, fetchPromise);
+  await fetchPromise;
 }
 
 const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
@@ -1470,40 +1591,78 @@ const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
 
   loadNote: async (filepath, targetClozeIndex = null) => {
     try {
-      // 1. Load Content (Cache -> Demo -> FS)
-      const { content, noteId } = await loadContentFromSource(get(), filepath);
-
-      // 2. Update Cache & ID Maps
-      // We only need to update cache/IDs if we actually loaded from FS or it's new
-      // But calling this always is safe and ensures LRU is updated (cache promotion)
-      updateCacheAndIds(set, filepath, content, noteId);
-
-      // 3. Parse & Update View State
-      const parsed = parseNote(content);
-      const { viewMode, fileMetadatas } = get();
-      const targetMode = ['edit', 'test', 'master'].includes(viewMode) ? viewMode : 'review';
+      // PERFORMANCE: Two-phase loading for instant UI feedback
+      // Phase 1: Immediately switch viewMode and set filepath (triggers Layout transition)
+      // Phase 2: Async load content (NoteRenderer shows loading state while waiting)
       
+      const currentViewMode = get().viewMode;
+      const targetMode = ['edit', 'test', 'master'].includes(currentViewMode) ? currentViewMode : 'review';
+      
+      // Phase 1: IMMEDIATE state update - triggers Layout CSS transition instantly
+      // currentNote is set to null to show loading state in NoteRenderer
       set({
         currentFilepath: filepath,
-        currentNote: parsed,
-        currentMetadata: fileMetadatas[filepath] || null,
+        currentNote: null, // Clear to show loading state
         currentClozeIndex: targetClozeIndex,
         viewMode: targetMode
       });
 
-      // Update review timer
-      if (targetClozeIndex !== null && (targetMode === 'test' || targetMode === 'review')) {
+      // Allow React to paint the transition before blocking on async work
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // Phase 2: Load content (may involve Tauri IPC)
+      const { content, noteId } = await loadContentFromSource(get(), filepath);
+
+      // Parse content
+      const parsed = parseNote(content);
+      
+      // Phase 3: Update with loaded content - single set() for performance
+      set(state => {
+        const updates: Partial<AppState> = {
+          currentNote: parsed,
+          currentMetadata: state.fileMetadatas[filepath] || null,
+        };
+        
+        // Update ID Maps if needed
+        if (noteId && state.pathMap[filepath] !== noteId) {
+          updates.idMap = { ...state.idMap, [noteId]: filepath };
+          updates.pathMap = { ...state.pathMap, [filepath]: noteId };
+        }
+
+        // Update Cache (LRU)
+        const existing = { ...state.contentCache };
+        delete existing[filepath]; 
+        const next = { ...existing, [filepath]: content };
+        const keys = Object.keys(next);
+        if (keys.length > MAX_CONTENT_CACHE_ENTRIES) {
+          const overflow = keys.length - MAX_CONTENT_CACHE_ENTRIES;
+          for (let i = 0; i < overflow; i++) {
+            delete next[keys[i]];
+          }
+        }
+        updates.contentCache = next;
+
+        return updates;
+      });
+
+      // Update review timer (outside of set() to avoid extra persist)
+      const { viewMode } = get();
+      if (targetClozeIndex !== null && (viewMode === 'test' || viewMode === 'review')) {
         currentReviewStartTime = Date.now();
       } else {
         currentReviewStartTime = null;
       }
 
-      // 4. Fetch & Sync Metadata (Async)
-      await syncNoteMetadata(set, get, filepath, noteId);
+      // Fetch & Sync Metadata (Async, fire-and-forget)
+      syncNoteMetadata(set, get, filepath, noteId).catch(e => {
+        console.error('[loadNote] Failed to sync metadata:', e);
+      });
 
     } catch (e) {
       console.error("Failed to load note:", e);
       const errorMessage = e instanceof Error ? e.message : String(e);
+      // Reset to library on error
+      set({ viewMode: 'library', currentFilepath: null, currentNote: null });
       useToastStore.getState().addToast(
         `Failed to load note|${filepath}\n${errorMessage}`,
         'error',
@@ -1585,7 +1744,7 @@ const createNoteSlice: AppStateCreator<NoteSlice> = (set, get) => ({
 
 const createUISlice: AppStateCreator<UISlice> = (set) => ({
   viewMode: 'library',
-  theme: 'winter',
+  theme: 'night',
 
   setViewMode: (mode) => set({ viewMode: mode }),
   setTheme: (theme) => set({ theme }),
@@ -1687,61 +1846,71 @@ const appStoreJSONStorage = createJSONStorage(() => getStorage(), {
   },
 });
 
-export const useAppStore = create<AppState>()(
-  devtools(
-    persist(
-      (...a) => ({
-        ...createServiceSlice(...a),
-        ...createVaultSlice(...a),
-        ...createHistorySlice(...a),
-        ...createSessionSlice(...a),
-        ...createNoteSlice(...a),
-        ...createUISlice(...a),
-        ...createSmartQueueSlice(...a),
-      }),
-      {
-        name: 'app-store',
-        version: 1,
-        storage: appStoreJSONStorage,
-        migrate: (persistedState: any, version: number) => {
-            if (version === 0) {
-                // Migration from v0 to v1
-                // Reset fileMetadatas if format is incompatible, or just keep it.
-                // Since we are adding fields, old data is fine, just missing 'lastServerSyncAt'.
-                return {
-                    ...persistedState,
-                    fileMetadatas: {}, // Safer to clear cache on schema change
-                    lastServerSyncAt: null
-                };
-            }
-            return persistedState;
-        },
-        partialize: (state) => ({
-          rootPath: state.rootPath,
-          recentVaults: state.recentVaults,
-          files: state.files,
-          theme: state.theme,
-          // Persist metadata for offline/optimistic support
-          // fileMetadatas removed to avoid performance issues (Issue 7). 
-          // It will be re-fetched by LibraryView -> loadAllMetadata.
-          lastServerSyncAt: state.lastServerSyncAt,
+// Only enable devtools in development mode to avoid serialization overhead in production
+const isDev = import.meta.env.DEV;
 
-          // Persist Session & View State for instant resume
-          viewMode: state.viewMode,
-          currentFilepath: state.currentFilepath,
-          // currentNote & currentMetadata are too heavy/derived to persist. 
-          // They will be re-loaded by NoteRenderer via loadNote(currentFilepath)
-          currentClozeIndex: state.currentClozeIndex,
+const persistConfig = {
+  name: 'app-store',
+  version: 1,
+  storage: appStoreJSONStorage,
+  migrate: (persistedState: any, version: number) => {
+      if (version === 0) {
+          // Migration from v0 to v1
+          // Reset fileMetadatas if format is incompatible, or just keep it.
+          // Since we are adding fields, old data is fine, just missing 'lastServerSyncAt'.
+          return {
+              ...persistedState,
+              fileMetadatas: {}, // Safer to clear cache on schema change
+              lastServerSyncAt: null
+          };
+      }
+      return persistedState;
+  },
+  partialize: (state: AppState) => ({
+    rootPath: state.rootPath,
+    recentVaults: state.recentVaults,
+    files: state.files,
+    theme: state.theme,
+    // Persist metadata for offline/optimistic support
+    // fileMetadatas removed to avoid performance issues (Issue 7). 
+    // It will be re-fetched by LibraryView -> loadAllMetadata.
+    lastServerSyncAt: state.lastServerSyncAt,
 
-          // Persist Active Review Session
-          queue: state.queue,
-          sessionIndex: state.sessionIndex,
-          sessionTotal: state.sessionTotal,
-          sessionStats: state.sessionStats,
-        }),
-      },
-    ),
-    { name: 'app-store' },
-  ),
-);
+    // Persist Session & View State for instant resume
+    viewMode: state.viewMode,
+    currentFilepath: state.currentFilepath,
+    // currentNote & currentMetadata are too heavy/derived to persist. 
+    // They will be re-loaded by NoteRenderer via loadNote(currentFilepath)
+    currentClozeIndex: state.currentClozeIndex,
+
+    // Persist Active Review Session
+    queue: state.queue,
+    sessionIndex: state.sessionIndex,
+    sessionTotal: state.sessionTotal,
+    sessionStats: state.sessionStats,
+  }),
+};
+
+// Conditional devtools wrapper - disabled in production for performance
+// In production, devtools serializes entire state on every update causing massive lag in Tauri WebView
+const createStoreSlices = (...a: [any, any, any]) => ({
+  ...createServiceSlice(...(a as Parameters<typeof createServiceSlice>)),
+  ...createVaultSlice(...(a as Parameters<typeof createVaultSlice>)),
+  ...createHistorySlice(...(a as Parameters<typeof createHistorySlice>)),
+  ...createSessionSlice(...(a as Parameters<typeof createSessionSlice>)),
+  ...createNoteSlice(...(a as Parameters<typeof createNoteSlice>)),
+  ...createUISlice(...(a as Parameters<typeof createUISlice>)),
+  ...createSmartQueueSlice(...(a as Parameters<typeof createSmartQueueSlice>)),
+});
+
+export const useAppStore = isDev
+  ? create<AppState>()(
+      devtools(
+        persist(createStoreSlices as any, persistConfig),
+        { name: 'app-store' },
+      ),
+    )
+  : create<AppState>()(
+      persist(createStoreSlices as any, persistConfig),
+    );
 

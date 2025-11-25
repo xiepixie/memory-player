@@ -68,21 +68,26 @@ export function useVaultWatcher() {
                             if (processingRef.current.has(path)) continue;
                             processingRef.current.add(path);
 
-                            try {
-                                // 1. Ensure ID and get content
-                                const { id, content } = await fileSystem.ensureNoteId(path);
+                            // PERFORMANCE: Defer processing slightly to batch rapid file events
+                            // In Tauri, file system events can fire much more frequently than in browser
+                            setTimeout(async () => {
+                                try {
+                                    // 1. Ensure ID and get content
+                                    const { id, content } = await fileSystem.ensureNoteId(path);
 
-                                // 2. Delegate sync + metadata refresh to centralized store action
-                                await syncNoteFromFilesystem(path, content, id);
+                                    // 2. Delegate sync + metadata refresh to centralized store action
+                                    await syncNoteFromFilesystem(path, content, id);
 
-                            } catch (e) {
-                                console.error(`[VaultWatcher] Failed to sync ${path}`, e);
-                            } finally {
-                                // Release lock after a short delay to allow FS to settle
-                                setTimeout(() => {
-                                    processingRef.current.delete(path);
-                                }, 1000);
-                            }
+                                } catch (e) {
+                                    console.error(`[VaultWatcher] Failed to sync ${path}`, e);
+                                } finally {
+                                    // Release lock after a longer delay to allow FS to fully settle
+                                    // Increased from 1000ms to 2000ms for better Tauri performance
+                                    setTimeout(() => {
+                                        processingRef.current.delete(path);
+                                    }, 2000);
+                                }
+                            }, 200); // 200ms debounce before processing
                         }
                     },
                     { recursive: true }

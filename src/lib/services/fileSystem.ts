@@ -9,7 +9,8 @@ export class FileSystemService {
    */
   async watchFile(filepath: string, onChange: () => void): Promise<() => void> {
     try {
-       // debounce the callback slightly to avoid duplicate events
+       // PERFORMANCE: Increased debounce from 100ms to 300ms for Tauri WebView
+       // Tauri file events fire more frequently than browser, causing excessive callbacks
        let timeout: ReturnType<typeof setTimeout> | null = null;
        
        const unwatch = await watch(filepath, (_event) => {
@@ -17,7 +18,7 @@ export class FileSystemService {
            if (timeout) clearTimeout(timeout);
            timeout = setTimeout(() => {
                onChange();
-           }, 100);
+           }, 300); // Increased from 100ms for better Tauri performance
        });
        return unwatch;
     } catch (error) {

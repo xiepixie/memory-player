@@ -2,32 +2,33 @@ import { useAppStore } from '../../store/appStore';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { MarkdownContent } from '../shared/MarkdownContent';
 import { ModeActionHint } from '../shared/ModeActionHint';
-import confetti from 'canvas-confetti';
-import { getThemeColors } from '../../lib/themeUtils';
-import { MathClozeBlock } from '../shared/MathClozeBlock';
-import { InlineCloze } from '../shared/InlineCloze';
+import { fireConfetti } from '../../lib/confettiService';
 import { getNoteDisplayTitle } from '../../lib/stringUtils';
-
-// Delay before confetti fires (ms) - minimal delay for instant feedback feel
-const CONFETTI_DELAY_MS = 50;
-// Throttle duration for confetti (ms) - prevents rapid-fire celebrations
-const CONFETTI_THROTTLE_MS = 300;
+import { useClozeRevealStore } from '../../store/clozeRevealStore';
 
 export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
   const currentNote = useAppStore((state) => state.currentNote);
   const currentClozeIndex = useAppStore((state) => state.currentClozeIndex);
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  
+  // Zustand store for fine-grained cloze reveal state
+  // NOTE: Do NOT subscribe to `revealed` object here - it changes on every reveal
+  // and would cause unnecessary re-renders of the entire ClozeMode component.
+  // Instead, use getState() in callbacks and computed selectors for derived values.
+  const storeSetRevealed = useClozeRevealStore((state) => state.setRevealed);
+  const storeReset = useClozeRevealStore((state) => state.reset);
+  const storeSetCurrentClozeIndex = useClozeRevealStore((state) => state.setCurrentClozeIndex);
+  
+  // Ref to track latest currentClozeIndex for subscription callback (avoids stale closure)
+  const currentClozeIndexRef = useRef(currentClozeIndex);
+  
   const scrollRef = useRef<HTMLDivElement>(null);
-  const clozeCountsRef = useRef<Record<number, number>>({});
   // Track the last revealed key to trigger confetti via useEffect
   const [lastRevealedKey, setLastRevealedKey] = useState<string | null>(null);
-  // Throttle confetti to avoid rapid-fire celebrations
-  const lastConfettiTimeRef = useRef<number>(0);
+  
+  // State for "Show All" / "Hide All" button - derived from store on demand
+  const [isAllRevealed, setIsAllRevealed] = useState(false);
 
-  // Reset per-render occurrence counters so that text and math clozes share
-  // a consistent id+occurrenceIndex scheme aligned with parser order.
-  clozeCountsRef.current = {};
-
+  // === MEMOIZED VALUES ===
   const allClozeKeys = useMemo(() => {
     if (!currentNote || !currentNote.clozes || currentNote.clozes.length === 0) {
       return [] as string[];
@@ -40,25 +41,142 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
     });
   }, [currentNote]);
 
+  // === CALLBACKS (must be defined before useEffects that use them) ===
+  
+  // Toggle all clozes - uses getState() to avoid subscribing to revealed object
+  const toggleAll = useCallback(() => {
+    if (allClozeKeys.length === 0) return;
+    
+    // Read current state at call time (not closure)
+    const revealed = useClozeRevealStore.getState().revealed;
+
+    if (currentClozeIndex === null) {
+      const allRevealedNow = allClozeKeys.every((key) => revealed[key]);
+      if (allRevealedNow) {
+        storeSetRevealed({});
+      } else {
+        const next: Record<string, boolean> = { ...revealed };
+        allClozeKeys.forEach((key) => {
+          next[key] = true;
+        });
+        storeSetRevealed(next);
+      }
+      return;
+    }
+
+    const targetKeys = allClozeKeys.filter((key) => {
+      const [idStr] = key.split('-');
+      const id = parseInt(idStr, 10);
+      return !Number.isNaN(id) && id === currentClozeIndex;
+    });
+
+    if (targetKeys.length === 0) return;
+
+    const allTargetRevealed = targetKeys.every((key) => revealed[key]);
+    const next: Record<string, boolean> = { ...revealed };
+
+    if (allTargetRevealed) {
+      targetKeys.forEach((key) => {
+        delete next[key];
+      });
+    } else {
+      targetKeys.forEach((key) => {
+        next[key] = true;
+      });
+    }
+    storeSetRevealed(next);
+  }, [allClozeKeys, currentClozeIndex, storeSetRevealed]);
+
+  // PERFORMANCE: Defer focus/scroll operations to idle time
+  const focusNextOccurrence = useCallback((currentKey: string) => {
+    // Use ref for current value to avoid stale closure in deferred callback
+    const clozeIndex = currentClozeIndexRef.current;
+    if (clozeIndex === null) return;
+
+    const doFocus = () => {
+      const targetKeys = allClozeKeys.filter((key) => {
+        const [idStr] = key.split('-');
+        const id = parseInt(idStr, 10);
+        return !Number.isNaN(id) && id === clozeIndex;
+      });
+
+      if (targetKeys.length <= 1) return;
+
+      const index = targetKeys.indexOf(currentKey);
+      if (index === -1 || index === targetKeys.length - 1) return;
+
+      const nextKey = targetKeys[index + 1];
+      const nextEl = document.querySelector<HTMLElement>(`[data-cloze-key="${nextKey}"]`);
+      if (!nextEl) return;
+
+      requestAnimationFrame(() => {
+        const rect = nextEl.getBoundingClientRect();
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+        const margin = 96;
+        const isInView = rect.top >= margin && rect.bottom <= viewportHeight - margin;
+
+        if (!isInView) {
+          const container = document.getElementById('note-scroll-container');
+          if (container) {
+            const containerRect = container.getBoundingClientRect();
+            const scrollOffset = rect.top - containerRect.top - containerRect.height / 2 + rect.height / 2;
+            container.scrollTo({ top: container.scrollTop + scrollOffset, behavior: 'smooth' });
+          }
+        }
+
+        nextEl.classList.add('toc-target-highlight');
+        setTimeout(() => {
+          nextEl.classList.remove('toc-target-highlight');
+        }, 1500);
+      });
+    };
+
+    if ('requestIdleCallback' in window) {
+      (window as any).requestIdleCallback(doFocus, { timeout: 300 });
+    } else {
+      setTimeout(doFocus, 150);
+    }
+  }, [allClozeKeys]); // Removed currentClozeIndex - using ref instead
+
+  // === EFFECTS ===
+
+  // Keep ref in sync with currentClozeIndex
+  useEffect(() => {
+    currentClozeIndexRef.current = currentClozeIndex;
+  }, [currentClozeIndex]);
+
   // Reset revealed state when note changes
   useEffect(() => {
-    setRevealed({});
-  }, [currentNote]);
+    storeReset();
+    setIsAllRevealed(false);
+  }, [currentNote, storeReset]);
+
+  // Sync currentClozeIndex to store for ClozeWithContext to access
+  useEffect(() => {
+    storeSetCurrentClozeIndex(currentClozeIndex);
+  }, [currentClozeIndex, storeSetCurrentClozeIndex]);
 
   // Auto-scroll to active cloze
   useEffect(() => {
     if (currentClozeIndex !== null) {
-      setTimeout(() => {
+      // Use RAF to batch read/write and avoid layout thrashing
+      const timerId = setTimeout(() => {
         const el = document.getElementById(`cloze-${currentClozeIndex}`);
         const container = document.getElementById('note-scroll-container');
         if (el && container) {
-          // Use manual scroll calculation to avoid layout thrashing
+          // BATCH READ: Get all geometry first
           const containerRect = container.getBoundingClientRect();
           const elRect = el.getBoundingClientRect();
           const scrollOffset = elRect.top - containerRect.top - containerRect.height / 2 + elRect.height / 2;
-          container.scrollTop += scrollOffset;
+          const targetScroll = container.scrollTop + scrollOffset;
+          
+          // BATCH WRITE: Apply scroll in RAF to avoid forced reflow
+          requestAnimationFrame(() => {
+            container.scrollTop = targetScroll;
+          });
         }
       }, 100);
+      return () => clearTimeout(timerId);
     }
   }, [currentClozeIndex, currentNote]);
 
@@ -69,10 +187,10 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
     };
     window.addEventListener('shortcut-reveal', handleShortcut);
     return () => window.removeEventListener('shortcut-reveal', handleShortcut);
-  }, [currentNote]);
+  }, [toggleAll]);
 
   // === CONFETTI EFFECT ===
-  // Fires immediately after state update with minimal delay for instant feedback
+  // PERFORMANCE: Uses pre-initialized confetti service for instant celebration
   useEffect(() => {
     if (!lastRevealedKey) return;
 
@@ -85,161 +203,57 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
       return;
     }
 
-    // Throttle check - avoid rapid-fire confetti
-    const now = Date.now();
-    if (now - lastConfettiTimeRef.current < CONFETTI_THROTTLE_MS) {
-      setLastRevealedKey(null);
-      return;
-    }
-
-    // Direct setTimeout - no RAF wrapper needed since state update already triggered paint
-    const timerId = setTimeout(() => {
-      lastConfettiTimeRef.current = Date.now();
-      const themeColors = getThemeColors();
-      confetti({
-        particleCount: 50, // Slightly reduced for faster execution
-        spread: 60,
-        origin: { y: 0.6 },
-        colors: themeColors.length > 0 ? themeColors : ['#a864fd', '#29cdff', '#78ff44', '#ff718d', '#fdff6a'],
-        zIndex: 10000,
-        disableForReducedMotion: true,
-      });
-      setLastRevealedKey(null);
-    }, CONFETTI_DELAY_MS);
-
-    return () => clearTimeout(timerId);
+    fireConfetti();
+    setLastRevealedKey(null);
   }, [lastRevealedKey, currentClozeIndex]);
 
-  // Async version - runs after state update and confetti scheduling
-  // Defined before conditional return to comply with rules of hooks
-  const focusNextOccurrence = useCallback((currentKey: string) => {
-    if (currentClozeIndex === null) return;
-
-    // Use setTimeout instead of nested RAFs for cleaner execution
-    setTimeout(() => {
-      const targetKeys = allClozeKeys.filter((key) => {
-        const [idStr] = key.split('-');
-        const id = parseInt(idStr, 10);
-        return !Number.isNaN(id) && id === currentClozeIndex;
-      });
-
-      if (targetKeys.length <= 1) return;
-
-      const index = targetKeys.indexOf(currentKey);
-      if (index === -1 || index === targetKeys.length - 1) return;
-
-      const nextKey = targetKeys[index + 1];
-      const nextEl = document.querySelector<HTMLElement>(`[data-cloze-key="${nextKey}"]`);
-      if (!nextEl) return;
-
-      const rect = nextEl.getBoundingClientRect();
-      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-      const margin = 96;
-      const isInView = rect.top >= margin && rect.bottom <= viewportHeight - margin;
-
-      if (!isInView) {
-        const container = document.getElementById('note-scroll-container');
-        if (container) {
-          const containerRect = container.getBoundingClientRect();
-          const scrollOffset = rect.top - containerRect.top - containerRect.height / 2 + rect.height / 2;
-          container.scrollTop += scrollOffset;
+  // Subscribe to store changes to:
+  // 1. Trigger confetti on reveal
+  // 2. Focus next occurrence
+  // 3. Update isAllRevealed state for UI
+  useEffect(() => {
+    const unsubscribe = useClozeRevealStore.subscribe(
+      (state, prevState) => {
+        // Find newly revealed key
+        const newKeys = Object.keys(state.revealed).filter(
+          key => state.revealed[key] && !prevState.revealed[key]
+        );
+        if (newKeys.length > 0) {
+          setLastRevealedKey(newKeys[0]);
+          // Focus next occurrence - use ref for latest value (avoids stale closure)
+          if (currentClozeIndexRef.current !== null) {
+            focusNextOccurrence(newKeys[0]);
+          }
+        }
+        
+        // Update isAllRevealed for UI button state
+        // This is more efficient than subscribing to entire revealed object
+        if (allClozeKeys.length > 0) {
+          const allRevealed = allClozeKeys.every((key) => state.revealed[key]);
+          setIsAllRevealed(allRevealed);
         }
       }
-
-      // Single pass highlight - no nested RAFs
-      document.querySelectorAll('.toc-target-highlight').forEach((el) => {
-        el.classList.remove('toc-target-highlight');
-      });
-      nextEl.classList.add('toc-target-highlight');
-      setTimeout(() => {
-        nextEl.classList.remove('toc-target-highlight');
-      }, 1500);
-    }, 50); // Small delay to let reveal animation complete first
-  }, [currentClozeIndex, allClozeKeys]);
-
-  // Stable ref to current revealed state for use in stable callback
-  const revealedRef = useRef(revealed);
-  revealedRef.current = revealed;
-
-  // Pure state update with stable callback - critical for memoization in long documents
-  // Confetti is triggered by useEffect watching lastRevealedKey
-  const toggleReveal = useCallback((key: string) => {
-    // Check ref instead of state to avoid callback recreation
-    if (revealedRef.current[key]) return;
-
-    // 1. Update revealed state (triggers re-render)
-    setRevealed((prev) => ({ ...prev, [key]: true }));
-
-    // 2. Schedule confetti via state (useEffect will handle the timing)
-    setLastRevealedKey(key);
-
-    // 3. Async focus to next occurrence (deferred to not block UI)
-    if (currentClozeIndex !== null) {
-      focusNextOccurrence(key);
-    }
-  }, [currentClozeIndex, focusNextOccurrence]); // Removed 'revealed' dependency for stability
+    );
+    return unsubscribe;
+  }, [focusNextOccurrence, allClozeKeys]);
 
   // === EARLY RETURN (after all hooks) ===
   if (!currentNote) return null;
 
-  const isAllRevealed = allClozeKeys.length > 0 && allClozeKeys.every((key) => revealed[key]);
-
-  const toggleAll = () => {
-    if (allClozeKeys.length === 0) return;
-
-    setRevealed((prev) => {
-      if (currentClozeIndex === null) {
-        const allRevealedNow = allClozeKeys.every((key) => prev[key]);
-        if (allRevealedNow) {
-          return {};
-        }
-        const next: Record<string, boolean> = { ...prev };
-        allClozeKeys.forEach((key) => {
-          next[key] = true;
-        });
-        return next;
-      }
-
-      const targetKeys = allClozeKeys.filter((key) => {
-        const [idStr] = key.split('-');
-        const id = parseInt(idStr, 10);
-        return !Number.isNaN(id) && id === currentClozeIndex;
-      });
-
-      if (targetKeys.length === 0) return prev;
-
-      const allTargetRevealed = targetKeys.every((key) => prev[key]);
-      const next: Record<string, boolean> = { ...prev };
-
-      if (allTargetRevealed) {
-        targetKeys.forEach((key) => {
-          delete next[key];
-        });
-        return next;
-      }
-
-      targetKeys.forEach((key) => {
-        next[key] = true;
-      });
-
-      return next;
-    });
-  };
-
   return (
     <div
-      className={`w-full h-full flex flex-col select-none transition-all duration-500 ease-out ${
+      className={`w-full h-full flex flex-col select-none ${
         immersive ? 'px-12 py-4' : 'px-8 py-8'
       }`}
     >
       <div
-        className={`flex justify-between items-center transition-all duration-300 ${
+        className={`flex justify-between items-center transition-opacity duration-200 ${
           immersive ? 'mb-6 opacity-0 hover:opacity-100' : 'border-b border-white/5 mb-8 pb-6'
         }`}
       >
         <div className="flex flex-col gap-1">
           <h1
-            className={`font-serif font-bold tracking-tight m-0 transition-all duration-300 ${
+            className={`font-serif font-bold tracking-tight m-0 ${
               immersive ? 'text-2xl' : 'text-4xl'
             }`}
           >
@@ -270,124 +284,14 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
       </div>
 
       <div
-        className="transition-all duration-300 flex-1 prose prose-lg relative"
+        className="flex-1 prose prose-lg relative"
         ref={scrollRef}
       >
+        {/* No Provider needed - ClozeWithContext uses Zustand store directly */}
         <MarkdownContent
           content={currentNote.renderableContent}
           hideFirstH1
-          components={{
-            a: ({ href, children, title }) => {
-              if (href?.startsWith('#cloze-')) {
-                const parts = href.replace('#cloze-', '').split('-');
-                const idStr = parts[0];
-                const id = parseInt(idStr, 10);
-                const hintStr = parts.length > 1 ? decodeURIComponent(parts.slice(1).join('-')) : undefined;
-
-                const isTarget = currentClozeIndex !== null ? id === currentClozeIndex : true;
-                const isContext = !isTarget;
-
-                let occurrenceIndex = 0;
-                if (!Number.isNaN(id)) {
-                  const current = clozeCountsRef.current[id] ?? 0;
-                  occurrenceIndex = current;
-                  clozeCountsRef.current[id] = current + 1;
-                }
-                const key = `${id}-${occurrenceIndex}`;
-
-                const baseRevealed = !!revealed[key];
-                const isRevealed = currentClozeIndex !== null
-                  ? (isTarget ? baseRevealed : true)
-                  : baseRevealed;
-
-                const hint = hintStr || title;
-
-                // Use memoized InlineCloze component for better performance in long documents
-                return (
-                  <InlineCloze
-                    key={key}
-                    id={id}
-                    clozeKey={key}
-                    isTarget={isTarget}
-                    isContext={isContext}
-                    isRevealed={isRevealed}
-                    hint={hint}
-                    onToggle={toggleReveal}
-                  >
-                    {children}
-                  </InlineCloze>
-                );
-              }
-              return (
-                <a
-                  href={href}
-                  title={title}
-                  className="link link-primary"
-                  target={href?.startsWith('http') ? '_blank' : undefined}
-                >
-                  {children}
-                </a>
-              );
-            },
-            code: ({ className, children, ...props }) => {
-              const match = /language-([\w-]+)/.exec(className || '');
-              const lang = match?.[1];
-              const isInline = !match;
-
-              if (lang && lang.startsWith('math-cloze-')) {
-                const idStr = lang.replace('math-cloze-', '');
-                const id = parseInt(idStr, 10);
-                const latex = String(children).trim();
-
-                const isTarget = currentClozeIndex !== null ? id === currentClozeIndex : true;
-                const isContext = !isTarget;
-
-                let occurrenceIndex = 0;
-                if (!Number.isNaN(id)) {
-                  const current = clozeCountsRef.current[id] ?? 0;
-                  occurrenceIndex = current;
-                  clozeCountsRef.current[id] = current + 1;
-                }
-                const key = `${id}-${occurrenceIndex}`;
-
-                const baseRevealed = !!revealed[key];
-                const isRevealed = currentClozeIndex !== null
-                  ? (isTarget ? baseRevealed : true)
-                  : baseRevealed;
-
-                const handleToggle = () => {
-                  const canToggle = currentClozeIndex === null || isTarget;
-                  if (canToggle) toggleReveal(key);
-                };
-
-                return (
-                  <div id={`cloze-${id}`} data-cloze-key={key} className="my-6">
-                    <MathClozeBlock
-                      id={Number.isNaN(id) ? 0 : id}
-                      latex={latex}
-                      isRevealed={isRevealed}
-                      isInteractive={isTarget}
-                      onToggle={handleToggle}
-                      className={isContext ? 'opacity-60' : undefined}
-                    />
-                  </div>
-                );
-              }
-
-              return isInline ? (
-                <code
-                  className="bg-base-300 px-1.5 py-0.5 rounded text-sm font-mono text-primary font-bold"
-                  {...props}
-                >
-                  {children}
-                </code>
-              ) : (
-                <div className="mockup-code bg-neutral text-neutral-content my-4 text-sm">
-                  <pre className="px-4"><code>{children}</code></pre>
-                </div>
-              );
-            },
-          }}
+          variant="review"
         />
       </div>
     </div>

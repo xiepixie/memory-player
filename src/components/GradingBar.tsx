@@ -23,12 +23,13 @@ export const GradingBar = () => {
   const isGrading = useAppStore(state => state.isGrading);
   const getSchedulingPreview = useAppStore(state => state.getSchedulingPreview);
   const isDemo = useAppStore(state => isDemoMode({ rootPath: state.rootPath, currentFilepath: state.currentFilepath }));
-  const queue = useAppStore(state => state.queue);
+  // ZUSTAND: Use primitive selector for queue.length to avoid re-renders when queue items change
+  const queueLength = useAppStore(state => state.queue.length);
   const sessionIndex = useAppStore(state => state.sessionIndex);
   const sessionStats = useAppStore(state => state.sessionStats);
   
   // Check if we're in an active session
-  const isInSession = sessionStats.timeStarted > 0 && queue.length > 0;
+  const isInSession = sessionStats.timeStarted > 0 && queueLength > 0;
   
   // Compute previews synchronously to avoid stale data after grading
   // Dependencies: currentMetadata changes when card changes or after grading
@@ -86,12 +87,12 @@ export const GradingBar = () => {
           <div className="flex items-center justify-center gap-2 mb-2 text-xs text-base-content/60">
             <span className="font-mono font-bold text-base-content">
               {sessionIndex + 1}
-              <span className="opacity-40"> / {queue.length}</span>
+              <span className="opacity-40"> / {queueLength}</span>
             </span>
             <div className="w-24 h-1.5 bg-base-200 rounded-full overflow-hidden">
               <div 
                 className="h-full bg-primary rounded-full transition-all duration-300"
-                style={{ width: `${((sessionIndex + 1) / queue.length) * 100}%` }}
+                style={{ width: `${((sessionIndex + 1) / queueLength) * 100}%` }}
               />
             </div>
           </div>

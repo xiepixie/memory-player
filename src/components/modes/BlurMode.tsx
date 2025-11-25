@@ -1,24 +1,14 @@
 import { useAppStore } from '../../store/appStore';
 import { MarkdownContent } from '../shared/MarkdownContent';
 import { ModeActionHint } from '../shared/ModeActionHint';
-import { useFileWatcher } from '../../hooks/useFileWatcher';
-import { useShallow } from 'zustand/react/shallow';
+// REMOVED: useFileWatcher here - useVaultWatcher in Layout handles file watching globally
+// Having multiple watchers causes duplicate IPC calls and performance issues in Tauri
 import { getNoteDisplayTitle } from '../../lib/stringUtils';
 
 export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
-  const { currentNote, currentFilepath, loadNote } = useAppStore(
-    useShallow((state) => ({
-      currentNote: state.currentNote,
-      currentFilepath: state.currentFilepath,
-      loadNote: state.loadNote,
-    })),
-  );
-
-  useFileWatcher(currentFilepath, () => {
-    if (currentFilepath) {
-        loadNote(currentFilepath);
-    }
-  });
+  const currentNote = useAppStore((state) => state.currentNote);
+  // File watching is now handled globally by useVaultWatcher in Layout.tsx
+  // This avoids duplicate watchers and reduces IPC overhead in Tauri
 
   if (!currentNote) return null;
 
@@ -27,7 +17,7 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
 
   return (
     <div
-      className={`w-full min-h-full flex flex-col select-none transition-all duration-500 ease-out ${immersive ? 'px-12 py-4' : 'px-8 py-8'}`}
+      className={`w-full min-h-full flex flex-col select-none ${immersive ? 'px-12 py-4' : 'px-8 py-8'}`}
     >
       {/* Hints Section */}
       {hints.length > 0 && !immersive && (
@@ -39,8 +29,8 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
         </div>
       )}
 
-      <div className={`flex justify-between items-center transition-all duration-300 ${immersive ? 'mb-6 opacity-0 hover:opacity-100' : 'border-b border-white/5 mb-8 pb-6'}`}>
-        <h1 className={`font-serif font-bold tracking-tight m-0 transition-all duration-300 ${immersive ? 'text-2xl' : 'text-4xl'}`}>
+      <div className={`flex justify-between items-center transition-opacity duration-200 ${immersive ? 'mb-6 opacity-0 hover:opacity-100' : 'border-b border-white/5 mb-8 pb-6'}`}>
+        <h1 className={`font-serif font-bold tracking-tight m-0 ${immersive ? 'text-2xl' : 'text-4xl'}`}>
           {getNoteDisplayTitle(currentNote.frontmatter.title)}
         </h1>
         {!immersive && (
@@ -52,22 +42,14 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
         )}
       </div>
 
-      {/* Flashlight Container (layout only; blur handled at note-scroll-container level) */}
-      <div className="relative flex-1 max-w-none">
-        <div className="relative border-t border-transparent transition-all duration-200 prose prose-lg max-w-none">
-          <MarkdownContent 
-            content={cleanContent(currentNote.content)} 
-            disableIds={false}
-            hideFirstH1
-          />
-        </div>
+      {/* Content Container - merged wrappers for reduced DOM depth */}
+      <div className="relative flex-1 prose prose-lg max-w-none">
+        <MarkdownContent 
+          content={currentNote.renderableContent}
+          variant="blur"
+          hideFirstH1
+        />
       </div>
     </div>
   );
-}
-
-function cleanContent(content: string): string {
-  return content
-    .replace(/==(.*?)==/g, '$1')
-    .replace(/{{c\d+::([\s\S]*?)(?:::(.*?))?}}/g, '$1');
 }

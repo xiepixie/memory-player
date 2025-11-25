@@ -30,34 +30,43 @@ export const InlineCloze = memo(({
         <span 
             id={`cloze-${id}`} 
             data-cloze-key={clozeKey} 
-            className="inline-flex items-center gap-1 align-baseline mx-1"
+            className="inline group"
         >
-            {/* ID Badge - unified with MathClozeBlock style */}
-            <span
+            {/* ID Badge - inline superscript style for minimal height impact */}
+            <sup
                 className={clsx(
-                    "text-[10px] font-mono font-bold select-none px-1 rounded border transition-colors duration-150",
-                    isTarget
-                        ? 'text-primary bg-primary/10 border-primary/20'
-                        : 'text-base-content/40 bg-transparent border-transparent',
-                    // Hover effect on parent group (consistent with MathClozeBlock)
-                    isTarget && !isRevealed && 'group-hover:bg-primary/20 group-hover:border-primary/40'
+                    "text-[9px] font-mono font-bold select-none px-0.5 rounded transition-colors duration-150",
+                    // Target + Revealed: success
+                    isTarget && isRevealed && 'text-success bg-success/10',
+                    // Target + Hidden: primary with hover
+                    isTarget && !isRevealed && 'text-primary bg-primary/10 group-hover:bg-primary/20',
+                    // Context: visible but muted (stronger than plain text)
+                    isContext && 'text-base-content/50 bg-base-200/50',
                 )}
             >
                 {id}
-            </span>
+            </sup>
 
-            {/* Cloze chip - unified styling with MathClozeBlock */}
+            {/* Cloze content - inline with minimal height impact */}
             <span
                 className={clsx(
-                    "relative font-medium px-1.5 py-0.5 rounded border-b-2 transition-all duration-200 ease-out",
+                    "border-b-2 transition-colors duration-150",
                     isTarget ? 'cursor-pointer' : 'cursor-default',
-                    isContext
-                        ? 'bg-primary/5 border-primary/25 text-base-content/90 opacity-90'
-                        : isRevealed
-                            // Success state - exact same as MathClozeBlock
-                            ? 'bg-success/15 border-success/50 text-success font-bold shadow-sm shadow-success/20'
-                            // Hidden state - ENHANCED hover effect matching MathClozeBlock
-                            : 'bg-base-200/60 border-base-300 hover:bg-primary/10 hover:border-primary/40 hover:shadow-sm hover:shadow-primary/10 active:bg-primary/15 select-none'
+                    // Context cloze (not being reviewed) - just underline, normal text
+                    // Stronger than plain text: has ID badge + subtle underline
+                    // Weaker than target: no background, no color change
+                    isContext && 'border-base-content/30',
+                    // Target + Revealed: success theme with background
+                    // Use text-base-content for best contrast, success color for affordance
+                    !isContext && isRevealed && [
+                        'bg-success/15 border-success/50 text-base-content font-medium rounded-sm px-0.5',
+                        isTarget && 'hover:bg-success/25 hover:border-success/60 active:bg-success/30'
+                    ],
+                    // Target + Hidden: clear click affordance with background
+                    !isContext && !isRevealed && [
+                        'bg-base-200/80 border-base-300 rounded-sm px-1',
+                        isTarget && 'hover:bg-primary/10 hover:border-primary/40 active:bg-primary/15 select-none'
+                    ]
                 )}
                 onClick={(e: React.MouseEvent) => {
                     e.preventDefault();
@@ -65,8 +74,8 @@ export const InlineCloze = memo(({
                         onToggle(clozeKey);
                     }
                 }}
-                title={hint || 'Click to reveal'}
-                // Keyboard accessibility (unified with MathClozeBlock)
+                title={isRevealed ? 'Click to hide' : (hint || 'Click to reveal')}
+                // Keyboard accessibility
                 tabIndex={isTarget && !isRevealed ? 0 : undefined}
                 role={isTarget ? "button" : undefined}
                 aria-pressed={isTarget ? isRevealed : undefined}
@@ -77,15 +86,15 @@ export const InlineCloze = memo(({
                     }
                 }}
             >
-                {/* Hidden: mystery placeholder | Revealed: actual content */}
+                {/* Hidden: mystery placeholder | Revealed: actual content (-1 DOM level) */}
                 {isRevealed ? (
-                    <span>{children}</span>
+                    children
                 ) : (
-                    <span className="inline-flex items-center justify-center text-base-content/50 font-mono text-sm tracking-tight">
+                    <span className="inline-flex items-center justify-center text-base-content/50 font-mono text-sm">
                         {hint ? (
                             <span className="uppercase text-xs tracking-wide">{hint}</span>
                         ) : (
-                            <span className="opacity-60">[ ? ]</span>
+                            '[ ? ]'
                         )}
                     </span>
                 )}

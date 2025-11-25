@@ -133,28 +133,17 @@ export const AuthGate = ({ children }: AuthGateProps) => {
             className="h-screen w-screen flex flex-col items-center justify-center bg-base-100 fixed inset-0 z-50 select-none relative"
         >
             <div className="absolute inset-0 z-0" data-tauri-drag-region />
-            <motion.div
-                animate={{ 
-                    scale: [1, 1.2, 1],
-                    opacity: [0.5, 1, 0.5],
-                    rotate: [0, 180, 360]
-                }}
-                transition={{ 
-                    duration: 3, 
-                    repeat: Infinity,
-                    ease: "easeInOut"
-                }}
-                className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-primary/20 to-secondary/20 flex items-center justify-center mb-8 backdrop-blur-md border border-white/5 shadow-2xl relative z-10"
+            {/* PERFORMANCE: CSS animation instead of Framer Motion infinite loop */}
+            <div
+                className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-primary/20 to-secondary/20 flex items-center justify-center mb-8 backdrop-blur-md border border-white/5 shadow-2xl relative z-10 animate-loading-spinner"
             >
                 <Brain className="w-10 h-10 text-primary drop-shadow-lg" />
-            </motion.div>
-            <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-sm font-medium text-base-content/40 tracking-[0.2em] uppercase relative z-10"
+            </div>
+            <div 
+                className="text-sm font-medium text-base-content/40 tracking-[0.2em] uppercase relative z-10 animate-content-entry"
             >
                 Initializing Cortex
-            </motion.div>
+            </div>
         </motion.div>
       )}
 
@@ -168,24 +157,13 @@ export const AuthGate = ({ children }: AuthGateProps) => {
             className="h-screen w-screen flex items-center justify-center bg-base-200/50 fixed inset-0 z-50 relative"
         >
             <div className="absolute inset-0 z-0" data-tauri-drag-region />
+             {/* PERFORMANCE: CSS animations instead of Framer Motion infinite loops */}
              <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                <motion.div 
-                    animate={{ 
-                        scale: [1, 1.1, 1],
-                        x: [0, 20, 0],
-                        y: [0, -20, 0]
-                    }}
-                    transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-                    className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-primary/10 rounded-full blur-[120px]" 
+                <div 
+                    className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-primary/10 rounded-full blur-[120px] blob-animated-login-1" 
                 />
-                <motion.div 
-                    animate={{ 
-                        scale: [1, 1.2, 1],
-                        x: [0, -30, 0],
-                        y: [0, 30, 0]
-                    }}
-                    transition={{ duration: 10, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-                    className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-secondary/10 rounded-full blur-[120px]" 
+                <div 
+                    className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-secondary/10 rounded-full blur-[120px] blob-animated-login-2" 
                 />
             </div>
 

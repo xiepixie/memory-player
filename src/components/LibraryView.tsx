@@ -408,24 +408,17 @@ export const LibraryView = () => {
             >
               <div className="absolute inset-0 z-0" data-tauri-drag-region />
               
-              {/* Background Blobs */}
-              <motion.div 
-                animate={{ scale: [1, 1.1, 1], rotate: [0, 10, 0] }}
-                transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen" 
+              {/* Background Blobs - PERFORMANCE: CSS animations instead of Framer Motion */}
+              <div 
+                className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen blob-animated-1" 
               />
-              <motion.div 
-                 animate={{ scale: [1, 1.2, 1], rotate: [0, -15, 0] }}
-                 transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-                className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-secondary/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen" 
+              <div 
+                className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-secondary/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen blob-animated-2" 
               />
 
               <div className="max-w-3xl w-full z-10 flex flex-col items-center text-center">
-                  <motion.div
-                    initial={{ opacity: 0, y: 30 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.8, ease: "easeOut" }}
-                    className="mb-12 relative"
+                  <div
+                    className="mb-12 relative animate-content-entry"
                   >
                     <h1 className="text-5xl md:text-7xl font-black mb-6 leading-tight tracking-tight drop-shadow-sm">
                       Turn notes into <br/>
@@ -436,13 +429,10 @@ export const LibraryView = () => {
                     <p className="text-xl opacity-60 max-w-2xl mx-auto leading-relaxed font-light">
                       The local-first spaced repetition player for your markdown knowledge base.
                     </p>
-                  </motion.div>
+                  </div>
 
-                  <motion.div
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.6, delay: 0.2 }}
-                      className="flex flex-col sm:flex-row gap-4 w-full max-w-md justify-center mb-16 relative z-20"
+                  <div
+                      className="flex flex-col sm:flex-row gap-4 w-full max-w-md justify-center mb-16 relative z-20 animate-content-entry-delayed"
                   >
                       <button
                         onClick={handleOpenFolder}
@@ -457,14 +447,11 @@ export const LibraryView = () => {
                       >
                         Try Demo Vault
                       </button>
-                  </motion.div>
+                  </div>
 
                   {/* Features Grid */}
-                  <motion.div
-                       initial={{ opacity: 0, y: 20 }}
-                       animate={{ opacity: 1, y: 0 }}
-                       transition={{ duration: 0.6, delay: 0.2 }}
-                       className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full text-left mb-16"
+                  <div
+                       className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full text-left mb-16 animate-content-entry-delayed"
                   >
                       <div className="p-6 rounded-2xl bg-base-100/80 backdrop-blur-sm border border-base-200 hover:border-primary/30 transition-all shadow-sm hover:shadow-md hover:-translate-y-1">
                           <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center mb-4">
@@ -493,15 +480,13 @@ export const LibraryView = () => {
                               Seamlessly sync your review progress across devices while keeping files local.
                           </p>
                       </div>
-                  </motion.div>
+                  </div>
 
                   {/* Recent Vaults */}
                   {recentVaults.length > 0 && (
-                     <motion.div
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          transition={{ duration: 0.6, delay: 0.3 }}
-                          className="w-full max-w-lg"
+                     <div
+                          className="w-full max-w-lg animate-content-entry-delayed"
+                          style={{ animationDelay: '300ms' }}
                      >
                         <div className="divider opacity-10 mb-8">Recent Vaults</div>
                         <div className="flex flex-col gap-2">
@@ -532,7 +517,7 @@ export const LibraryView = () => {
                             </div>
                           ))}
                         </div>
-                     </motion.div>
+                     </div>
                   )}
               </div>
             </motion.div>
@@ -546,9 +531,9 @@ export const LibraryView = () => {
               transition={{ duration: 0.5, ease: [0.32, 0.72, 0, 1] }}
               className="p-4 md:p-6 max-w-7xl mx-auto w-full min-h-full"
             >
-              <div className="flex items-center justify-between mb-6 px-1">
-              <div className="relative flex p-1 bg-base-200/50 rounded-xl border border-base-300/50">
-                 {/* Sliding pill indicator - CSS transition instead of layoutId */}
+              {/* Tab selector - merged outer wrapper into inner */}
+              <div className="relative flex p-1 bg-base-200/50 rounded-xl border border-base-300/50 mb-6 w-fit">
+                 {/* Sliding pill indicator */}
                  <div
                     className="absolute top-1 bottom-1 bg-base-100 shadow-sm rounded-lg border border-base-200/50 transition-all duration-200 ease-out"
                     style={{
@@ -566,7 +551,6 @@ export const LibraryView = () => {
                     </button>
                  ))}
               </div>
-            </div>
 
             <AnimatePresence mode="wait">
             {dashboardTab === 'focus' ? (
@@ -657,7 +641,8 @@ export const LibraryView = () => {
                       <>
                         {viewType === 'tree' ? (
                           <div className="bg-base-100 rounded-2xl border border-base-200 p-4 shadow-sm">
-                              <FileTreeView files={filteredFiles} rootPath={rootPath} loadNote={loadNote} metadatas={fileMetadatas} />
+                              {/* ZUSTAND: FileTreeView now subscribes to fileMetadatas directly */}
+                              <FileTreeView files={filteredFiles} rootPath={rootPath} loadNote={loadNote} />
                           </div>
                         ) : (
                           <motion.div 
@@ -706,13 +691,33 @@ export const LibraryView = () => {
 /**
  * FileSection component optimized for performance.
  * 
- * Performance optimizations based on Motion best practices:
+ * Performance optimizations:
  * - Removed whileHover/whileTap from individual items (expensive with 200+ items)
  * - Using CSS transitions instead of Framer Motion for hover effects
- * - Kept container AnimatePresence for open/close animation only
+ * - Added loading state for immediate click feedback
+ * - Prevents double-click issues with loading guard
  */
 const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color, collapsed = false, viewType = 'list' }: any) => {
   const [isOpen, setIsOpen] = useState(!collapsed);
+  const [loadingFile, setLoadingFile] = useState<string | null>(null);
+  
+  // PERFORMANCE: Optimized click handler with immediate visual feedback
+  const handleFileClick = async (file: string) => {
+    // Prevent double clicks
+    if (loadingFile) return;
+    
+    // Set loading state immediately for visual feedback
+    setLoadingFile(file);
+    
+    try {
+      // Use setTimeout(0) to allow React to paint the loading state before async work
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await loadNote(file);
+    } finally {
+      // Clear loading state (component may unmount, but setState is safe)
+      setLoadingFile(null);
+    }
+  };
   
   if (files.length === 0) return null;
 
@@ -739,23 +744,25 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
                 <div className="grid grid-cols-1 gap-1 pl-2">
                     {files.map((file: string, idx: number) => {
                         const meta = metadatas[file];
+                        const isLoading = loadingFile === file;
                         return (
                             <div 
                                 key={idx}
-                                onClick={() => loadNote(file)}
-                                className="group flex items-center gap-4 p-3 rounded-lg bg-base-100/40 cursor-pointer border border-base-content/5 backdrop-blur-sm
+                                onClick={() => handleFileClick(file)}
+                                className={`group flex items-center gap-4 p-3 rounded-lg cursor-pointer border backdrop-blur-sm
                                     transition-all duration-150 ease-out
-                                    hover:bg-base-100 hover:border-primary/20 hover:translate-x-1 hover:scale-[1.005]
-                                    active:scale-[0.98] active:bg-base-200/80"
+                                    ${isLoading 
+                                        ? 'bg-primary/10 border-primary/30 scale-[0.98]' 
+                                        : 'bg-base-100/40 border-base-content/5 hover:bg-base-100 hover:border-primary/20 hover:translate-x-1 hover:scale-[1.005] active:scale-[0.98] active:bg-base-200/80'
+                                    }`}
                             >
-                                        <div className={`w-8 h-8 rounded flex items-center justify-center bg-base-200/50 text-base-content/50 group-hover:text-${color === 'neutral' ? 'primary' : color}`}>
-                                            <FileText size={16} />
+                                        <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 ${isLoading ? 'animate-pulse' : ''} bg-base-200/50 text-base-content/50 group-hover:text-${color === 'neutral' ? 'primary' : color}`}>
+                                            {isLoading ? <span className="loading loading-spinner loading-xs" /> : <FileText size={16} />}
                                         </div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="font-medium truncate">
-                                                {file.replace(rootPath || '', '').replace(/^\//, '')}
-                                            </div>
-                                        </div>
+                                        {/* DOM: Merged flex-1 wrapper with content */}
+                                        <span className="flex-1 min-w-0 font-medium truncate">
+                                            {file.replace(rootPath || '', '').replace(/^\//, '')}
+                                        </span>
                                 {(() => {
                                     if (!meta?.cards) return null;
                                     const cards = Object.values(meta.cards) as Card[];
@@ -787,18 +794,21 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 pb-4">
                     {files.map((file: string, idx: number) => {
                     const meta = metadatas[file];
+                    const isLoading = loadingFile === file;
                     return (
                         <div
                         key={idx}
-                        onClick={() => loadNote(file)}
-                        className="card bg-base-100/60 cursor-pointer p-4 flex flex-col gap-3 h-36 justify-between shadow-sm border border-base-200 backdrop-blur-sm
+                        onClick={() => handleFileClick(file)}
+                        className={`card cursor-pointer p-4 flex flex-col gap-3 h-36 justify-between shadow-sm border backdrop-blur-sm
                             transition-all duration-150 ease-out
-                            hover:bg-base-100 hover:shadow-md hover:border-primary/20 hover:scale-[1.02] hover:-translate-y-1
-                            active:scale-[0.97]"
+                            ${isLoading 
+                                ? 'bg-primary/10 border-primary/30 scale-[0.97]' 
+                                : 'bg-base-100/60 border-base-200 hover:bg-base-100 hover:shadow-md hover:border-primary/20 hover:scale-[1.02] hover:-translate-y-1 active:scale-[0.97]'
+                            }`}
                         >
                                 <div className="flex justify-between items-start">
-                                    <div className={`p-2 rounded-lg bg-${color === 'neutral' ? 'base-200' : color + '/10'} text-${color === 'neutral' ? 'base-content' : color}`}>
-                                        <FileText size={20} />
+                                    <div className={`p-2 rounded-lg ${isLoading ? 'animate-pulse' : ''} bg-${color === 'neutral' ? 'base-200' : color + '/10'} text-${color === 'neutral' ? 'base-content' : color}`}>
+                                        {isLoading ? <span className="loading loading-spinner loading-sm" /> : <FileText size={20} />}
                                     </div>
                                     {(() => {
                                         if (!meta?.cards) return null;

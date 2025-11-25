@@ -5,6 +5,7 @@ import { useKeyboardShortcuts } from './shared/useKeyboardShortcuts';
 import { ToastContainer } from './shared/ToastContainer';
 import { useVaultWatcher } from '../hooks/useVaultWatcher';
 import { NoteSkeleton } from './skeletons/NoteSkeleton';
+import { initConfetti } from '../lib/confettiService';
 
 const LibraryViewLazy = lazy(() => import('./LibraryView').then((m) => ({ default: m.LibraryView })));
 const NoteRendererLazy = lazy(() => import('./NoteRenderer').then((m) => ({ default: m.NoteRenderer })));
@@ -14,6 +15,17 @@ export const Layout = () => {
   const rootPath = useAppStore((state) => state.rootPath);
   const currentFilepath = useAppStore((state) => state.currentFilepath);
   const closeNote = useAppStore((state) => state.closeNote);
+
+  // PERFORMANCE: Pre-initialize confetti on app startup
+  // This ensures zero lag when user reveals cloze answers during review
+  useEffect(() => {
+    // Defer to idle time so it doesn't block initial render
+    if ('requestIdleCallback' in window) {
+      (window as any).requestIdleCallback(() => initConfetti(), { timeout: 1000 });
+    } else {
+      setTimeout(initConfetti, 500);
+    }
+  }, []);
 
   // Guard: Fix inconsistent state where currentFilepath exists but rootPath is null
   // This can happen if persistence gets out of sync

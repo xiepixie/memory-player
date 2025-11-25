@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, memo } from 'react';
 import { FolderOpen, FileText, ChevronRight, FolderClosed } from 'lucide-react';
 import { isPast, isToday } from 'date-fns';
+import { useAppStore } from '../../store/appStore';
 
 export interface TreeNode {
     name: string;
@@ -11,7 +12,22 @@ export interface TreeNode {
 // Default expand depth: show 2 levels by default for better overview
 const DEFAULT_EXPAND_DEPTH = 2;
 
-export const FileTreeView = ({ files, rootPath, loadNote, metadatas, className }: { files: string[], rootPath: string | null, loadNote: (path: string) => void, metadatas: Record<string, any>, className?: string }) => {
+/**
+ * FileTreeView with direct store subscription for optimal performance.
+ * 
+ * ZUSTAND BEST PRACTICE:
+ * - Subscribes to `fileMetadatas` directly instead of receiving it as a prop
+ * - This prevents parent components (NoteRenderer) from re-rendering when metadata changes
+ * - Only FileTreeView and its relevant TreeItems re-render on metadata updates
+ */
+export const FileTreeView = ({ files, rootPath, loadNote, className }: { 
+    files: string[], 
+    rootPath: string | null, 
+    loadNote: (path: string) => void, 
+    className?: string 
+}) => {
+    // ZUSTAND: Direct subscription - isolates metadata changes to this component
+    const metadatas = useAppStore((state) => state.fileMetadatas);
     const rootName = useMemo(() => {
         if (!rootPath) return 'Vault';
         return rootPath.split(/[/\\]/).pop() || 'Vault';
@@ -92,6 +108,7 @@ export const FileTreeView = ({ files, rootPath, loadNote, metadatas, className }
  * - memo() wrapper prevents re-render when parent updates but props unchanged
  * - useMemo for expensive status calculations
  * - Stable callback references
+ * - Loading state for immediate click feedback
  */
 const TreeItem = memo(({ node, depth, loadNote, metadatas, forcedOpen = false, globalExpand }: { 
     node: TreeNode, 
@@ -104,6 +121,7 @@ const TreeItem = memo(({ node, depth, loadNote, metadatas, forcedOpen = false, g
     // Smart default: expand first N levels, or follow global toggle
     const defaultOpen = forcedOpen || depth < DEFAULT_EXPAND_DEPTH;
     const [localOpen, setLocalOpen] = useState(defaultOpen);
+    const [isLoading, setIsLoading] = useState(false);
     
     // Global expand/collapse override
     const isOpen = globalExpand !== null ? globalExpand : localOpen;
@@ -182,11 +200,24 @@ const TreeItem = memo(({ node, depth, loadNote, metadatas, forcedOpen = false, g
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [node.path, node.path ? metadatas[node.path]?.cards : null]); // Only recalculate when this file's metadata changes
 
-    const handleClick = () => {
+    // PERFORMANCE: Optimized click handler with immediate visual feedback
+    const handleClick = async () => {
         if (hasChildren) {
             setLocalOpen(!localOpen);
         } else if (node.path) {
-            loadNote(node.path);
+            // Prevent double clicks
+            if (isLoading) return;
+            
+            // Set loading state immediately for visual feedback
+            setIsLoading(true);
+            
+            try {
+                // Allow React to paint loading state before async work
+                await new Promise(resolve => setTimeout(resolve, 0));
+                await loadNote(node.path);
+            } finally {
+                setIsLoading(false);
+            }
         }
     };
 
@@ -194,8 +225,10 @@ const TreeItem = memo(({ node, depth, loadNote, metadatas, forcedOpen = false, g
         <div className="flex flex-col select-none">
             <div
                 className={`group flex items-center gap-1.5 py-1 px-1 rounded-md cursor-pointer transition-colors
-                    ${hasChildren ? 'hover:bg-base-200/50' : 'hover:bg-primary/5 hover:text-primary'}
-                    ${!hasChildren && statusColor ? statusColor : ''}`}
+                    ${hasChildren ? 'hover:bg-base-200/50' : ''}
+                    ${!hasChildren && isLoading ? 'bg-primary/10 text-primary' : ''}
+                    ${!hasChildren && !isLoading ? 'hover:bg-primary/5 hover:text-primary' : ''}
+                    ${!hasChildren && statusColor && !isLoading ? statusColor : ''}`}
                 style={{ paddingLeft: `${depth * 14 + 4}px` }}
                 onClick={handleClick}
             >
@@ -215,6 +248,8 @@ const TreeItem = memo(({ node, depth, loadNote, metadatas, forcedOpen = false, g
                     ) : (
                         <FolderClosed size={14} className="text-secondary/60 group-hover:text-secondary/80 shrink-0" />
                     )
+                ) : isLoading ? (
+                    <span className="loading loading-spinner loading-xs shrink-0" />
                 ) : (
                     <FileText size={14} className={`shrink-0 ${statusColor ? '' : 'text-base-content/60 group-hover:text-primary'}`} />
                 )}
@@ -250,7 +285,7 @@ const TreeItem = memo(({ node, depth, loadNote, metadatas, forcedOpen = false, g
             {/* Children with CSS transition instead of Framer Motion for performance */}
             {hasChildren && node.children && (
                 <div 
-                    className={`overflow-hidden transition-all duration-200 ease-out
+                    className={`overflow-hidden transition-[max-height,opacity] duration-200 ease-out
                         ${isOpen ? 'max-h-[9999px] opacity-100' : 'max-h-0 opacity-0'}`}
                 >
                     {sortedChildren.map((child) => (

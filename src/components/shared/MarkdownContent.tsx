@@ -1,14 +1,26 @@
 import ReactMarkdown, { Components } from 'react-markdown';
 import { MarkdownImage } from './MarkdownImage';
 import { MathClozeBlock } from './MathClozeBlock';
+import { ClozeWithContext } from './ClozeWithContext';
 import clsx from 'clsx';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
+
+// KaTeX options to suppress warnings for non-math content accidentally parsed as math
+// (e.g., "$50" or Chinese text containing dollar signs)
+const KATEX_OPTIONS = {
+    strict: false,        // Suppress "Unicode text character" warnings
+    throwOnError: false,  // Don't throw on invalid LaTeX, render error inline
+    trust: false,         // Don't allow potentially dangerous commands
+};
 import { useRef, memo } from 'react';
 
 import { generateSlug } from '../../lib/stringUtils';
+
+/** Cloze rendering mode */
+export type ClozeVariant = 'edit' | 'review' | 'blur';
 
 interface MarkdownContentProps {
     content: string;
@@ -17,6 +29,12 @@ interface MarkdownContentProps {
     disableIds?: boolean;
     /** Hide the first H1 heading (useful when title is already displayed separately) */
     hideFirstH1?: boolean;
+    
+    // === Cloze Mode Props ===
+    /** Rendering mode: 'edit' (default), 'review' (ClozeMode), 'blur' (BlurMode) */
+    variant?: ClozeVariant;
+    
+    // === EditMode Props ===
     onClozeClick?: (id: number, occurrenceIndex: number, target: HTMLElement) => void;
     onClozeContextMenu?: (id: number, occurrenceIndex: number, target: HTMLElement, event: React.MouseEvent) => void;
     onErrorLinkClick?: (kind: 'unclosed' | 'malformed' | 'dangling', occurrenceIndex: number, target?: HTMLElement) => void;
@@ -30,7 +48,17 @@ const extractText = (children: any): string => {
     return '';
 };
 
-export const MarkdownContent = memo(({ content, components, className, disableIds = false, hideFirstH1 = false, onClozeClick, onClozeContextMenu, onErrorLinkClick }: MarkdownContentProps) => {
+export const MarkdownContent = memo(({ 
+    content, 
+    components, 
+    className, 
+    disableIds = false, 
+    hideFirstH1 = false,
+    variant = 'edit',
+    onClozeClick, 
+    onClozeContextMenu, 
+    onErrorLinkClick 
+}: MarkdownContentProps) => {
     const slugCounts = useRef<Record<string, number>>({});
     const clozeCounts = useRef<Record<number, number>>({});
     const h1Count = useRef<number>(0);
@@ -58,7 +86,7 @@ export const MarkdownContent = memo(({ content, components, className, disableId
         <div className={clsx("font-sans leading-loose text-lg text-base-content/90", className)}>
             <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkMath]}
-                rehypePlugins={[rehypeKatex, rehypeRaw]}
+                rehypePlugins={[[rehypeKatex, KATEX_OPTIONS], rehypeRaw]}
                 components={{
                     img: MarkdownImage,
                     table: ({ children }) => (
@@ -121,12 +149,42 @@ export const MarkdownContent = memo(({ content, components, className, disableId
                                 occurrenceIndex = clozeCounts.current[numId] || 0;
                                 clozeCounts.current[numId] = occurrenceIndex + 1;
                             }
+                            const clozeKey = `${numId}-${occurrenceIndex}`;
 
+                            // === BLUR MODE: Just render math without cloze styling ===
+                            // DOM OPTIMIZATION: No wrapper div needed - MathClozeBlock has its own container
+                            if (variant === 'blur') {
+                                return (
+                                    <MathClozeBlock
+                                        id={numId}
+                                        latex={latex}
+                                        isRevealed={true}
+                                        isInteractive={false}
+                                        variant="edit"
+                                    />
+                                );
+                            }
+
+                            // === REVIEW MODE: Use Context for state (avoids re-rendering entire ReactMarkdown) ===
+                            if (variant === 'review') {
+                                return (
+                                    <ClozeWithContext
+                                        type="math"
+                                        id={numId}
+                                        clozeKey={clozeKey}
+                                        latex={latex}
+                                    />
+                                );
+                            }
+
+                            // === EDIT MODE (default): Always revealed, click to locate ===
+                            const hasInteraction = !!onClozeClick;
+                            
                             return (
-                                <span
+                                <div
                                     id={`cloze-item-${id}`}
                                     data-cloze-id={id}
-                                    className="block my-6 cursor-pointer"
+                                    className="my-4"
                                     onClick={(e) => {
                                         if (onClozeClick && !Number.isNaN(id)) {
                                             e.preventDefault();
@@ -146,9 +204,11 @@ export const MarkdownContent = memo(({ content, components, className, disableId
                                         id={numId}
                                         latex={latex}
                                         isRevealed={true}
-                                        isInteractive={false}
+                                        isInteractive={hasInteraction}
+                                        variant="edit"
+                                        onToggle={hasInteraction ? () => onClozeClick?.(id, occurrenceIndex, document.getElementById(`cloze-item-${id}`) as HTMLElement) : undefined}
                                     />
-                                </span>
+                                </div>
                             );
                         }
 
@@ -235,14 +295,36 @@ export const MarkdownContent = memo(({ content, components, className, disableId
                                 occurrenceIndex = clozeCounts.current[numId] || 0;
                                 clozeCounts.current[numId] = occurrenceIndex + 1;
                             }
+                            const clozeKey = `${numId}-${occurrenceIndex}`;
 
+                            // === BLUR MODE: Just render plain text ===
+                            if (variant === 'blur') {
+                                return <span>{children}</span>;
+                            }
+
+                            // === REVIEW MODE: Use Context for state (avoids re-rendering entire ReactMarkdown) ===
+                            if (variant === 'review') {
+                                return (
+                                    <ClozeWithContext
+                                        key={clozeKey}
+                                        type="inline"
+                                        id={numId}
+                                        clozeKey={clozeKey}
+                                        hint={hint}
+                                    >
+                                        {children}
+                                    </ClozeWithContext>
+                                );
+                            }
+
+                            // === EDIT MODE (default): Always revealed, click to locate ===
                             return (
                                 <span 
                                     id={`cloze-item-${id}`}
                                     data-cloze-id={id}
                                     className={clsx(
-                                        "inline-flex items-center gap-1.5 mx-1 align-baseline group relative",
-                                        onClozeClick ? "cursor-pointer" : "cursor-help"
+                                        "inline group",
+                                        onClozeClick && "cursor-pointer"
                                     )}
                                     title={hint ? `Hint: ${hint}` : `Cloze #${id}`}
                                     onClick={(e) => {
@@ -260,13 +342,20 @@ export const MarkdownContent = memo(({ content, components, className, disableId
                                         }
                                     }}
                                 >
-                                    <span className="badge badge-neutral badge-sm font-mono font-bold h-5 px-1.5 rounded text-[10px] text-neutral-content/80">
+                                    {/* ID Badge - sup element for baseline alignment */}
+                                    <sup className={clsx(
+                                        "text-[9px] font-mono font-bold select-none px-0.5 rounded",
+                                        "transition-colors duration-150",
+                                        "text-primary bg-primary/10",
+                                        onClozeClick && "group-hover:bg-primary/20"
+                                    )}>
                                         {id}
-                                    </span>
+                                    </sup>
+                                    {/* Content - inline with minimal height impact */}
                                     <span className={clsx(
-                                        "font-medium px-1.5 py-0.5 rounded border-b-2 border-transparent transition-colors duration-100",
-                                        "bg-primary/10 text-primary border-primary/20",
-                                        onClozeClick && "hover:bg-primary/20 active:bg-primary/30"
+                                        "border-b-2 border-primary/40 text-base-content rounded-sm px-0.5",
+                                        "transition-colors duration-150",
+                                        onClozeClick && "hover:bg-primary/10 hover:border-primary active:bg-primary/15"
                                     )}>
                                         {children}
                                     </span>

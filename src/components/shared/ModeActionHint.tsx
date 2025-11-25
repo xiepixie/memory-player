@@ -1,4 +1,3 @@
-import { motion } from 'framer-motion';
 import { ReactNode } from 'react';
 
 interface Props {
@@ -10,12 +9,13 @@ interface Props {
     className?: string;
 }
 
+// PERFORMANCE: Replaced Framer Motion with CSS animations
+// motion.div triggers Framer Motion's layout system initialization
+
 export const ModeActionHint = ({ label, action, keys = ["SPACE"], extraContent, onClick, className = "" }: Props) => {
     return (
-        <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className={`flex items-center gap-3 bg-base-100/60 backdrop-blur-xl border border-white/10 px-4 py-2 rounded-full shadow-lg select-none ${onClick ? 'cursor-pointer hover:bg-base-100/80 active:scale-95 transition-all' : ''} ${className}`}
+        <div 
+            className={`flex items-center gap-3 bg-base-100/60 backdrop-blur-xl border border-white/10 px-4 py-2 rounded-full shadow-lg select-none animate-in fade-in zoom-in-95 duration-200 ${onClick ? 'cursor-pointer hover:bg-base-100/80 active:scale-95 transition-all' : ''} ${className}`}
             onClick={onClick}
         >
             {action && <span className="text-xs font-medium opacity-50 uppercase tracking-wide">{action}</span>}
@@ -36,6 +36,6 @@ export const ModeActionHint = ({ label, action, keys = ["SPACE"], extraContent, 
                     {extraContent}
                 </>
             )}
-        </motion.div>
+        </div>
     );
 };

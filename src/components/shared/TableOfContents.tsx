@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useAppStore } from '../../store/appStore';
 import { MarkdownSplitter } from '../../lib/markdown/splitter';
 
@@ -26,6 +26,38 @@ export const TableOfContents = () => {
     const [headers, setHeaders] = useState<Header[]>([]);
     const [sectionCardCounts, setSectionCardCounts] = useState<Record<string, number>>({});
 
+    // Debounce timer ref for MutationObserver - prevents excessive DOM queries in Tauri WebView
+    const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // PERFORMANCE: Track currently highlighted element to avoid querySelectorAll
+    const highlightedRef = useRef<HTMLElement | null>(null);
+    const DEBOUNCE_MS = 300; // Increased debounce for better Tauri performance
+
+    const collectHeaders = useCallback((container: HTMLElement) => {
+        const headingElements = container.querySelectorAll<HTMLHeadingElement>('h1[id], h2[id], h3[id], h4[id]');
+        const extracted: Header[] = [];
+
+        headingElements.forEach((el) => {
+            // Ignore headings that are inside aria-hidden containers
+            if (el.closest('[aria-hidden="true"]')) return;
+
+            const level = Number(el.tagName.substring(1));
+            if (!level || level < 1 || level > 4) return;
+
+            const text = el.textContent?.trim() || '';
+            if (!text) return;
+
+            if (!el.id) return;
+
+            extracted.push({
+                id: el.id,
+                text,
+                level,
+            });
+        });
+
+        setHeaders((prev) => (headersAreEqual(prev, extracted) ? prev : extracted));
+    }, []);
+
     useEffect(() => {
         if (!currentNote) {
             setHeaders([]);
@@ -38,48 +70,33 @@ export const TableOfContents = () => {
             return;
         }
 
-        let rafId: number | null = null;
+        // Initial collection
+        collectHeaders(container);
 
-        const collectHeaders = () => {
-            const headingElements = container.querySelectorAll<HTMLHeadingElement>('h1[id], h2[id], h3[id], h4[id]');
-            const extracted: Header[] = [];
-
-            headingElements.forEach((el) => {
-                // Ignore headings that are inside aria-hidden containers
-                if (el.closest('[aria-hidden="true"]')) return;
-
-                const level = Number(el.tagName.substring(1));
-                if (!level || level < 1 || level > 4) return;
-
-                const text = el.textContent?.trim() || '';
-                if (!text) return;
-
-                if (!el.id) return;
-
-                extracted.push({
-                    id: el.id,
-                    text,
-                    level,
-                });
-            });
-
-            setHeaders((prev) => (headersAreEqual(prev, extracted) ? prev : extracted));
-        };
-
-        collectHeaders();
-
+        // Debounced MutationObserver callback - critical for Tauri WebView performance
+        // In Tauri, MutationObserver fires much more frequently than in browser
         const observer = new MutationObserver(() => {
-            if (rafId) cancelAnimationFrame(rafId);
-            rafId = requestAnimationFrame(collectHeaders);
+            // Cancel any pending debounce
+            if (debounceTimerRef.current) {
+                clearTimeout(debounceTimerRef.current);
+            }
+            // Schedule new collection with debounce
+            debounceTimerRef.current = setTimeout(() => {
+                collectHeaders(container);
+            }, DEBOUNCE_MS);
         });
 
+        // Only observe childList changes, not characterData or attributes
+        // This reduces the number of callbacks significantly
         observer.observe(container, { childList: true, subtree: true });
 
         return () => {
-            if (rafId) cancelAnimationFrame(rafId);
+            if (debounceTimerRef.current) {
+                clearTimeout(debounceTimerRef.current);
+            }
             observer.disconnect();
         };
-    }, [currentNote, viewMode]);
+    }, [currentNote, viewMode, collectHeaders]);
 
     useEffect(() => {
         if (!currentNote) {
@@ -124,30 +141,36 @@ export const TableOfContents = () => {
             return;
         }
 
-        // Use manual scroll calculation to avoid expensive smooth scroll layout recalculations
-        // This is much more performant than scrollIntoView({ behavior: 'smooth' }) for large documents
-        const containerRect = container.getBoundingClientRect();
-        const elementRect = element.getBoundingClientRect();
-        const scrollMarginTop = 80; // scroll-mt-20 = 5rem = 80px
-        const targetScroll = container.scrollTop + elementRect.top - containerRect.top - scrollMarginTop;
-        container.scrollTop = Math.max(0, targetScroll);
-
-        // UX: Highlight the target heading to assist visual scanning
-        // Use RAF to batch DOM operations and avoid layout thrashing
+        // PERFORMANCE: Single RAF to batch all DOM reads/writes
+        // Avoids layout thrashing by grouping getBoundingClientRect calls
         requestAnimationFrame(() => {
-            document.querySelectorAll('.toc-target-highlight').forEach(el => {
-                el.classList.remove('toc-target-highlight');
+            const containerRect = container.getBoundingClientRect();
+            const elementRect = element!.getBoundingClientRect();
+            const scrollMarginTop = 80; // scroll-mt-20 = 5rem = 80px
+            const targetScroll = container.scrollTop + elementRect.top - containerRect.top - scrollMarginTop;
+            
+            // Smooth scroll for better UX
+            container.scrollTo({ 
+                top: Math.max(0, targetScroll), 
+                behavior: 'smooth' 
             });
 
-            // Second RAF ensures browser processes removal before adding
-            requestAnimationFrame(() => {
-                element!.classList.add('toc-target-highlight');
-            });
+            // Clear previous highlight (no querySelectorAll needed)
+            if (highlightedRef.current) {
+                highlightedRef.current.classList.remove('toc-target-highlight');
+            }
+
+            // Add new highlight
+            element!.classList.add('toc-target-highlight');
+            highlightedRef.current = element;
         });
 
         // Clean up after animation
         setTimeout(() => {
-            element!.classList.remove('toc-target-highlight');
+            if (highlightedRef.current === element) {
+                element!.classList.remove('toc-target-highlight');
+                highlightedRef.current = null;
+            }
         }, 1500);
     };
 
@@ -163,8 +186,8 @@ export const TableOfContents = () => {
                         key={i}
                         className={`
                             group flex items-center gap-3
-                            cursor-pointer py-1.5 pr-2 rounded-lg transition-all duration-200
-                            hover:bg-base-content/5
+                            cursor-pointer py-1.5 pr-2 rounded-lg transition-colors duration-150
+                            hover:bg-base-content/5 active:bg-base-content/10
                         `}
                         style={{ paddingLeft: `${(header.level - 1) * 12 + 8}px` }}
                         onClick={() => scrollToHeader(header.id)}
@@ -172,7 +195,7 @@ export const TableOfContents = () => {
                         {/* Active indicator dot (optional - could rely on scroll spy later) */}
                         <div className="w-1 h-1 rounded-full bg-base-content/20 group-hover:bg-primary transition-colors" />
                         
-                        <span className="flex-1 truncate opacity-60 group-hover:opacity-100 group-hover:text-primary-content transition-all text-xs font-medium" title={header.text}>
+                        <span className="flex-1 truncate opacity-60 group-hover:opacity-100 group-hover:text-primary-content transition-[color,opacity] duration-150 text-xs font-medium" title={header.text}>
                             {header.text}
                         </span>
 
