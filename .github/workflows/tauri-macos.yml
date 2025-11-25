@@ -1,0 +1,41 @@
+name: Build Tauri macOS
+
+on:
+  # 手动触发
+  workflow_dispatch:
+  # 打标签时自动触发（可按需改掉或删除）
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install JS dependencies
+        run: npm install
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # 使用本地 @tauri-apps/cli，通过 npx 调用
+      - name: Build Tauri app (macOS)
+        run: npx tauri build
+
+      # 上传打包好的 macOS 应用（.app / .dmg 等）
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-macos
+          path: |
+            src-tauri/target/**/bundle/macos/**
