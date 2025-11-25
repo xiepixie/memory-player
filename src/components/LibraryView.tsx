@@ -123,17 +123,6 @@ export const LibraryView = () => {
     })();
   }, [studyResourcesPrefetched, rootPath, files.length]);
 
-  useEffect(() => {
-    const handleFocusSearch = () => {
-      if (!rootPath) return;
-      // We can dispatch an event or use a ref passed to header if needed
-      // For now we rely on the user clicking search or using shortcut
-      // Assuming LibraryHeader has its own focus logic or we might need to expose a ref
-    };
-
-    window.addEventListener('library-focus-search', handleFocusSearch as EventListener);
-    return () => window.removeEventListener('library-focus-search', handleFocusSearch as EventListener);
-  }, [rootPath]);
 
   const vaultKey = rootPath || 'NO_VAULT';
   const searchHistory = searchHistoryByVault[vaultKey] || [];
@@ -689,6 +678,28 @@ export const LibraryView = () => {
 };
 
 /**
+ * Get earliest due date info from file metadata.
+ * Extracted to avoid IIFE recreation on every render.
+ */
+const getEarliestDueInfo = (meta: any): { cardCount: number; earliestDate: Date } | null => {
+  if (!meta?.cards) return null;
+  const cards = Object.values(meta.cards) as Card[];
+  if (cards.length === 0) return null;
+
+  const scheduled = cards.filter((c) => c.reps > 0 && c.due);
+  if (scheduled.length === 0) return null;
+
+  const earliest = scheduled.reduce((prev, curr) =>
+    new Date(prev.due) < new Date(curr.due) ? prev : curr
+  );
+
+  const earliestDate = new Date(earliest.due);
+  if (!earliestDate || Number.isNaN(earliestDate.getTime())) return null;
+
+  return { cardCount: cards.length, earliestDate };
+};
+
+/**
  * FileSection component optimized for performance.
  * 
  * Performance optimizations:
@@ -764,25 +775,13 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
                                             {file.replace(rootPath || '', '').replace(/^\//, '')}
                                         </span>
                                 {(() => {
-                                    if (!meta?.cards) return null;
-                                    const cards = Object.values(meta.cards) as Card[];
-                                    if (cards.length === 0) return null;
-
-                                    const scheduled = cards.filter((c) => c.reps > 0 && c.due);
-                                    if (scheduled.length === 0) return null;
-
-                                    const earliest = scheduled.reduce((prev, curr) => {
-                                        return new Date(prev.due) < new Date(curr.due) ? prev : curr;
-                                    });
-
-                                    const earliestDate = new Date(earliest.due);
-                                    if (!earliestDate || isNaN(earliestDate.getTime())) return null;
-
+                                    const info = getEarliestDueInfo(meta);
+                                    if (!info) return null;
                                     return (
                                         <div className="text-xs font-mono opacity-50 bg-base-200 px-2 py-1 rounded flex gap-2 items-center">
-                                            <span>{cards.length} cards</span>
+                                            <span>{info.cardCount} cards</span>
                                             <span>•</span>
-                                            <span>{formatDistanceToNow(earliestDate, { addSuffix: true })}</span>
+                                            <span>{formatDistanceToNow(info.earliestDate, { addSuffix: true })}</span>
                                         </div>
                                     );
                                 })()}
@@ -811,24 +810,11 @@ const FileSection = ({ title, icon, files, rootPath, loadNote, metadatas, color,
                                         {isLoading ? <span className="loading loading-spinner loading-sm" /> : <FileText size={20} />}
                                     </div>
                                     {(() => {
-                                        if (!meta?.cards) return null;
-                                        const cards = Object.values(meta.cards) as Card[];
-                                        const count = cards.length;
-                                        if (count === 0) return null;
-
-                                        const scheduled = cards.filter((c) => c.reps > 0 && c.due);
-                                        if (scheduled.length === 0) return null;
-
-                                        const earliest = scheduled.reduce((prev, curr) =>
-                                            new Date(prev.due) < new Date(curr.due) ? prev : curr,
-                                        );
-
-                                        const earliestDate = new Date(earliest.due);
-                                        if (!earliestDate || isNaN(earliestDate.getTime())) return null;
-
+                                        const info = getEarliestDueInfo(meta);
+                                        if (!info) return null;
                                         return (
                                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-base-200 opacity-60`}>
-                                                {formatDistanceToNow(earliestDate)}
+                                                {formatDistanceToNow(info.earliestDate)}
                                             </span>
                                         );
                                     })()}

@@ -21,7 +21,6 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
   // Ref to track latest currentClozeIndex for subscription callback (avoids stale closure)
   const currentClozeIndexRef = useRef(currentClozeIndex);
   
-  const scrollRef = useRef<HTMLDivElement>(null);
   // Track the last revealed key to trigger confetti via useEffect
   const [lastRevealedKey, setLastRevealedKey] = useState<string | null>(null);
   
@@ -283,10 +282,7 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
         )}
       </div>
 
-      <div
-        className="flex-1 prose prose-lg relative"
-        ref={scrollRef}
-      >
+      <div className="flex-1 prose prose-lg relative">
         {/* No Provider needed - ClozeWithContext uses Zustand store directly */}
         <MarkdownContent
           content={currentNote.renderableContent}

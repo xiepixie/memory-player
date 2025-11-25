@@ -5,11 +5,76 @@ import { MarkdownContent } from '../shared/MarkdownContent';
 import { Save, Type, Bold, Italic, List, Heading1, Copy, Eraser, RefreshCw, AlertTriangle, Wand2, Trash2, X, Clipboard, Keyboard, ChevronRight, ChevronDown, Tag } from 'lucide-react';
 import { useToastStore } from '../../store/toastStore';
 import { ClozeUtils } from '../../lib/markdown/clozeUtils';
-import { parseNote } from '../../lib/markdown/parser';
+import { parseNote, ParsedNote } from '../../lib/markdown/parser';
 import { useFileWatcher } from '../../hooks/useFileWatcher';
 import { createPortal } from 'react-dom';
 
 import matter from 'gray-matter';
+import React from 'react';
+
+// === PERFORMANCE: Zero-allocation newline counter ===
+const countNewlines = (text: string, endPos: number): number => {
+  let count = 0;
+  const end = Math.min(endPos, text.length);
+  for (let i = 0; i < end; i++) {
+    if (text.charCodeAt(i) === 10) count++; // 10 = '\n'
+  }
+  return count;
+};
+
+// === PERFORMANCE: Memoized Navigator to prevent re-render on every targetClozeId change ===
+interface ClozeNavigatorProps {
+  entries: { id: number; count: number }[];
+  targetClozeId: number | null;
+  onScrollToCloze: (id: number) => void;
+}
+
+const ClozeNavigator = React.memo(({ entries, targetClozeId, onScrollToCloze }: ClozeNavigatorProps) => {
+  if (entries.length === 0) return null;
+  
+  return (
+    <div className="relative z-20 bg-base-100/80 backdrop-blur-md border-b border-base-200/50">
+      <div className="flex items-center px-2 py-2 pr-6 overflow-x-auto no-scrollbar gap-1 mask-linear-fade">
+        {entries.map(({ id, count }) => {
+          const isMulti = count > 1;
+          const isTarget = targetClozeId === id;
+          return (
+            <button
+              key={id}
+              onClick={() => onScrollToCloze(id)}
+              className={`
+                group relative flex items-center justify-center
+                h-6 min-w-[24px] px-1.5 rounded-md text-[10px] font-mono transition-colors duration-200
+                ${isTarget 
+                  ? 'bg-primary text-primary-content font-bold shadow-sm scale-105' 
+                  : 'bg-base-200/50 text-base-content/60 hover:bg-base-200 hover:text-base-content hover:scale-105'}
+              `}
+              title={`Jump to c${id} (${count} occurrences)`}
+            >
+              <span className="z-10 flex items-center gap-0.5">
+                c{id}
+                {isMulti && (
+                  <span className={`ml-0.5 px-1 rounded-full text-[8px] ${
+                    isTarget 
+                      ? 'bg-primary-content/20 text-primary-content' 
+                      : 'bg-base-content/10 text-base-content/60'
+                  }`}>
+                    {count}
+                  </span>
+                )}
+              </span>
+              {/* Active Indicator */}
+              {isTarget && (
+                <span className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary shadow-[0_0_4px_var(--color-primary)]" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+});
+ClozeNavigator.displayName = 'ClozeNavigator';
 
 const MetadataEditor = ({ content, onChange }: { content: string; onChange: (newContent: string) => void }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -41,7 +106,7 @@ const MetadataEditor = ({ content, onChange }: { content: string; onChange: (new
             const newContent = matter.stringify(file.content, newData);
             onChange(newContent);
         } catch (e) {
-            console.error('Failed to update tags', e);
+            // Error handled silently - frontmatter update failed
         }
     };
 
@@ -155,13 +220,36 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       setDeleteConfirm(false);
   }, [activePreviewCloze]);
 
-  // Instead of raw preview content, we parse it to use our renderableContent logic
-  // We use a parsed state to hold the result of parseNote
+  // === PERFORMANCE FIX: Avoid double parsing ===
+  // Store already parsed the note in loadNote(), use it directly for initial render
+  // Only re-parse locally when user edits (via debounced content)
   const [debouncedContent, setDebouncedContent] = useState(content);
-  const [parsedPreview, setParsedPreview] = useState(() => parseNote(content));
+  
+  // CRITICAL: Use currentNote directly for initial render (already parsed by store)
+  // This avoids blocking the main thread with a second parseNote() call
+  const [parsedPreview, setParsedPreview] = useState<ParsedNote>(() => currentNote || parseNote(content));
+  
+  // Track if we're ready for interaction (initial setup complete)
+  const [isReady, setIsReady] = useState(false);
+  
+  // Defer "ready" state to next frame to ensure UI is painted and responsive
+  useEffect(() => {
+    if (!active) return;
+    // Use requestIdleCallback for non-blocking initialization
+    const handle = 'requestIdleCallback' in window
+      ? (window as any).requestIdleCallback(() => setIsReady(true), { timeout: 100 })
+      : setTimeout(() => setIsReady(true), 16);
+    return () => {
+      if ('cancelIdleCallback' in window) {
+        (window as any).cancelIdleCallback(handle);
+      } else {
+        clearTimeout(handle);
+      }
+    };
+  }, [active]);
   const isDirty = content !== (currentNote?.raw ?? '');
   const clozeStats = useMemo(() => {
-    const clozes = ((parsedPreview as any)?.clozes ?? []) as { id?: number }[];
+    const clozes = parsedPreview?.clozes ?? [];
     const counts = new Map<number, number>();
     let total = 0;
     let maxId = 0;
@@ -334,7 +422,8 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const scrollToCloze = (id: number) => {
+  // PERFORMANCE: Wrap in useCallback for ClozeNavigator memo optimization
+  const scrollToCloze = useCallback((id: number) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
 
@@ -400,9 +489,9 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       // 5. Update React state AFTER all DOM operations (separate from DOM writes)
       queueMicrotask(() => setTargetClozeId(id));
     });
-  };
+  }, [getClozeIndex, getTextareaGeometry, getPreviewPane, flashPreviewCloze]);
   
-  const jumpToSiblingCloze = (direction: 'next' | 'prev') => {
+  const jumpToSiblingCloze = useCallback((direction: 'next' | 'prev') => {
       const textarea = textareaRef.current;
       if (!textarea) return;
       
@@ -482,7 +571,7 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           // Update React state AFTER all DOM operations
           queueMicrotask(() => setTargetClozeId(target.id));
       });
-  };
+  }, [getClozeIndex, getTextareaGeometry, getPreviewPane, flashPreviewCloze]);
 
   const stateRef = useRef({ content, currentNote });
   const lastSelfSaveAtRef = useRef<number | null>(null);
@@ -514,25 +603,39 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   useEffect(() => {
     if (active && currentNote) {
       setContent(currentNote.raw);
-      setParsedPreview(parseNote(currentNote.raw));
+      // PERFORMANCE: Use the already-parsed note from store, don't re-parse!
+      // parseNote was already called in store's loadNote()
+      setParsedPreview(currentNote);
     }
   }, [currentNote, active]);
 
-  // Debounce preview and stats update
+  // Debounce preview and stats update - ONLY when user edits
+  // Skip parsing if content matches store (initial load or after save)
   useEffect(() => {
     if (!active) return;
+    
+    // PERFORMANCE: Skip re-parsing if content matches store version
+    // This avoids unnecessary parsing on initial load
+    if (content === currentNote?.raw) {
+      setDebouncedContent(content);
+      return;
+    }
+    
     const timer = setTimeout(() => {
       setParsedPreview(parseNote(content));
       setDebouncedContent(content);
     }, 200);
     return () => clearTimeout(timer);
-  }, [content, active]);
+  }, [content, active, currentNote?.raw]);
 
+  // Cleanup RAF and timers on unmount
   useEffect(() => {
       return () => {
           if (cursorUpdateRafRef.current !== null) {
               cancelAnimationFrame(cursorUpdateRafRef.current);
           }
+          // Clear highlight timer to prevent memory leaks
+          clearCurrentPreviewHighlight();
       };
   }, []);
 
@@ -1025,8 +1128,7 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
       // PERFORMANCE: Pre-compute geometry before DOM operations
       const geometry = getTextareaGeometry(textarea);
-      const textBefore = val.substring(0, target.index);
-      const lineCount = (textBefore.match(/\n/g) || []).length;
+      const lineCount = countNewlines(val, target.index);
       const targetTop = lineCount * geometry.lineHeight;
       const scrollTarget = Math.max(0, targetTop - geometry.clientHeight * 0.5);
 
@@ -1078,8 +1180,7 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
       // PERFORMANCE: Pre-compute geometry before DOM operations
       const geometry = getTextareaGeometry(textarea);
-      const textBefore = val.substring(0, start);
-      const lineCount = (textBefore.match(/\n/g) || []).length;
+      const lineCount = countNewlines(val, start);
       const targetTop = lineCount * geometry.lineHeight;
       const scrollTarget = Math.max(0, targetTop - geometry.clientHeight * 0.2);
 
@@ -1114,8 +1215,7 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     // Pre-compute geometry (reading) before RAF (writing)
     const geometry = getTextareaGeometry(textarea);
     const computeScrollTarget = (charPos: number) => {
-      const textBefore = full.substring(0, charPos);
-      const lineCount = (textBefore.match(/\n/g) || []).length;
+      const lineCount = countNewlines(full, charPos);
       const targetTop = lineCount * geometry.lineHeight;
       return Math.max(0, targetTop - geometry.clientHeight * 0.2);
     };
@@ -1157,7 +1257,44 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     });
   }, [flashPreviewCloze, getTextareaGeometry]);
 
-  if (!currentNote || !currentFilepath) return null;
+  // Early return for missing data - return placeholder to maintain hook order
+  if (!currentNote || !currentFilepath) {
+    return <div className="h-full w-full" />;
+  }
+  
+  // Show lightweight loading indicator while preparing for interaction
+  // This ensures user sees the component is loading, not frozen
+  if (!isReady) {
+    return (
+      <div className="h-full flex flex-col bg-base-100 relative">
+        {/* Minimal skeleton that matches final layout */}
+        <div className="sticky top-0 z-30 flex items-center justify-between px-3 py-2 backdrop-blur-md bg-base-100/80 border-b border-base-200/50">
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-base-content/20" />
+            <div className="h-3 w-px bg-base-content/10" />
+            <div className="h-4 w-16 bg-base-200 rounded animate-pulse" />
+          </div>
+          <div className="flex gap-1.5">
+            <div className="h-6 w-24 bg-base-200 rounded-lg animate-pulse" />
+            <div className="h-6 w-20 bg-primary/10 rounded-lg animate-pulse" />
+          </div>
+          <div className="h-7 w-16 bg-base-200 rounded animate-pulse" />
+        </div>
+        <div className="flex-1 flex overflow-hidden">
+          <div className="w-[45%] p-6 space-y-4">
+            <div className="h-4 w-3/4 bg-base-200 rounded animate-pulse" />
+            <div className="h-4 w-1/2 bg-base-200 rounded animate-pulse" />
+            <div className="h-4 w-2/3 bg-base-200 rounded animate-pulse" />
+          </div>
+          <div className="flex-1 p-6 bg-base-200/30 space-y-4">
+            <div className="h-6 w-1/2 bg-base-200 rounded animate-pulse" />
+            <div className="h-4 w-full bg-base-200 rounded animate-pulse" />
+            <div className="h-4 w-4/5 bg-base-200 rounded animate-pulse" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col bg-base-100 relative">
@@ -1256,7 +1393,7 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       )}
 
       {/* Compact Glassy Toolbar */}
-      <div className="sticky top-0 z-30 flex items-center justify-between px-3 py-2 backdrop-blur-md bg-base-100/80 border-b border-base-200/50 transition-all gap-4">
+      <div className="sticky top-0 z-30 flex items-center justify-between px-3 py-2 backdrop-blur-md bg-base-100/80 border-b border-base-200/50 transition-colors gap-4">
           
           {/* Left: Status & Stats & Critical Actions */}
           <div className="flex items-center gap-3">
@@ -1376,59 +1513,18 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           </div>
       </div>
 
-      {/* Cloze Navigator (Timeline Style) - merged inner wrappers */}
-      {clozeStats.entries.length > 0 && (
-         <div className="relative z-20 bg-base-100/80 backdrop-blur-md border-b border-base-200/50">
-            <div className="flex items-center px-2 py-2 pr-6 overflow-x-auto no-scrollbar gap-1 mask-linear-fade">
-                    {clozeStats.entries.map(({ id, count }) => {
-                        const isMulti = count > 1;
-                        const isTarget = targetClozeId === id;
-                        return (
-                        <button
-                            key={id}
-                            onClick={() => scrollToCloze(id)}
-                            className={`
-                                group relative flex items-center justify-center
-                                h-6 min-w-[24px] px-1.5 rounded-md text-[10px] font-mono transition-all duration-200
-                                ${isTarget 
-                                    ? 'bg-primary text-primary-content font-bold shadow-sm scale-105' 
-                                    : 'bg-base-200/50 text-base-content/60 hover:bg-base-200 hover:text-base-content hover:scale-105'}
-                            `}
-                            title={`Jump to c${id} (${count} occurrences)`}
-                        >
-                            <span className="z-10 flex items-center gap-0.5">
-                                c{id}
-                                {isMulti && (
-                                    <span className={`ml-0.5 px-1 rounded-full text-[8px] ${
-                                        isTarget 
-                                            ? 'bg-primary-content/20 text-primary-content' 
-                                            : 'bg-base-content/10 text-base-content/60'
-                                    }`}>
-                                        {count}
-                                    </span>
-                                )}
-                            </span>
-                            {/* Active Indicator */}
-                            {isTarget && (
-                                <span className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary shadow-[0_0_4px_var(--color-primary)]" />
-                            )}
-                        </button>
-                        );
-                    })}
-            </div>
-         </div>
-      )}
+      {/* Cloze Navigator (Memoized for performance) */}
+      <ClozeNavigator
+        entries={clozeStats.entries}
+        targetClozeId={targetClozeId}
+        onScrollToCloze={scrollToCloze}
+      />
 
       {/* Split View */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* Editor Pane - 45% width for more editing space */}
         <div className="w-[45%] flex flex-col min-w-[400px] border-r border-base-200 bg-base-100 relative group/editor">
              <MetadataEditor content={content} onChange={handleMetadataChange} />
-             
-             {/* Pane Header - Removed as it is redundant with MetadataEditor header area */}
-             {/* <div className="h-8 min-h-[2rem] border-b border-base-200 bg-base-100/50 flex items-center px-4 justify-between select-none">
-                <span className="text-[10px] font-bold uppercase tracking-widest opacity-40">Source</span>
-             </div> */}
              
              <textarea
                 ref={textareaRef}

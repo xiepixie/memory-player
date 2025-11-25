@@ -65,7 +65,7 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
 
     if (typeof answer === 'string') {
       const trimmed = answer.trim();
-        // Special handling for full $$...$$ math clozes: convert to a fenced code block
+      // Special handling for full $$...$$ math clozes: convert to a fenced code block
       // with language "math-cloze-{id}" so ReactMarkdown can delegate to a custom
       // renderer without interfering with remark-math/rehype-katex.
       if (trimmed.startsWith('$$') && trimmed.endsWith('$$')) {

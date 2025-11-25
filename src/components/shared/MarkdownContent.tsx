@@ -291,7 +291,7 @@ export const MarkdownContent = memo(({
                             
                             const numId = parseInt(id, 10);
                             let occurrenceIndex = 0;
-                            if (!isNaN(numId)) {
+                            if (!Number.isNaN(numId)) {
                                 occurrenceIndex = clozeCounts.current[numId] || 0;
                                 clozeCounts.current[numId] = occurrenceIndex + 1;
                             }
@@ -328,14 +328,14 @@ export const MarkdownContent = memo(({
                                     )}
                                     title={hint ? `Hint: ${hint}` : `Cloze #${id}`}
                                     onClick={(e) => {
-                                        if (onClozeClick && !isNaN(numId)) {
+                                        if (onClozeClick && !Number.isNaN(numId)) {
                                             e.preventDefault();
                                             e.stopPropagation();
                                             onClozeClick(numId, occurrenceIndex, e.currentTarget);
                                         }
                                     }}
                                     onContextMenu={(e) => {
-                                        if (onClozeContextMenu && !isNaN(numId)) {
+                                        if (onClozeContextMenu && !Number.isNaN(numId)) {
                                             e.preventDefault();
                                             e.stopPropagation();
                                             onClozeContextMenu(numId, occurrenceIndex, e.currentTarget, e);
