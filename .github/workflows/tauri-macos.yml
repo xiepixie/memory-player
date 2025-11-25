@@ -1,22 +1,25 @@
-name: Build Tauri macOS
+name: 'macOS Release'
 
 on:
-  # 手动触发
   workflow_dispatch:
-  # 打标签时自动触发（可按需改掉或删除）
   push:
     tags:
       - 'v*'
 
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
 jobs:
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-14  # Apple Silicon runner
     env:
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -25,20 +28,33 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install JS dependencies
-        run: npm install
-
-      - name: Setup Rust
+      - name: Setup Rust (Universal)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-      # 使用本地 @tauri-apps/cli，通过 npx 调用
-      - name: Build Tauri app (macOS)
-        run: npx tauri build
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
 
-      # 上传打包好的 macOS 应用（.app / .dmg 等）
-      - name: Upload macOS artifacts
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri (Universal Binary)
+        run: npx tauri build --target universal-apple-darwin
+
+      - name: Upload .dmg
         uses: actions/upload-artifact@v4
         with:
-          name: tauri-macos
-          path: |
-            src-tauri/target/**/bundle/macos/**
+          name: Memory-Player-macOS-universal
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+      - name: Upload .app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Memory-Player-macOS-app
+          path: src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+          if-no-files-found: warn
