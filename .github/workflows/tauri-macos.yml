@@ -46,11 +46,11 @@ jobs:
 
       # Optional: Apple Code Signing (requires secrets to be configured)
       - name: Import Apple Developer Certificate
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        if: env.APPLE_CERTIFICATE != ''
         run: |
           # Create temporary keychain
           echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
