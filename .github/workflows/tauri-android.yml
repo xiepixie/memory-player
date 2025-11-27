@@ -103,22 +103,33 @@ jobs:
           with open('app/build.gradle.kts', 'r') as f:
               content = f.read()
           
-          # Replace empty signingConfigs block with release signing config
-          signing_block = '''signingConfigs {
-                  create("release") {
-                      val keystorePropertiesFile = rootProject.file("keystore.properties")
-                      val keystoreProperties = java.util.Properties()
-                      if (keystorePropertiesFile.exists()) {
-                          keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
-                      }
-                      keyAlias = keystoreProperties["keyAlias"] as String
-                      keyPassword = keystoreProperties["password"] as String
-                      storeFile = file(keystoreProperties["storeFile"] as String)
-                      storePassword = keystoreProperties["password"] as String
-                  }
-              }'''
-          
-          content = re.sub(r'signingConfigs\s*\{\s*\}', signing_block, content)
+          # Define the signingConfigs block (to be placed inside android { ... })
+          signing_block = '''    signingConfigs {
+            create("release") {
+                val keystorePropertiesFile = rootProject.file("keystore.properties")
+                val keystoreProperties = java.util.Properties()
+                if (keystorePropertiesFile.exists()) {
+                    keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+                }
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["password"] as String
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["password"] as String
+            }
+        }'''
+
+          # Case 1: replace empty signingConfigs { } if it exists
+          if re.search(r'signingConfigs\s*\{\s*\}', content):
+              content, n = re.subn(r'signingConfigs\s*\{\s*\}', signing_block, content, count=1)
+              print(f"Replaced empty signingConfigs block (count={n})")
+          else:
+              # Case 2: no signingConfigs at all, inject into android { } block
+              def inject_into_android(match):
+                  prefix = match.group(0)
+                  return prefix + "\n" + signing_block + "\n"
+
+              content, n = re.subn(r'android\s*\{', inject_into_android, content, count=1)
+              print(f"Injected signingConfigs into android block (count={n})")
           
           # Add signingConfig to release buildType
           def add_signing(match):
@@ -137,8 +148,8 @@ jobs:
           echo "First 5 lines of build.gradle.kts:"
           head -5 app/build.gradle.kts
           echo ""
-          echo "signingConfigs block:"
-          grep -A 10 "signingConfigs {" app/build.gradle.kts | head -12
+          echo "signingConfigs occurrences (with line numbers):"
+          grep -n "signingConfigs" app/build.gradle.kts || echo "<no signingConfigs found>"
 
       - name: Build Tauri Android
         run: bunx tauri android build --apk true --aab true
