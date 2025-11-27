@@ -67,7 +67,6 @@ jobs:
           echo '[target.aarch64-linux-android]' >> .cargo/config.toml
           echo 'rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]' >> .cargo/config.toml
 
-      # 🔥 修复核心：Setup Android Signing (No Imports Version) 🔥
       - name: Setup Android Signing (Fixed Syntax)
         env:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -77,22 +76,22 @@ jobs:
         run: |
           cd src-tauri/gen/android
           
-          # 1. 解码为 .p12 文件
+          # 1. 解码证书
           echo "$ANDROID_KEY_BASE64" | base64 -d > keystore.p12
           
-          # 2. 创建 keystore.properties
+          # 2. 生成属性文件
           echo "keyAlias=$ANDROID_KEY_ALIAS" > keystore.properties
           echo "password=$ANDROID_KEY_PASSWORD" >> keystore.properties
           echo "storeFile=$(pwd)/keystore.p12" >> keystore.properties
           
-          # 3. 创建动态签名脚本 (移除 import，使用全限定名)
+          # 3. 注入 Gradle 脚本 (无 import 版本)
           cat > signing_config.gradle.kts << 'GRADLE_EOF'
           
           val keystorePropertiesFile = rootProject.file("keystore.properties")
-          val keystoreProperties = java.util.Properties() // 使用全路径
+          val keystoreProperties = java.util.Properties()
           
           if (keystorePropertiesFile.exists()) {
-              keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile)) // 使用全路径
+              keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
           }
           
           android.signingConfigs {
@@ -110,15 +109,12 @@ jobs:
           }
           GRADLE_EOF
           
-          # 4. 注入到 app/build.gradle.kts
           echo "" >> app/build.gradle.kts
-          echo "// === Release Signing Configuration by Emilia ===" >> app/build.gradle.kts
+          echo "// === Release Signing Config ===" >> app/build.gradle.kts
           cat signing_config.gradle.kts >> app/build.gradle.kts
-          
-          echo "✅ Signing configuration added (Safe Mode)"
 
       - name: Build Tauri Android (APK + AAB)
-        run: bunx tauri android build --apk --aab
+        run: bunx tauri android build --apk true --aab true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
