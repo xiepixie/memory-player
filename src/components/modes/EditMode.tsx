@@ -12,15 +12,11 @@ import { createPortal } from 'react-dom';
 import matter from 'gray-matter';
 import React from 'react';
 
-// === PERFORMANCE: Zero-allocation newline counter ===
-const countNewlines = (text: string, endPos: number): number => {
-  let count = 0;
-  const end = Math.min(endPos, text.length);
-  for (let i = 0; i < end; i++) {
-    if (text.charCodeAt(i) === 10) count++; // 10 = '\n'
-  }
-  return count;
-};
+// === CodeMirror 6 ===
+import { ReactCodeMirrorRef } from '@uiw/react-codemirror';
+import { CodeMirrorEditor } from '../shared/CodeMirrorEditor';
+import { useCodeMirrorActions } from '../../hooks/useCodeMirrorActions';
+import { createClozeKeymap } from '../../lib/codemirror/keymaps';
 
 // === PERFORMANCE: Memoized Navigator to prevent re-render on every targetClozeId change ===
 interface ClozeNavigatorProps {
@@ -381,53 +377,17 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     }, 1800);
   }, []);
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const cursorUpdateRafRef = useRef<number | null>(null);
+  // === CodeMirror 6 Editor Ref ===
+  const editorRef = useRef<ReactCodeMirrorRef>(null);
+  const cmActions = useCodeMirrorActions(editorRef);
   
-  // PERFORMANCE: Cache textarea geometry to avoid repeated getComputedStyle calls
-  // These values rarely change, so we cache them and only update on resize
-  const textareaGeometryRef = useRef<{ lineHeight: number; clientHeight: number } | null>(null);
-  
-  // Get cached geometry, computing only once per session (or on resize)
-  const getTextareaGeometry = useCallback((textarea: HTMLTextAreaElement, forceRecalc = false) => {
-    if (!forceRecalc && textareaGeometryRef.current) {
-      // Return fully cached values - no DOM reads
-      return textareaGeometryRef.current;
-    }
-    
-    // Compute line height once (expensive getComputedStyle call)
-    const computed = getComputedStyle(textarea);
-    const lineHeightStr = computed.lineHeight;
-    let lineHeight: number;
-    if (lineHeightStr === 'normal') {
-      lineHeight = parseFloat(computed.fontSize) * 1.2;
-    } else {
-      lineHeight = parseFloat(lineHeightStr);
-    }
-    
-    const geometry = {
-      lineHeight,
-      clientHeight: textarea.clientHeight
-    };
-    textareaGeometryRef.current = geometry;
-    return geometry;
-  }, []);
-  
-  // Invalidate geometry cache on window resize
-  useEffect(() => {
-    const handleResize = () => {
-      textareaGeometryRef.current = null;
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
 
   // PERFORMANCE: Wrap in useCallback for ClozeNavigator memo optimization
   const scrollToCloze = useCallback((id: number) => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-
-    const val = textarea.value;
+    // === CodeMirror 6: Use cmActions for content/selection ===
+    const val = cmActions.getContent();
+    if (!val) return;
+    
     const pattern = `{{c${id}::`;
     
     // PERFORMANCE: Use cached index instead of scanning on every jump
@@ -437,24 +397,11 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     if (!indices || indices.length === 0) return;
 
     // Cycle logic: Find the next occurrence after the current cursor
-    const currentStart = textarea.selectionStart;
+    const currentStart = cmActions.getSelection().from;
     let targetIndex = indices.findIndex(idx => idx > currentStart);
     if (targetIndex === -1) targetIndex = 0;
 
     const targetPos = indices[targetIndex];
-
-    // PERFORMANCE: Pre-compute ALL geometry BEFORE any RAF to avoid Layout Thrashing
-    // This batches all READ operations together
-    const geometry = getTextareaGeometry(textarea);
-    // PERFORMANCE: Count newlines without creating substring or match array
-    // Old: val.substring(0, targetPos).match(/\n/g)?.length - creates 2 temp objects
-    // New: Simple loop - O(n) but zero allocations
-    let lineCount = 0;
-    for (let i = 0; i < targetPos; i++) {
-      if (val.charCodeAt(i) === 10) lineCount++;  // 10 = '\n'
-    }
-    const targetTop = lineCount * geometry.lineHeight;
-    const scrollTarget = Math.max(0, targetTop - geometry.clientHeight * 0.2);
 
     // Pre-read preview scroll info BEFORE RAF (avoid read-after-write)
     // PERFORMANCE: Use cached preview pane reference
@@ -471,32 +418,28 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
     // Batch all DOM WRITE operations in a single RAF - no reads inside!
     requestAnimationFrame(() => {
-      // 1. Focus and select
-      textarea.focus();
-      textarea.setSelectionRange(targetPos, targetPos + pattern.length);
-      
-      // 2. Scroll editor to target (using pre-computed value)
-      textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+      // 1. CodeMirror: Scroll to position and select (handles geometry internally)
+      cmActions.scrollToPosition(targetPos, { from: targetPos, to: targetPos + pattern.length });
 
-      // 3. Scroll Preview using pre-computed offset
+      // 2. Scroll Preview using pre-computed offset
       if (previewPane && previewScrollOffset !== null) {
         previewPane.scrollTo({ top: currentPreviewScroll + previewScrollOffset, behavior: 'smooth' });
       }
       
-      // 4. Highlight (deferred via queueMicrotask inside flashPreviewCloze)
+      // 3. Highlight (deferred via queueMicrotask inside flashPreviewCloze)
       flashPreviewCloze(id);
       
-      // 5. Update React state AFTER all DOM operations (separate from DOM writes)
+      // 4. Update React state AFTER all DOM operations (separate from DOM writes)
       queueMicrotask(() => setTargetClozeId(id));
     });
-  }, [getClozeIndex, getTextareaGeometry, getPreviewPane, flashPreviewCloze]);
+  }, [getClozeIndex, getPreviewPane, flashPreviewCloze, cmActions]);
   
   const jumpToSiblingCloze = useCallback((direction: 'next' | 'prev') => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
+      // === CodeMirror 6: Use cmActions for content/selection ===
+      const full = cmActions.getContent();
+      if (!full) return;
       
-      const full = textarea.value;
-      const currentPos = textarea.selectionStart;
+      const currentPos = cmActions.getSelection().from;
       
       // PERFORMANCE: Use cached index - O(1) lookup vs O(n) regex scan
       const clozeIndex = getClozeIndex(full);
@@ -522,16 +465,6 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       
       const target = indices[targetIndex];
       const pattern = `{{c${target.id}::`;
-      
-      // PERFORMANCE: Pre-compute geometry before RAF to avoid Layout Thrashing
-      const geometry = getTextareaGeometry(textarea);
-      // PERFORMANCE: Count newlines without allocations
-      let lineCount = 0;
-      for (let i = 0; i < target.pos; i++) {
-        if (full.charCodeAt(i) === 10) lineCount++;  // 10 = '\n'
-      }
-      const targetTop = lineCount * geometry.lineHeight;
-      const scrollTarget = Math.max(0, targetTop - geometry.clientHeight * 0.2);
 
       // Calculate instance index for preview sync (before RAF)
       let instanceIndex = 0;
@@ -540,7 +473,6 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       }
       
       // PERFORMANCE: Pre-read ALL preview geometry BEFORE RAF to avoid Layout Thrashing
-      // Use cached preview pane reference
       const previewPane = getPreviewPane();
       const previewElements = document.querySelectorAll(`[data-cloze-id="${target.id}"]`);
       const targetEl = previewElements[instanceIndex] as HTMLElement | undefined;
@@ -554,11 +486,8 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
       // Batch all DOM WRITE operations in RAF - no reads inside!
       requestAnimationFrame(() => {
-          textarea.focus();
-          textarea.setSelectionRange(target.pos, target.pos + pattern.length);
-          
-          // Scroll editor to target (using pre-computed value)
-          textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+          // CodeMirror: Scroll to position and select (handles geometry internally)
+          cmActions.scrollToPosition(target.pos, { from: target.pos, to: target.pos + pattern.length });
           
           // Scroll preview using pre-computed offset
           if (previewPane && previewScrollOffset !== null) {
@@ -571,7 +500,7 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           // Update React state AFTER all DOM operations
           queueMicrotask(() => setTargetClozeId(target.id));
       });
-  }, [getClozeIndex, getTextareaGeometry, getPreviewPane, flashPreviewCloze]);
+  }, [getClozeIndex, getPreviewPane, flashPreviewCloze, cmActions]);
 
   const stateRef = useRef({ content, currentNote });
   const lastSelfSaveAtRef = useRef<number | null>(null);
@@ -609,31 +538,34 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     }
   }, [currentNote, active]);
 
-  // Debounce preview and stats update - ONLY when user edits
-  // Skip parsing if content matches store (initial load or after save)
+  // Debounce preview and stats update
+  // CRITICAL: Always update preview when content changes (including undo/redo)
   useEffect(() => {
     if (!active) return;
     
-    // PERFORMANCE: Skip re-parsing if content matches store version
-    // This avoids unnecessary parsing on initial load
-    if (content === currentNote?.raw) {
+    // PERFORMANCE: Skip debounce if content matches debouncedContent (no change)
+    if (content === debouncedContent) {
+      return;
+    }
+    
+    // FAST PATH: If content matches store version, use cached parsed note
+    if (content === currentNote?.raw && currentNote) {
+      setParsedPreview(currentNote);
       setDebouncedContent(content);
       return;
     }
     
+    // SLOW PATH: Debounce re-parsing for user edits
     const timer = setTimeout(() => {
       setParsedPreview(parseNote(content));
       setDebouncedContent(content);
     }, 200);
     return () => clearTimeout(timer);
-  }, [content, active, currentNote?.raw]);
+  }, [content, active, currentNote, debouncedContent]);
 
-  // Cleanup RAF and timers on unmount
+  // Cleanup timers on unmount
   useEffect(() => {
       return () => {
-          if (cursorUpdateRafRef.current !== null) {
-              cancelAnimationFrame(cursorUpdateRafRef.current);
-          }
           // Clear highlight timer to prevent memory leaks
           clearCurrentPreviewHighlight();
       };
@@ -674,16 +606,15 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   };
 
   const insertText = (before: string, after: string = '') => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-
-    textarea.focus();
+    // === CodeMirror 6: Use cmActions ===
+    // 直接从 CodeMirror 获取选区和内容
+    const selection = cmActions.getSelection();
+    let { from: start, to: end } = selection;
     
-    let start = textarea.selectionStart;
-    let end = textarea.selectionEnd;
-    let selectedText = content.substring(start, end);
+    // 使用 getSelectedText 获取选中文本，更可靠
+    let selectedText = cmActions.getSelectedText();
 
-    // Smart trim logic...
+    // Smart trim logic - 只在有选中文本时处理
     if (selectedText.length > 0) {
         const leadingSpaceMatch = selectedText.match(/^\s*/);
         const leadingSpaceLen = leadingSpaceMatch ? leadingSpaceMatch[0].length : 0;
@@ -694,24 +625,23 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
             start += leadingSpaceLen;
             end -= trailingSpaceLen;
             selectedText = selectedText.substring(leadingSpaceLen, selectedText.length - trailingSpaceLen);
-            textarea.setSelectionRange(start, end);
         }
     }
     
     const newText = before + selectedText + after;
-    const success = document.execCommand('insertText', false, newText);
     
-    if (!success) {
-        const combinedText = content.substring(0, start) + newText + content.substring(end);
-        setContent(combinedText);
+    // CodeMirror: Replace range and set cursor between markers if no selection
+    const innerStart = start + before.length;
+    const innerEnd = innerStart + selectedText.length;
+    
+    // 如果没有选中文本，光标应该在两个标记之间
+    if (selectedText.length === 0) {
+      cmActions.replaceRange(start, end, newText, { anchor: innerStart });
+    } else {
+      cmActions.replaceRange(start, end, newText, { anchor: innerStart, head: innerEnd });
     }
-
-    setTimeout(() => {
-      textarea.focus();
-      const innerStart = start + before.length;
-      const innerEnd = innerStart + selectedText.length;
-      textarea.setSelectionRange(innerStart, innerEnd);
-    }, 0);
+    
+    // Note: React state will be updated by CodeMirror's onChange callback
   };
 
   const computeSameIdTarget = (full: string, cursorIndex: number): number | null => {
@@ -727,14 +657,14 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   };
 
   const updateTargetClozeId = useCallback(() => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-      // Use the live textarea value for cursor-relative search
-      const full = textarea.value;
+      // === CodeMirror 6: Use cmActions ===
+      const full = cmActions.getContent();
+      if (!full) return;
+      const cursorPos = cmActions.getSelection().from;
       
       // Optimize: Use the maxId from our stats instead of rescanning the whole file
       // This might be slightly stale (200ms) but that's acceptable for a hint
-      const prevId = ClozeUtils.findPrecedingClozeId(full, textarea.selectionStart);
+      const prevId = ClozeUtils.findPrecedingClozeId(full, cursorPos);
       
       if (prevId !== null) {
           setTargetClozeId(prevId);
@@ -749,16 +679,6 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       }
   }, [clozeStats.maxId]);
 
-  const scheduleUpdateTargetClozeId = useCallback(() => {
-      if (cursorUpdateRafRef.current !== null) {
-          cancelAnimationFrame(cursorUpdateRafRef.current);
-      }
-      cursorUpdateRafRef.current = requestAnimationFrame(() => {
-          cursorUpdateRafRef.current = null;
-          updateTargetClozeId();
-      });
-  }, [updateTargetClozeId]);
-
   // Debounce cursor-dependent logic (target cloze ID)
   useEffect(() => {
       const timer = setTimeout(() => {
@@ -771,21 +691,19 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
    * Inserts a new cloze with auto-incremented ID (e.g., c1 -> c2)
    */
   const insertCloze = (sameId = false) => {
-      // ...
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-
-      // Always use the live textarea value as the source of truth
-      const full = textarea.value;
+      // === CodeMirror 6: Use cmActions ===
+      const full = cmActions.getContent();
+      if (!full) return;
 
       // 1. Find current max ID in the WHOLE content
       const maxId = ClozeUtils.getMaxClozeNumber(full);
+      const cursorPos = cmActions.getSelection().from;
 
       // 2. Determine target ID
       let targetId: number;
 
       if (sameId) {
-          const sameIdTarget = computeSameIdTarget(full, textarea.selectionStart);
+          const sameIdTarget = computeSameIdTarget(full, cursorPos);
           if (sameIdTarget !== null) {
               targetId = sameIdTarget;
           } else {
@@ -795,11 +713,8 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           targetId = Math.max(maxId + 1, 1);
       }
 
-      // 3. Get selection and apply the same smart-trim logic used in insertText
-      textarea.focus();
-
-      let start = textarea.selectionStart;
-      let end = textarea.selectionEnd;
+      // 3. Get selection and apply the same smart-trim logic
+      let { from: start, to: end } = cmActions.getSelection();
       let selectedText = full.substring(start, end);
 
       if (selectedText.length > 0) {
@@ -812,95 +727,40 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
               start += leadingSpaceLen;
               end -= trailingSpaceLen;
               selectedText = selectedText.substring(leadingSpaceLen, selectedText.length - trailingSpaceLen);
-              textarea.setSelectionRange(start, end);
           }
       }
 
       const innerText = selectedText || '...';
       const newText = ClozeUtils.createCloze(innerText, targetId);
 
-      const success = document.execCommand('insertText', false, newText);
+      // CodeMirror: Replace range and select the inner text
+      const innerOffset = newText.indexOf(innerText);
+      const innerStart = start + innerOffset;
+      const innerEnd = innerStart + innerText.length;
+      cmActions.replaceRange(start, end, newText, { anchor: innerStart, head: innerEnd });
 
-      if (!success) {
-          // Fallback: manually update content based on the previous full value
-          const combinedText = full.substring(0, start) + newText + full.substring(end);
-          setContent(combinedText);
-      } else {
-          // Keep React state in sync with the live textarea value
-          setContent(textarea.value);
-      }
-
+      // Note: React state will be updated by CodeMirror's onChange callback
       setTargetClozeId(targetId);
-
-      setTimeout(() => {
-          const current = textareaRef.current;
-          if (!current) return;
-
-          current.focus();
-
-          const innerOffset = newText.indexOf(innerText);
-          if (innerOffset >= 0) {
-              const innerStart = start + innerOffset;
-              const innerEnd = innerStart + innerText.length;
-              current.setSelectionRange(innerStart, innerEnd);
-          } else {
-              const pos = start + newText.length;
-              current.setSelectionRange(pos, pos);
-          }
-      }, 0);
   };
 
   const replaceTextRange = (newText: string, start: number, end: number) => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-
-      textarea.focus();
-      textarea.setSelectionRange(start, end);
-      
-      const success = document.execCommand('insertText', false, newText);
-      
-      // Fallback if execCommand fails
-      if (!success) {
-          const val = textarea.value;
-          const combined = val.substring(0, start) + newText + val.substring(end);
-          setContent(combined);
-      }
-      // If success, onChange will handle setContent
+      // === CodeMirror 6: Use cmActions ===
+      cmActions.replaceRange(start, end, newText);
+      // Note: React state will be updated by CodeMirror's onChange callback
   };
 
   const replaceAllText = (newText: string) => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-
-      const savedStart = textarea.selectionStart;
-      const savedScroll = textarea.scrollTop;
-
-      textarea.focus();
-      textarea.select();
-      
-      const success = document.execCommand('insertText', false, newText);
-      
-      if (!success) {
-          setContent(newText);
-      }
-
-      // Restore cursor and scroll best effort
-      // Note: indices might have shifted if ID lengths changed, but keeping relative pos is better than end
-      try {
-          textarea.setSelectionRange(savedStart, savedStart);
-          textarea.scrollTop = savedScroll;
-      } catch (e) {
-          // Ignore range errors
-      }
+      // === CodeMirror 6: Use cmActions ===
+      cmActions.replaceAll(newText, true); // preserveCursor = true
+      // Note: React state will be updated by CodeMirror's onChange callback
   };
 
   const handleClearCloze = () => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-
-      const full = textarea.value;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
+      // === CodeMirror 6: Use cmActions ===
+      const full = cmActions.getContent();
+      if (!full) return;
+      
+      const { from: start, to: end } = cmActions.getSelection();
       const hasSelection = start !== end;
 
       if (hasSelection) {
@@ -920,11 +780,7 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
               replaceAllText(unclozeRes.text);
               if (unclozeRes.range) {
                  // 将光标放到还原文本末尾，便于继续编辑
-                 setTimeout(() => {
-                     const current = textareaRef.current;
-                     if (!current) return;
-                     current.setSelectionRange(unclozeRes.range!.end, unclozeRes.range!.end);
-                 }, 0);
+                 cmActions.setSelection(unclozeRes.range.end);
               }
           } else {
              addToast('No cloze at cursor', 'info');
@@ -938,29 +794,18 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
   const confirmNormalizeIds = () => {
       setShowFixIdsConfirm(false);
-      // Use textarea.value to ensure we have latest without race conditions
-      const textarea = textareaRef.current;
-      if (!textarea) return;
+      // === CodeMirror 6: Use cmActions ===
+      const full = cmActions.getContent();
+      if (!full) return;
 
-      const { text, changed } = ClozeUtils.normalizeClozeIds(textarea.value);
+      const { text, changed } = ClozeUtils.normalizeClozeIds(full);
       if (changed) {
-          const savedStart = textarea.selectionStart;
-          const savedScroll = textarea.scrollTop;
-
-          // Directly update React state instead of using replaceAllText/execCommand
+          const savedCursor = cmActions.getSelection().from;
           setContent(text);
-
+          // Restore cursor position after React re-render
           setTimeout(() => {
-              const current = textareaRef.current;
-              if (!current) return;
-              try {
-                  current.setSelectionRange(savedStart, savedStart);
-                  current.scrollTop = savedScroll;
-              } catch {
-                  // Ignore range errors
-              }
+              cmActions.setSelection(Math.min(savedCursor, text.length));
           }, 0);
-
           addToast('Cloze IDs normalized', 'success');
       } else {
           addToast('IDs are already normalized', 'info');
@@ -968,28 +813,19 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   };
 
   const handleCleanInvalid = () => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
+      // === CodeMirror 6: Use cmActions ===
+      const full = cmActions.getContent();
+      if (!full) return;
 
-      const { text, cleanedCount } = ClozeUtils.cleanInvalidClozes(textarea.value);
+      const { text, cleanedCount } = ClozeUtils.cleanInvalidClozes(full);
       if (cleanedCount > 0) {
           if (confirm(`Found ${cleanedCount} broken/invalid cloze patterns (e.g. missing colons).\n\nRemove their formatting (keep text)?`)) {
-              const savedStart = textarea.selectionStart;
-              const savedScroll = textarea.scrollTop;
-
+              const savedCursor = cmActions.getSelection().from;
               setContent(text);
-
+              // Restore cursor position after React re-render
               setTimeout(() => {
-                  const current = textareaRef.current;
-                  if (!current) return;
-                  try {
-                      current.setSelectionRange(savedStart, savedStart);
-                      current.scrollTop = savedScroll;
-                  } catch {
-                      // Ignore range errors
-                  }
+                  cmActions.setSelection(Math.min(savedCursor, text.length));
               }, 0);
-
               addToast(`Cleaned ${cleanedCount} invalid clozes`, 'success');
           }
       } else {
@@ -1005,12 +841,11 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           return;
       }
 
-      const textarea = textareaRef.current;
-      if (!textarea) return;
+      // === CodeMirror 6: Use cmActions ===
+      const full = cmActions.getContent();
+      if (!full) return;
 
       const { id, index } = activePreviewCloze;
-      const full = textarea.value;
-
       const info = ClozeUtils.findClozeByIdAndOccurrence(full, id, index);
       if (!info) return;
 
@@ -1024,12 +859,12 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
   const handleClearPreviewCloze = () => {
       if (!activePreviewCloze) return;
-      const textarea = textareaRef.current;
-      if (!textarea) return;
+      
+      // === CodeMirror 6: Use cmActions ===
+      const full = cmActions.getContent();
+      if (!full) return;
 
       const { id, index } = activePreviewCloze;
-      const full = textarea.value;
-
       const info = ClozeUtils.findClozeByIdAndOccurrence(full, id, index);
       if (!info) return;
 
@@ -1043,11 +878,12 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
   const handleCopyClozeAnswer = () => {
       if (!activePreviewCloze) return;
-      const textarea = textareaRef.current;
-      if (!textarea) return;
+      
+      // === CodeMirror 6: Use cmActions ===
+      const full = cmActions.getContent();
+      if (!full) return;
 
       const { id, index } = activePreviewCloze;
-      const full = textarea.value;
       const info = ClozeUtils.findClozeByIdAndOccurrence(full, id, index);
       
       if (info) {
@@ -1058,55 +894,51 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   };
 
   const handleMetadataChange = (newContent: string) => {
-      const textarea = textareaRef.current;
-
-      if (!textarea) {
-          setContent(newContent);
-          return;
-      }
-
+      // === CodeMirror 6: Use cmActions ===
       const previousContent = content;
-      const savedStart = textarea.selectionStart;
-      const savedScroll = textarea.scrollTop;
+      
+      // Only restore cursor if CodeMirror is currently focused
+      const editorIsFocused = document.activeElement?.closest('.cm-editor');
+      const savedStart = editorIsFocused ? cmActions.getSelection().from : 0;
 
       let targetPos = savedStart;
 
-      try {
-          const prevParsed = matter(previousContent);
-          const nextParsed = matter(newContent);
+      if (editorIsFocused) {
+          try {
+              const prevParsed = matter(previousContent);
+              const nextParsed = matter(newContent);
 
-          const prevBodyIndex = previousContent.indexOf(prevParsed.content);
-          const nextBodyIndex = newContent.indexOf(nextParsed.content);
+              const prevBodyIndex = previousContent.indexOf(prevParsed.content);
+              const nextBodyIndex = newContent.indexOf(nextParsed.content);
 
-          if (prevBodyIndex !== -1 && nextBodyIndex !== -1 && savedStart >= prevBodyIndex) {
-              const delta = nextBodyIndex - prevBodyIndex;
-              targetPos = savedStart + delta;
+              if (prevBodyIndex !== -1 && nextBodyIndex !== -1 && savedStart >= prevBodyIndex) {
+                  const delta = nextBodyIndex - prevBodyIndex;
+                  targetPos = savedStart + delta;
+              }
+          } catch {
           }
-      } catch {
       }
 
       setContent(newContent);
 
-      setTimeout(() => {
-          const current = textareaRef.current;
-          if (!current) return;
-          try {
-              const clampedStart = Math.min(targetPos, current.value.length);
-              current.setSelectionRange(clampedStart, clampedStart);
-              current.scrollTop = savedScroll;
-          } catch {
-          }
-      }, 0);
+      // Only restore cursor position if editor was focused
+      if (editorIsFocused) {
+          setTimeout(() => {
+              const clampedStart = Math.min(targetPos, newContent.length);
+              cmActions.setSelection(clampedStart);
+          }, 0);
+      }
   };
 
   const handleJumpToUnclosed = () => {
       const unclosed = clozeStats.unclosed;
       if (unclosed.length === 0) return;
 
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-
-      const currentPos = textarea.selectionStart;
+      // === CodeMirror 6: Use cmActions ===
+      const val = cmActions.getContent();
+      if (!val) return;
+      
+      const currentPos = cmActions.getSelection().from;
 
       // Find the first unclosed cloze that comes after the current cursor
       let target = unclosed.find((u) => u.index > currentPos);
@@ -1116,7 +948,6 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           target = unclosed[0];
       }
 
-      const val = textarea.value;
       let end = target.index + 2;
       if (typeof (target as any).id === 'number') {
           const id = (target as any).id as number;
@@ -1126,16 +957,30 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           }
       }
 
-      // PERFORMANCE: Pre-compute geometry before DOM operations
-      const geometry = getTextareaGeometry(textarea);
-      const lineCount = countNewlines(val, target.index);
-      const targetTop = lineCount * geometry.lineHeight;
-      const scrollTarget = Math.max(0, targetTop - geometry.clientHeight * 0.5);
+      // CodeMirror: Scroll to position and select (handles geometry internally)
+      cmActions.scrollToPosition(target.index, { from: target.index, to: end });
+  };
 
-      // Batch DOM write operations
-      textarea.focus();
-      textarea.setSelectionRange(target.index, end);
-      textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+  const handleJumpToDangling = () => {
+      const dangling = clozeStats.dangling;
+      if (dangling.length === 0) return;
+
+      // === CodeMirror 6: Use cmActions ===
+      const val = cmActions.getContent();
+      if (!val) return;
+      
+      const currentPos = cmActions.getSelection().from;
+
+      // Find the first dangling }} that comes after the current cursor
+      let target = dangling.find((d) => d.index > currentPos);
+
+      // If none found, wrap around to the first dangling
+      if (!target) {
+          target = dangling[0];
+      }
+
+      // Select the }}
+      cmActions.scrollToPosition(target.index, { from: target.index, to: target.index + 2 });
   };
 
   const handlePreviewErrorClick = useCallback((
@@ -1143,8 +988,9 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       occurrenceIndex: number,
       _target?: HTMLElement,
   ) => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
+      // === CodeMirror 6: Use cmActions ===
+      const val = cmActions.getContent();
+      if (!val) return;
 
       const list = kind === 'unclosed'
           ? clozeStats.unclosed as { index: number }[]
@@ -1158,7 +1004,6 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       const safeIndex = ((occurrenceIndex % list.length) + list.length) % list.length;
       const entry = list[safeIndex];
 
-      const val = textarea.value;
       const start = entry.index;
       let end: number;
 
@@ -1178,17 +1023,9 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
           end = tentativeEnd;
       }
 
-      // PERFORMANCE: Pre-compute geometry before DOM operations
-      const geometry = getTextareaGeometry(textarea);
-      const lineCount = countNewlines(val, start);
-      const targetTop = lineCount * geometry.lineHeight;
-      const scrollTarget = Math.max(0, targetTop - geometry.clientHeight * 0.2);
-
-      // Batch DOM write operations
-      textarea.focus();
-      textarea.setSelectionRange(start, end);
-      textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
-  }, [clozeStats, getTextareaGeometry]);
+      // CodeMirror: Scroll to position and select (handles geometry internally)
+      cmActions.scrollToPosition(start, { from: start, to: end });
+  }, [clozeStats, cmActions]);
 
   const handlePreviewClozeContextMenu = useCallback((id: number, occurrenceIndex: number, target: HTMLElement, _event: React.MouseEvent) => {
       // Trigger Menu on Right Click
@@ -1204,32 +1041,19 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   }, []);
 
   const handlePreviewClozeClick = useCallback((id: number, occurrenceIndex: number, _target: HTMLElement) => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
+    // === CodeMirror 6: Use cmActions ===
+    const full = cmActions.getContent();
+    if (!full) return;
     
-    // PERFORMANCE: Read all geometry info BEFORE RAF to avoid Layout Thrashing
-    // This batches all "read" operations together
-    const full = textarea.value;
     const info = ClozeUtils.findClozeByIdAndOccurrence(full, id, occurrenceIndex);
-    
-    // Pre-compute geometry (reading) before RAF (writing)
-    const geometry = getTextareaGeometry(textarea);
-    const computeScrollTarget = (charPos: number) => {
-      const lineCount = countNewlines(full, charPos);
-      const targetTop = lineCount * geometry.lineHeight;
-      return Math.max(0, targetTop - geometry.clientHeight * 0.2);
-    };
 
-    // RAF for write operations only - no DOM reads inside
+    // RAF for write operations only
     requestAnimationFrame(() => {
       if (info) {
           const { answerStart, answerEnd } = info;
-          const scrollTarget = computeScrollTarget(answerStart);
           
-          // All DOM write operations first
-          textarea.focus();
-          textarea.setSelectionRange(answerStart, answerEnd);
-          textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+          // CodeMirror: Scroll to position and select (handles geometry internally)
+          cmActions.scrollToPosition(answerStart, { from: answerStart, to: answerEnd });
           flashPreviewCloze(id);
           
           // React state update AFTER DOM operations (deferred to avoid blocking)
@@ -1244,18 +1068,28 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       const safeIndex = ((occurrenceIndex % indices.length) + indices.length) % indices.length;
       const start = indices[safeIndex];
       const pattern = `{{c${id}::`;
-      const scrollTarget = computeScrollTarget(start);
       
-      // All DOM write operations first
-      textarea.focus();
-      textarea.setSelectionRange(start, start + pattern.length);
-      textarea.scrollTo({ top: scrollTarget, behavior: 'smooth' });
+      // CodeMirror: Scroll to position and select
+      cmActions.scrollToPosition(start, { from: start, to: start + pattern.length });
       flashPreviewCloze(id);
       
       // React state update AFTER DOM operations
       queueMicrotask(() => setTargetClozeId(id));
     });
-  }, [flashPreviewCloze, getTextareaGeometry]);
+  }, [flashPreviewCloze, cmActions]);
+
+  // === CodeMirror Keymap (Best Practice: Use internal keymap system) ===
+  // PERFORMANCE: useMemo ensures stable reference, preventing extension recreation
+  const clozeKeymap = useMemo(() => {
+    return createClozeKeymap({
+      insertCloze,
+      handleClearCloze,
+      jumpToSiblingCloze,
+      handleSave,
+      insertBold: () => insertText('**', '**'),
+      insertItalic: () => insertText('*', '*'),
+    });
+  }, [insertCloze, handleClearCloze, jumpToSiblingCloze, handleSave, insertText]);
 
   // Early return for missing data - return placeholder to maintain hook order
   if (!currentNote || !currentFilepath) {
@@ -1375,13 +1209,15 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
                 Shortcuts
             </h3>
             <div className="space-y-2">
-                <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">Bold / Italic</span> <div className="flex gap-1"><kbd className="kbd kbd-sm">Ctrl+B</kbd><kbd className="kbd kbd-sm">I</kbd></div></div>
+                <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">Bold</span> <kbd className="kbd kbd-sm">Ctrl+B</kbd></div>
+                <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">Italic</span> <kbd className="kbd kbd-sm">Ctrl+I</kbd></div>
                 <div className="divider my-1 h-px bg-base-200"></div>
                 <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">New Cloze</span> <kbd className="kbd kbd-sm">Ctrl+Shift+C</kbd></div>
-                <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">Same ID</span> <kbd className="kbd kbd-sm">Ctrl+Alt+C</kbd></div>
-                <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">Uncloze</span> <kbd className="kbd kbd-sm">Ctrl+Shift+X</kbd></div>
+                <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">Same ID Cloze</span> <kbd className="kbd kbd-sm">Ctrl+Alt+C</kbd></div>
+                <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">Remove Cloze</span> <kbd className="kbd kbd-sm">Ctrl+Shift+X</kbd></div>
                 <div className="divider my-1 h-px bg-base-200"></div>
-                <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">Navigation</span> <div className="flex gap-1"><kbd className="kbd kbd-sm">Alt+↑</kbd><kbd className="kbd kbd-sm">↓</kbd></div></div>
+                <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">Next Cloze</span> <kbd className="kbd kbd-sm">Alt+↓</kbd></div>
+                <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">Prev Cloze</span> <kbd className="kbd kbd-sm">Alt+↑</kbd></div>
                 <div className="flex justify-between items-center text-sm"><span className="font-medium opacity-70">Save</span> <kbd className="kbd kbd-sm">Ctrl+S</kbd></div>
             </div>
             <div className="mt-6 flex justify-end">
@@ -1411,15 +1247,26 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
             </div>
 
              {/* Critical Actions (Conditional) */}
-            {(clozeStats.unclosed.length > 0 || clozeStats.missingIds.length > 0) && (
+            {(clozeStats.unclosed.length > 0 || clozeStats.dangling.length > 0 || clozeStats.missingIds.length > 0) && (
                 <div className="flex items-center gap-1 animate-in fade-in slide-in-from-left-2">
                      {clozeStats.unclosed.length > 0 && (
                         <button 
                             onClick={handleJumpToUnclosed}
                             className="btn btn-xs btn-error btn-outline h-6 min-h-0 px-1.5 gap-1 font-mono"
+                            title={`${clozeStats.unclosed.length} unclosed cloze(s) - missing }}`}
                         >
                             <AlertTriangle size={10} />
                             {clozeStats.unclosed.length}
+                        </button>
+                    )}
+                    {clozeStats.dangling.length > 0 && (
+                        <button 
+                            onClick={handleJumpToDangling}
+                            className="btn btn-xs btn-warning btn-outline h-6 min-h-0 px-1.5 gap-1 font-mono"
+                            title={`${clozeStats.dangling.length} dangling }} - extra closing braces`}
+                        >
+                            <span className="text-[9px]">{'}}'}</span>
+                            {clozeStats.dangling.length}
                         </button>
                     )}
                     {clozeStats.missingIds.length > 0 && (
@@ -1526,90 +1373,15 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
         <div className="w-[45%] flex flex-col min-w-[400px] border-r border-base-200 bg-base-100 relative group/editor">
              <MetadataEditor content={content} onChange={handleMetadataChange} />
              
-             <textarea
-                ref={textareaRef}
-                id="note-editor"
-                name="noteEditor"
-                className="flex-1 w-full h-full p-6 resize-none focus:outline-none font-mono text-sm leading-relaxed bg-base-100 overflow-y-auto custom-scrollbar scroll-smooth"
+             {/* === CodeMirror 6 Editor === */}
+             <CodeMirrorEditor
+                ref={editorRef}
                 value={content}
-                onChange={(e) => {
-                    setContent(e.target.value);
-                    // updateTargetClozeId handled by effect
-                }}
-                onClick={scheduleUpdateTargetClozeId}
-                onSelect={scheduleUpdateTargetClozeId}
+                onChange={setContent}
+                keymap={clozeKeymap}
+                className="flex-1 overflow-hidden"
                 placeholder="Start typing..."
-                spellCheck={false}
-                onKeyUp={(e) => {
-                if (
-                    e.key === 'ArrowLeft' ||
-                    e.key === 'ArrowRight' ||
-                    e.key === 'ArrowUp' ||
-                    e.key === 'ArrowDown' ||
-                    e.key === 'Home' ||
-                    e.key === 'End' ||
-                    e.key === 'PageUp' ||
-                    e.key === 'PageDown'
-                ) {
-                    scheduleUpdateTargetClozeId();
-                }
-                }}
-                onKeyDown={(e) => {
-                // Save: Ctrl+S
-                if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                    e.preventDefault();
-                    handleSave();
-                    return;
-                }
-
-                // Bold: Ctrl+B
-                if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'b') {
-                    e.preventDefault();
-                    insertText('**', '**');
-                    return;
-                }
-
-                // Italic: Ctrl+I
-                if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'i') {
-                    e.preventDefault();
-                    insertText('*', '*');
-                    return;
-                }
-
-                // New Cloze: Ctrl+Shift+C (Anki Standard)
-                if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
-                    e.preventDefault();
-                    insertCloze(false);
-                    return;
-                }
-                
-                // Same Cloze: Ctrl+Alt+C (Anki Standard-ish)
-                if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === 'c' || e.key === 'C')) {
-                    e.preventDefault();
-                    insertCloze(true);
-                    return;
-                }
-
-                // Uncloze: Ctrl+Shift+X (Clear Cloze)
-                if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'x' || e.key === 'X')) {
-                    e.preventDefault();
-                    handleClearCloze();
-                    return;
-                }
-
-                // Navigation: Alt+Up/Down
-                if (e.altKey && e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    jumpToSiblingCloze('next');
-                    return;
-                }
-                if (e.altKey && e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    jumpToSiblingCloze('prev');
-                    return;
-                }
-                }}
-            />
+             />
         </div>
 
         {/* Preview Pane - 45% width */}
@@ -1623,6 +1395,7 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
             {active && (
                 <MarkdownContent
                     content={parsedPreview.renderableContent}
+                    headings={parsedPreview.headings}
                     className="text-base max-w-none"
                     onClozeClick={handlePreviewClozeClick}
                     onClozeContextMenu={handlePreviewClozeContextMenu}

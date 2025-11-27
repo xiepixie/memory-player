@@ -15,9 +15,15 @@ const KATEX_OPTIONS = {
     throwOnError: false,  // Don't throw on invalid LaTeX, render error inline
     trust: false,         // Don't allow potentially dangerous commands
 };
-import { useRef, memo } from 'react';
+
+// PERFORMANCE: Stable plugin arrays (module-level) to avoid recreation on every render
+const remarkPlugins = [remarkGfm, remarkMath];
+const rehypePlugins: any = [[rehypeKatex, KATEX_OPTIONS], rehypeRaw];
+
+import { useRef, useMemo, memo } from 'react';
 
 import { generateSlug } from '../../lib/stringUtils';
+import type { HeadingMeta } from '../../lib/markdown/parser';
 
 /** Cloze rendering mode */
 export type ClozeVariant = 'edit' | 'review' | 'blur';
@@ -29,6 +35,10 @@ interface MarkdownContentProps {
     disableIds?: boolean;
     /** Hide the first H1 heading (useful when title is already displayed separately) */
     hideFirstH1?: boolean;
+    
+    // === Pre-computed metadata (from parser.ts) ===
+    /** Pre-computed heading IDs - eliminates runtime slug generation */
+    headings?: HeadingMeta[];
     
     // === Cloze Mode Props ===
     /** Rendering mode: 'edit' (default), 'review' (ClozeMode), 'blur' (BlurMode) */
@@ -54,23 +64,45 @@ export const MarkdownContent = memo(({
     className, 
     disableIds = false, 
     hideFirstH1 = false,
+    headings: precomputedHeadings,
     variant = 'edit',
     onClozeClick, 
     onClozeContextMenu, 
     onErrorLinkClick 
 }: MarkdownContentProps) => {
+    // === PERFORMANCE: Use pre-computed headings when available ===
+    // Build a lookup map: headingIndex -> id
+    // This eliminates O(n) slug generation per heading during render
+    const headingIdLookup = useMemo(() => {
+        if (!precomputedHeadings || precomputedHeadings.length === 0) return null;
+        // Map by index since headings appear in order
+        return precomputedHeadings.map(h => h.id);
+    }, [precomputedHeadings]);
+    
+    // Fallback refs for runtime computation (when no pre-computed data)
     const slugCounts = useRef<Record<string, number>>({});
     const clozeCounts = useRef<Record<number, number>>({});
     const h1Count = useRef<number>(0);
+    const headingIndex = useRef<number>(0);
     
-    // Reset slug, cloze, and h1 counts on every render
+    // Reset counts on every render (only used when no pre-computed data)
     slugCounts.current = {};
     clozeCounts.current = {};
     h1Count.current = 0;
+    headingIndex.current = 0;
 
     const generateId = (children: any) => {
         if (disableIds) return undefined;
         
+        // FAST PATH: Use pre-computed heading ID
+        if (headingIdLookup && headingIndex.current < headingIdLookup.length) {
+            const id = headingIdLookup[headingIndex.current];
+            headingIndex.current++;
+            // Empty string means heading had no valid slug - return undefined
+            return id || undefined;
+        }
+        
+        // SLOW PATH: Fallback to runtime computation
         const text = extractText(children);
         const baseSlug = generateSlug(text);
         
@@ -85,8 +117,8 @@ export const MarkdownContent = memo(({
     return (
         <div className={clsx("font-sans leading-loose text-lg text-base-content/90", className)}>
             <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkMath]}
-                rehypePlugins={[[rehypeKatex, KATEX_OPTIONS], rehypeRaw]}
+                remarkPlugins={remarkPlugins}
+                rehypePlugins={rehypePlugins}
                 components={{
                     img: MarkdownImage,
                     table: ({ children }) => (
@@ -105,6 +137,10 @@ export const MarkdownContent = memo(({
                         h1Count.current += 1;
                         // Skip first H1 if hideFirstH1 is enabled (title shown separately)
                         if (hideFirstH1 && h1Count.current === 1) {
+                            // CRITICAL: Still consume the heading from lookup to maintain index parity
+                            if (headingIdLookup && headingIndex.current < headingIdLookup.length) {
+                                headingIndex.current++;
+                            }
                             return null;
                         }
                         const id = generateId(children);

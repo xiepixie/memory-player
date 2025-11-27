@@ -1,5 +1,12 @@
 import matter from 'gray-matter';
 import { ClozeUtils } from './clozeUtils';
+import { generateSlug, cleanMarkdown } from '../stringUtils';
+
+export interface HeadingMeta {
+  level: 1 | 2 | 3 | 4 | 5 | 6;
+  text: string;       // Raw text content
+  id: string;         // Pre-generated slug ID
+}
 
 export interface ParsedNote {
   content: string;
@@ -8,6 +15,9 @@ export interface ParsedNote {
   clozes: ClozeItem[];
   raw: string;
   renderableContent: string; // Content with clozes replaced by [Answer](#cloze-id) for rendering
+  // === Pre-computed metadata for MarkdownContent ===
+  headings: HeadingMeta[];              // Pre-generated heading IDs
+  clozeOccurrenceCount: Map<number, number>; // id -> total occurrences
 }
 
 export interface ClozeItem {
@@ -110,12 +120,54 @@ export const parseNote = (rawMarkdown: string): ParsedNote => {
       return `[${answer}](#highlight)`;
   });
 
+  // === Pre-compute heading metadata ===
+  // CRITICAL: Must scan renderableContent (same source as ReactMarkdown)
+  // and include ALL headings (even empty slugs) to maintain index parity
+  const headings: HeadingMeta[] = [];
+  const slugCounts: Record<string, number> = {};
+  
+  // Regex to match Markdown headings (# to ######)
+  const headingRegex = /^(#{1,6})\s+(.+)$/gm;
+  let headingMatch;
+  
+  // Scan renderableContent, not content - this is what ReactMarkdown sees
+  while ((headingMatch = headingRegex.exec(renderableContent)) !== null) {
+    const level = headingMatch[1].length as 1 | 2 | 3 | 4 | 5 | 6;
+    const rawText = headingMatch[2];
+    // Clean markdown from heading text (remove bold, links, etc.)
+    const cleanText = cleanMarkdown(rawText);
+    const baseSlug = generateSlug(cleanText);
+    
+    // CRITICAL: Always push, even if slug is empty, to maintain index parity
+    // with how ReactMarkdown renders headings
+    if (baseSlug) {
+      const count = slugCounts[baseSlug] || 0;
+      slugCounts[baseSlug] = count + 1;
+      const id = count === 0 ? baseSlug : `${baseSlug}-${count}`;
+      headings.push({ level, text: cleanText, id });
+    } else {
+      // Empty slug - still track to maintain index, but with empty id
+      headings.push({ level, text: cleanText, id: '' });
+    }
+  }
+  
+  // === Pre-compute cloze occurrence counts ===
+  const clozeOccurrenceCount = new Map<number, number>();
+  for (const cloze of clozes) {
+    clozeOccurrenceCount.set(
+      cloze.id, 
+      (clozeOccurrenceCount.get(cloze.id) || 0) + 1
+    );
+  }
+
   return {
     content, // Original content minus frontmatter
     frontmatter,
     hints,
     clozes,
     raw: rawMarkdown,
-    renderableContent
+    renderableContent,
+    headings,
+    clozeOccurrenceCount,
   };
 };

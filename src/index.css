@@ -285,3 +285,20 @@
   animation: blob-float-login-2 10s ease-in-out infinite 1s;
   will-change: transform;
 }
+
+/* === CodeMirror 6 Layout Styles === */
+.cm-editor-wrapper {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.cm-editor-wrapper .cm-editor {
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+}
+
+.cm-editor-wrapper .cm-scroller {
+  overflow: auto !important;
+}

@@ -46,6 +46,7 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
       <div className="relative flex-1 prose prose-lg max-w-none">
         <MarkdownContent 
           content={currentNote.renderableContent}
+          headings={currentNote.headings}
           variant="blur"
           hideFirstH1
         />

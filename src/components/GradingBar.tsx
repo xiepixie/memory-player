@@ -27,9 +27,13 @@ export const GradingBar = () => {
   const queueLength = useAppStore(state => state.queue.length);
   const sessionIndex = useAppStore(state => state.sessionIndex);
   const sessionStats = useAppStore(state => state.sessionStats);
+  const viewMode = useAppStore(state => state.viewMode);
   
   // Check if we're in an active session
   const isInSession = sessionStats.timeStarted > 0 && queueLength > 0;
+  
+  // Only show in study modes (review/master), not in edit mode
+  const isStudyMode = viewMode === 'review' || viewMode === 'master';
   
   // Compute previews synchronously to avoid stale data after grading
   // Dependencies: currentMetadata changes when card changes or after grading
@@ -67,7 +71,8 @@ export const GradingBar = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleRate, isGrading, currentMetadata]);
 
-  if (!currentMetadata) return null;
+  // Don't render in edit mode or without metadata
+  if (!currentMetadata || !isStudyMode) return null;
 
   return (
     <div className="fixed bottom-8 left-0 right-0 flex justify-center z-50 pointer-events-none">

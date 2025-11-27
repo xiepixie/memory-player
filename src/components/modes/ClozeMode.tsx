@@ -286,6 +286,7 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
         {/* No Provider needed - ClozeWithContext uses Zustand store directly */}
         <MarkdownContent
           content={currentNote.renderableContent}
+          headings={currentNote.headings}
           hideFirstH1
           variant="review"
         />

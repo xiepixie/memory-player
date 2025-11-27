@@ -8,8 +8,14 @@ export const useKeyboardShortcuts = () => {
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            // Ignore if typing in an input
-            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+            // Ignore if typing in any input, textarea, contenteditable, or CodeMirror editor
+            const target = e.target as HTMLElement;
+            if (
+                target instanceof HTMLInputElement || 
+                target instanceof HTMLTextAreaElement ||
+                target.isContentEditable ||
+                target.closest('.cm-editor')
+            ) {
                 return;
             }
 
@@ -21,7 +27,8 @@ export const useKeyboardShortcuts = () => {
                 return;
             }
 
-            if (e.code === 'Space') {
+            // Space only triggers reveal in study modes, not in edit mode
+            if (e.code === 'Space' && viewMode !== 'edit') {
                 if (e.repeat) return;
                 e.preventDefault();
                 // Dispatch custom event for ClozeMode
