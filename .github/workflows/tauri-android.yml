@@ -100,16 +100,27 @@ jobs:
           python3 << 'PYTHON_SCRIPT'
           import re
           
-          with open('app/build.gradle.kts', 'r') as f:
+          gradle_file = 'app/build.gradle.kts'
+          
+          with open(gradle_file, 'r') as f:
               content = f.read()
+          
+          # Ensure alias imports for JavaUtilProperties / JavaFileInputStream at the top of the file
+          imports_block = '''import java.util.Properties as JavaUtilProperties
+import java.io.FileInputStream as JavaFileInputStream
+
+'''
+
+          if 'JavaUtilProperties' not in content:
+              content = imports_block + content
           
           # Define the signingConfigs block (to be placed inside android { ... })
           signing_block = '''    signingConfigs {
             create("release") {
                 val keystorePropertiesFile = rootProject.file("keystore.properties")
-                val keystoreProperties = java.util.Properties()
+                val keystoreProperties = JavaUtilProperties()
                 if (keystorePropertiesFile.exists()) {
-                    keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+                    keystoreProperties.load(JavaFileInputStream(keystorePropertiesFile))
                 }
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["password"] as String
@@ -138,7 +149,7 @@ jobs:
           
           content = re.sub(r'(\s*)getByName\("release"\)\s*\{', add_signing, content, count=1)
           
-          with open('app/build.gradle.kts', 'w') as f:
+          with open(gradle_file, 'w') as f:
               f.write(content)
           
           print("✅ build.gradle.kts configured for release signing")
