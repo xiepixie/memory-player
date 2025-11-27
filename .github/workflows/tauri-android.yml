@@ -96,16 +96,7 @@ jobs:
           base64 -d <<< "$ANDROID_KEY_BASE64" > $RUNNER_TEMP/keystore.jks
           echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
           
-          # 2. Add imports at the top of build.gradle.kts (no leading spaces!)
-          {
-            echo 'import java.io.FileInputStream'
-            echo 'import java.util.Properties'
-            echo ''
-            cat app/build.gradle.kts
-          } > /tmp/build.gradle.kts.new
-          mv /tmp/build.gradle.kts.new app/build.gradle.kts
-          
-          # 3. Replace empty signingConfigs {} with release config using Python
+          # 2. Replace empty signingConfigs {} with release config using Python
           python3 << 'PYTHON_SCRIPT'
           import re
           
@@ -116,9 +107,9 @@ jobs:
           signing_block = '''signingConfigs {
                   create("release") {
                       val keystorePropertiesFile = rootProject.file("keystore.properties")
-                      val keystoreProperties = Properties()
+                      val keystoreProperties = java.util.Properties()
                       if (keystorePropertiesFile.exists()) {
-                          keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+                          keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
                       }
                       keyAlias = keystoreProperties["keyAlias"] as String
                       keyPassword = keystoreProperties["password"] as String
