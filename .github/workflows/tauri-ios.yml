@@ -1,4 +1,4 @@
-name: 'macOS'
+name: 'iOS'
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ env:
   RUSTUP_MAX_RETRIES: 10
 
 jobs:
-  build-macos:
+  build-ios:
     runs-on: macos-14  # Apple Silicon runner (M1/M2)
     env:
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -27,10 +27,10 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Setup Rust (Universal)
+      - name: Setup Rust (iOS targets)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -44,7 +44,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      # Optional: Apple Code Signing (requires secrets to be configured)
+      - name: Initialize Tauri iOS
+        run: bunx tauri ios init
+
       - name: Import Apple Developer Certificate
         if: ${{ secrets.APPLE_CERTIFICATE != '' }}
         env:
@@ -63,40 +65,43 @@ jobs:
           security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           
-          # Verify and extract signing identity
-          CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" || security find-identity -v -p codesigning build.keychain | grep "Apple Development" || echo "")
-          if [ -n "$CERT_INFO" ]; then
-            CERT_ID=$(echo "$CERT_INFO" | head -1 | awk -F'"' '{print $2}')
-            echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
-            echo "✅ Certificate imported: $CERT_ID"
-          fi
+          # Verify certificate
+          security find-identity -v -p codesigning build.keychain
           rm certificate.p12
 
-      - name: Build Tauri (Universal Binary)
+      - name: Install Provisioning Profile
+        if: ${{ secrets.IOS_MOBILE_PROVISION != '' }}
         env:
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY || '' }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bunx tauri build --target universal-apple-darwin
-
-      - name: Upload .dmg
-        uses: actions/upload-artifact@v4
-        with:
-          name: Memory-Player-macOS-universal-dmg
-          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-          if-no-files-found: error
-
-      - name: Upload .app (zipped)
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
         run: |
-          cd src-tauri/target/universal-apple-darwin/release/bundle/macos
-          zip -r "Memory Player.app.zip" "Memory Player.app"
+          # Create Provisioning Profiles directory
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          
+          # Decode and install provisioning profile
+          echo $IOS_MOBILE_PROVISION | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
 
-      - name: Upload .app.zip
+      - name: Build Tauri iOS (Simulator - No Signing)
+        if: ${{ secrets.APPLE_CERTIFICATE == '' }}
+        run: bunx tauri ios build --target aarch64-apple-ios-sim
+
+      - name: Build Tauri iOS (Device - With Signing)
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: bunx tauri ios build --target aarch64-apple-ios
+
+      - name: Upload iOS App (Simulator)
         uses: actions/upload-artifact@v4
         with:
-          name: Memory-Player-macOS-universal-app
-          path: src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.zip
+          name: Memory-Player-iOS-Simulator
+          path: src-tauri/gen/apple/build/*/Build/Products/*/*.app
+          if-no-files-found: warn
+
+      - name: Upload iOS IPA (Device)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Memory-Player-iOS-IPA
+          path: src-tauri/gen/apple/build/*/Build/Products/*/*.ipa
           if-no-files-found: warn
 
       - name: Cleanup Keychain

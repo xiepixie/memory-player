@@ -1,9 +1,10 @@
 import { useAppStore } from '../../store/appStore';
+import { useShallow } from 'zustand/react/shallow';
 import { isTauri } from '../../lib/tauri';
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { IncrementalMarkdownContent } from '../shared/IncrementalMarkdownContent';
 import { NoteContentPane } from '../shared/NoteContentPane';
-import { Save, Type, Bold, Italic, List, Heading1, Copy, Eraser, RefreshCw, AlertTriangle, Wand2, Trash2, X, Clipboard, Keyboard, ChevronRight, ChevronDown, Tag, Maximize2, Minimize2 } from 'lucide-react';
+import { Save, Type, Bold, Italic, List, Heading1, Copy, Eraser, RefreshCw, AlertTriangle, Wand2, Trash2, X, Clipboard, Keyboard, ChevronRight, ChevronDown, Tag, PanelLeft, Columns, PanelRight, Minimize2 } from 'lucide-react';
 import { useToastStore } from '../../store/toastStore';
 import { ClozeUtils } from '../../lib/markdown/clozeUtils';
 import { parseNote, ParsedNote } from '../../lib/markdown/parser';
@@ -192,11 +193,28 @@ const MetadataEditor = ({ content, onChange }: { content: string; onChange: (new
     );
 };
 
-export const EditMode = ({ active = true }: { active?: boolean }) => {
-  const currentNote = useAppStore((state) => state.currentNote);
-  const currentFilepath = useAppStore((state) => state.currentFilepath);
-  const loadNote = useAppStore((state) => state.loadNote);
-  const saveCurrentNote = useAppStore((state) => state.saveCurrentNote);
+export const EditMode = ({ active = true, immersive = false }: { active?: boolean; immersive?: boolean }) => {
+  // ZUSTAND BEST PRACTICE: Use useShallow for object selectors to prevent infinite loops
+  const { 
+    currentNote, 
+    currentFilepath, 
+    saveCurrentNote,
+    loadNote
+  } = useAppStore(
+    useShallow(state => ({
+      currentNote: state.currentNote,
+      currentFilepath: state.currentFilepath,
+      saveCurrentNote: state.saveCurrentNote,
+      loadNote: state.loadNote
+    }))
+  );
+
+  // Layout Control
+  const [layoutMode, setLayoutMode] = useState<'split' | 'editor' | 'preview'>('split');
+
+  // Sync layout with immersive mode: Default to 'split' but hide chrome
+  // We don't force layout changes on immersive toggle to respect user preference
+
   const addToast = useToastStore((state) => state.addToast);
   const [content, setContent] = useState(currentNote?.raw || '');
   const [isSaving, setIsSaving] = useState(false);
@@ -211,24 +229,29 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showFixIdsConfirm, setShowFixIdsConfirm] = useState(false);
-  const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
 
   // Reset delete confirm when menu closes or changes
   useEffect(() => {
       setDeleteConfirm(false);
   }, [activePreviewCloze]);
 
-  // Escape key to exit fullscreen preview
+  // Escape key: exit immersive mode first, then exit preview layout
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isPreviewFullscreen) {
+      if (e.key === 'Escape') {
         e.preventDefault();
-        setIsPreviewFullscreen(false);
+        if (immersive) {
+          // Exit immersive mode first
+          window.dispatchEvent(new CustomEvent('exit-immersive'));
+        } else if (layoutMode === 'preview') {
+          // Then exit preview layout
+          setLayoutMode('split');
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPreviewFullscreen]);
+  }, [layoutMode, immersive]);
 
   // === PERFORMANCE FIX: Avoid double parsing ===
   // Store already parsed the note in loadNote(), use it directly for initial render
@@ -1129,6 +1152,26 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
   return (
     <div className="h-full flex flex-col bg-base-100 relative">
+      {/* Immersive Mode Exit Button - Floating, non-intrusive */}
+      {immersive && (
+        <div className="absolute top-4 right-4 z-50 group">
+          <button
+            onClick={() => {
+              // Dispatch custom event to exit immersive mode (handled by NoteRenderer)
+              window.dispatchEvent(new CustomEvent('exit-immersive'));
+            }}
+            className="
+              btn btn-circle btn-sm bg-base-100/60 backdrop-blur-md border border-base-content/10
+              shadow-lg hover:shadow-xl hover:bg-base-100/90 hover:scale-110
+              opacity-40 hover:opacity-100 transition-all duration-200
+            "
+            title="Exit Focus Mode (Esc)"
+          >
+            <Minimize2 size={14} />
+          </button>
+        </div>
+      )}
+
       {/* Floating Menu Portal */}
       {activePreviewCloze && createPortal(
           <div 
@@ -1225,8 +1268,9 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
         document.body
       )}
 
-      {/* Compact Glassy Toolbar */}
-      <div className="sticky top-0 z-30 flex items-center justify-between px-3 py-2 backdrop-blur-md bg-base-100/80 border-b border-base-200/50 transition-colors gap-4">
+      {/* Compact Glassy Toolbar - Conditionally rendered to free up space */}
+      {!immersive && (
+      <div className="sticky top-0 z-30 flex items-center justify-between px-3 py-2 backdrop-blur-md bg-base-100/80 border-b border-base-200/50 gap-4">
           
           {/* Left: Status & Stats & Critical Actions */}
           <div className="flex items-center gap-3">
@@ -1346,6 +1390,45 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
                <div className="h-4 w-px bg-base-content/10 mx-1" />
 
+               {/* Layout Switcher */}
+               <div className="flex items-center bg-base-200/60 p-0.5 rounded-lg border border-base-content/5">
+                  <button 
+                    onClick={() => setLayoutMode('editor')}
+                    className={`p-1.5 rounded-md transition-all duration-150 ${
+                      layoutMode === 'editor' 
+                        ? 'bg-base-100 shadow-sm text-primary' 
+                        : 'text-base-content/40 hover:text-base-content/70 hover:bg-base-100/50'
+                    }`}
+                    title="Editor Only"
+                  >
+                    <PanelLeft size={14} />
+                  </button>
+                  <button 
+                    onClick={() => setLayoutMode('split')}
+                    className={`p-1.5 rounded-md transition-all duration-150 ${
+                      layoutMode === 'split' 
+                        ? 'bg-base-100 shadow-sm text-primary' 
+                        : 'text-base-content/40 hover:text-base-content/70 hover:bg-base-100/50'
+                    }`}
+                    title="Split View"
+                  >
+                    <Columns size={14} />
+                  </button>
+                  <button 
+                    onClick={() => setLayoutMode('preview')}
+                    className={`p-1.5 rounded-md transition-all duration-150 ${
+                      layoutMode === 'preview' 
+                        ? 'bg-base-100 shadow-sm text-primary' 
+                        : 'text-base-content/40 hover:text-base-content/70 hover:bg-base-100/50'
+                    }`}
+                    title="Preview Only (Esc to exit)"
+                  >
+                    <PanelRight size={14} />
+                  </button>
+               </div>
+
+               <div className="h-4 w-px bg-base-content/10 mx-1" />
+
                <button
                     className={`btn btn-xs h-7 px-3 min-h-0 gap-1.5 transition-all ${isDirty ? 'btn-primary shadow-md shadow-primary/20' : 'btn-ghost opacity-70'}`}
                     onClick={handleSave}
@@ -1356,26 +1439,30 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
                 </button>
           </div>
       </div>
+      )}
 
-      {/* Cloze Navigator (Memoized for performance) */}
-      <ClozeNavigator
-        entries={clozeStats.entries}
-        targetClozeId={targetClozeId}
-        onScrollToCloze={scrollToCloze}
-      />
+      {/* Cloze Navigator - Conditionally rendered */}
+      {!immersive && (
+        <ClozeNavigator
+          entries={clozeStats.entries}
+          targetClozeId={targetClozeId}
+          onScrollToCloze={scrollToCloze}
+        />
+      )}
 
       {/* Split View */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Editor Pane - Responsive width, hidden in fullscreen preview */}
+        {/* Editor Pane */}
         <div className={`
-          flex flex-col border-r border-base-200 bg-base-100 relative group/editor
+          flex flex-col bg-base-100 relative group/editor
           transition-all duration-300 ease-out
-          ${isPreviewFullscreen 
-            ? 'w-0 min-w-0 opacity-0 overflow-hidden' 
-            : 'w-[42%] min-w-[360px]'
-          }
+          ${layoutMode === 'preview' ? 'hidden' : ''}
+          ${layoutMode === 'editor' ? 'w-full border-none' : 'w-[50%] border-r border-base-200'}
         `}>
-             <MetadataEditor content={content} onChange={handleMetadataChange} />
+             {/* Metadata Editor - Hide in immersive mode */}
+             <div className={`transition-all duration-300 ${immersive ? 'h-0 overflow-hidden opacity-0' : 'h-auto opacity-100'}`}>
+                <MetadataEditor content={content} onChange={handleMetadataChange} />
+             </div>
              
              {/* === CodeMirror 6 Editor === */}
              <CodeMirrorEditor
@@ -1388,42 +1475,31 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
              />
         </div>
 
-        {/* Preview Pane - Expands to full width in fullscreen mode */}
+        {/* Preview Pane */}
         <div className={`
-          flex-1 flex flex-col bg-base-200/30 relative group/preview
+          flex flex-col bg-base-200/30 relative group/preview
           transition-all duration-300 ease-out
-          ${isPreviewFullscreen ? 'fixed inset-0 z-[100] bg-base-100 w-full h-full' : 'w-[58%]'}
+          ${layoutMode === 'editor' ? 'hidden' : ''}
+          ${layoutMode === 'preview' ? 'w-full' : 'w-[50%]'}
         `}>
-           {/* Pane Header */}
-           <div className="h-9 min-h-[2.25rem] border-b border-base-200 bg-base-100/50 flex items-center px-4 justify-between select-none backdrop-blur-sm z-10">
+           {/* Pane Header - Only show in Split/Preview mode when NOT immersive */}
+           <div className={`
+             h-9 min-h-[2.25rem] border-b border-base-200 bg-base-100/50 flex items-center px-4 justify-between select-none backdrop-blur-sm z-10
+             transition-all duration-300
+             ${immersive ? 'h-0 min-h-0 overflow-hidden opacity-0 border-none' : ''}
+           `}>
                 <span className="text-[10px] font-bold uppercase tracking-widest opacity-40">Preview</span>
-                
-                {/* Fullscreen Toggle Button */}
-                <button
-                  onClick={() => setIsPreviewFullscreen(!isPreviewFullscreen)}
-                  className={`
-                    btn btn-xs btn-ghost h-6 w-6 min-h-0 p-0 
-                    transition-all duration-200
-                    ${isPreviewFullscreen 
-                      ? 'text-primary bg-primary/10 hover:bg-primary/20' 
-                      : 'text-base-content/40 hover:text-base-content/70 hover:bg-base-200/50'
-                    }
-                  `}
-                  title={isPreviewFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen preview'}
-                >
-                  {isPreviewFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                </button>
            </div>
 
-          {/* Preview Content - Increased padding for MathClozeBlock badges (-top-2.5) */}
+          {/* Preview Content */}
           <div 
             ref={previewPaneRef} 
             className={`
               flex-1 overflow-y-auto custom-scrollbar scroll-smooth
               transition-all duration-300 ease-out
-              ${isPreviewFullscreen 
-                ? 'px-0' // Remove padding from container in fullscreen to keep scrollbar at edge
-                : 'px-10 pt-10 pb-8'
+              ${layoutMode === 'preview' 
+                ? 'px-0' // Remove padding from container in full preview to keep scrollbar at edge
+                : 'px-8 pt-8 pb-8'
               }
             `}
           >
@@ -1431,11 +1507,14 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
                 <NoteContentPane 
                   variant="reader" 
                   hideFirstH1={false}
-                  className={isPreviewFullscreen ? 'max-w-5xl mx-auto' : ''}
+                  // In full preview mode, center the content with max-width
+                  // In split mode, let it fill the container
+                  className={layoutMode === 'preview' ? 'max-w-5xl mx-auto px-12 pt-12 pb-12' : ''}
                 >
                   <IncrementalMarkdownContent
                       content={parsedPreview.renderableContent}
                       variant="edit"
+                      disableVirtualize
                       onClozeClick={handlePreviewClozeClick}
                       onClozeContextMenu={handlePreviewClozeContextMenu}
                       onErrorLinkClick={handlePreviewErrorClick}

@@ -159,12 +159,20 @@ export const NoteRenderer = () => {
         };
     }, [viewMode]);
 
-    // Ensure immersive mode is only active in study views
+    // Ensure immersive mode is only active in study views or edit mode
     useEffect(() => {
-        if (!isStudyMode && immersive) {
+        const isAllowedMode = isStudyMode || viewMode === 'edit';
+        if (!isAllowedMode && immersive) {
             setImmersive(false);
         }
-    }, [isStudyMode, immersive]);
+    }, [isStudyMode, viewMode, immersive]);
+
+    // Listen for exit-immersive event from EditMode
+    useEffect(() => {
+        const handleExitImmersive = () => setImmersive(false);
+        window.addEventListener('exit-immersive', handleExitImmersive);
+        return () => window.removeEventListener('exit-immersive', handleExitImmersive);
+    }, []);
 
     // Default to edit mode when opening if not already set
     useEffect(() => {
@@ -279,11 +287,10 @@ export const NoteRenderer = () => {
                 </div>
             )}
 
-            {/* Unified Header */}
+            {/* Unified Header - Conditionally rendered to free up space in immersive mode */}
+            {!immersive && (
             <div
-                className={`sticky top-0 left-0 right-0 flex items-center justify-between px-4 py-3 border-b border-base-200 bg-base-100/95 backdrop-blur z-40 transition-all duration-300 ${
-                    immersive ? '-translate-y-16 opacity-0 pointer-events-none' : 'translate-y-0 opacity-100'
-                }`}
+                className="sticky top-0 left-0 right-0 flex items-center justify-between px-4 py-3 border-b border-base-200 bg-base-100/95 backdrop-blur z-40"
             >
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                     <button
@@ -408,6 +415,7 @@ export const NoteRenderer = () => {
                     </button>
                 </div>
             </div>
+            )}
 
             {/* Blur Mode Study Hints Overlay */}
             {viewMode === 'master' && hints.length > 0 && (
@@ -449,7 +457,7 @@ export const NoteRenderer = () => {
                         }`}
                     >
                         <Suspense fallback={<ContentSkeleton />}>
-                            <EditModeLazy active={viewMode === 'edit'} />
+                            <EditModeLazy active={viewMode === 'edit'} immersive={immersive} />
                         </Suspense>
                     </div>
 
@@ -523,6 +531,7 @@ export const NoteRenderer = () => {
                         </div>
                     </div>
 
+                    {/* ImmersiveControls - Only show in Study modes (EditMode has its own exit button) */}
                     {immersive && isStudyMode && (
                         <ImmersiveControls onExit={() => setImmersive(false)} remaining={hasSessionInProgress ? remainingCards : null} />
                     )}
@@ -537,26 +546,32 @@ export const NoteRenderer = () => {
 
 const ImmersiveControls = ({ onExit, remaining }: { onExit: () => void; remaining: number | null }) => {
     return (
-        <div className="absolute top-6 right-6 z-50 group animate-in fade-in slide-in-from-top-2 duration-300">
-            <div className="flex items-center gap-3 bg-base-100/40 backdrop-blur-md border border-base-content/5 shadow-sm hover:shadow-md rounded-full p-1.5 pr-4 transition-all duration-300 hover:bg-base-100/90">
-                <button
-                    className="btn btn-circle btn-sm btn-ghost bg-base-100/50 hover:bg-base-200 border-none shadow-sm"
-                    onClick={onExit}
-                    title="Exit Immersive Mode (ESC)"
-                >
-                    <Minimize2 size={16} />
-                </button>
-                
-                <div className="flex flex-col">
-                    <span className="text-[10px] font-bold uppercase tracking-widest opacity-40 group-hover:opacity-60 transition-opacity">
-                        Focus Mode
-                    </span>
-                    {typeof remaining === 'number' && (
-                        <span className="text-xs font-mono font-medium opacity-70">
-                            {remaining} cards left
-                        </span>
-                    )}
-                </div>
+        <div className="fixed top-3 right-3 z-50 group">
+            {/* Minimal exit button - almost invisible until hover */}
+            <button
+                className="
+                    btn btn-circle btn-sm bg-base-100/20 backdrop-blur-sm border-none
+                    opacity-20 hover:opacity-100 hover:bg-base-100/80 hover:shadow-lg
+                    transition-all duration-200
+                "
+                onClick={onExit}
+                title="Exit Focus Mode (Esc)"
+            >
+                <Minimize2 size={14} />
+            </button>
+            
+            {/* Tooltip on hover */}
+            <div className="
+                absolute top-full right-0 mt-2 px-2 py-1 
+                bg-base-100/90 backdrop-blur-md rounded-lg shadow-lg border border-base-content/10
+                opacity-0 group-hover:opacity-100 pointer-events-none
+                transition-opacity duration-200 whitespace-nowrap
+                text-[10px] font-medium text-base-content/70
+            ">
+                Press Esc to exit
+                {typeof remaining === 'number' && (
+                    <span className="ml-2 text-primary font-mono">{remaining} left</span>
+                )}
             </div>
         </div>
     );
