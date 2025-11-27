@@ -106,10 +106,11 @@ jobs:
               content = f.read()
           
           # Ensure alias imports for JavaUtilProperties / JavaFileInputStream at the top of the file
-          imports_block = '''import java.util.Properties as JavaUtilProperties
-import java.io.FileInputStream as JavaFileInputStream
-
-'''
+          imports_block = (
+              "import java.util.Properties as JavaUtilProperties\n"
+              "import java.io.FileInputStream as JavaFileInputStream\n"
+              "\n"
+          )
 
           if 'JavaUtilProperties' not in content:
               content = imports_block + content
