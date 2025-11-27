@@ -116,7 +116,7 @@ jobs:
                 storeFile = file(keystoreProperties["storeFile"] as String)
                 storePassword = keystoreProperties["password"] as String
             }
-        }'''
+          }'''
 
           # Case 1: replace empty signingConfigs { } if it exists
           if re.search(r'signingConfigs\s*\{\s*\}', content):
