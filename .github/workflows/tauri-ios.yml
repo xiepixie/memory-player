@@ -48,11 +48,11 @@ jobs:
         run: bunx tauri ios init
 
       - name: Import Apple Developer Certificate
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        if: env.APPLE_CERTIFICATE != ''
         run: |
           # Create temporary keychain
           echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
@@ -70,9 +70,9 @@ jobs:
           rm certificate.p12
 
       - name: Install Provisioning Profile
-        if: ${{ secrets.IOS_MOBILE_PROVISION != '' }}
         env:
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+        if: env.IOS_MOBILE_PROVISION != ''
         run: |
           # Create Provisioning Profiles directory
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
@@ -80,12 +80,23 @@ jobs:
           # Decode and install provisioning profile
           echo $IOS_MOBILE_PROVISION | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
 
+      - name: Check if certificate exists
+        id: check_cert
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            echo "has_cert=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_cert=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build Tauri iOS (Simulator - No Signing)
-        if: ${{ secrets.APPLE_CERTIFICATE == '' }}
+        if: steps.check_cert.outputs.has_cert == 'false'
         run: bunx tauri ios build --target aarch64-apple-ios-sim
 
       - name: Build Tauri iOS (Device - With Signing)
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: steps.check_cert.outputs.has_cert == 'true'
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: bunx tauri ios build --target aarch64-apple-ios
