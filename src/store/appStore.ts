@@ -328,25 +328,33 @@ interface AppState {
 
 }
 
-type VaultSlice = Pick<
+// === VAULT METADATA SLICE ===
+// Handles: fileMetadatas, idMap, pathMap, metadata sync operations
+type VaultMetadataSlice = Pick<
   AppState,
-  | 'rootPath'
-  | 'files'
   | 'fileMetadatas'
   | 'idMap'
   | 'pathMap'
+  | 'loadAllMetadata'
+  | 'refreshMetadata'
+  | 'handleExternalCardUpdate'
+>;
+
+// === VAULT FILES SLICE ===
+// Handles: rootPath, files, vaults, content cache, file operations
+type VaultFilesSlice = Pick<
+  AppState,
+  | 'rootPath'
+  | 'files'
   | 'recentVaults'
   | 'contentCache'
   | 'vaults'
   | 'currentVault'
   | 'setRootPath'
   | 'setFiles'
-  | 'loadAllMetadata'
-  | 'refreshMetadata'
   | 'syncNoteFromFilesystem'
   | 'loadSettings'
   | 'removeRecentVault'
-  | 'handleExternalCardUpdate'
   | 'loadVaults'
   | 'setCurrentVault'
   | 'restoreNote'
@@ -629,51 +637,14 @@ export const softDeleteNoteForPath = async (filepath: string) => {
   updateLastSync();
 };
 
-const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
-  rootPath: null,
-  recentVaults: [],
-  files: [],
+// =============================================================================
+// VAULT METADATA SLICE
+// Handles: fileMetadatas, idMap, pathMap, metadata sync operations
+// =============================================================================
+const createVaultMetadataSlice: AppStateCreator<VaultMetadataSlice> = (set, get) => ({
   fileMetadatas: {},
   idMap: {},
   pathMap: {},
-  contentCache: {},
-  vaults: [],
-  currentVault: null,
-
-  loadSettings: () => {
-    // NOTE: This function is now a no-op.
-    // State persistence is handled entirely by Zustand's persist middleware with IndexedDB.
-    // The old localStorage-based migration logic was removed because:
-    // 1. persist middleware now uses IndexedDB (async), not localStorage
-    // 2. The old check `localStorage.getItem('app-store')` always returned null
-    // 3. This caused rootPath to be incorrectly reset to null on every refresh
-    //
-    // If legacy migration from localStorage is still needed, it should be handled
-    // in the persist middleware's `migrate` function or `onRehydrateStorage` callback.
-  },
-
-  setRootPath: (path) => {
-    const { recentVaults, vaults, currentVault } = get();
-    // Only add to recents if it's not the Demo Vault and not null
-    if (path && path !== 'DEMO_VAULT') {
-      const updatedRecents = [path, ...recentVaults.filter(p => p !== path)].slice(0, 5);
-      const matchedVault = vaults.find(v => (v.config as any)?.rootPath === path) || currentVault;
-      set({ rootPath: path, recentVaults: updatedRecents, contentCache: {}, currentVault: matchedVault || null });
-    } else {
-      set({ rootPath: path, contentCache: {}, currentVault });
-    }
-  },
-
-  removeRecentVault: (path) => {
-    const { recentVaults } = get();
-    const updated = recentVaults.filter(p => p !== path);
-    set({ recentVaults: updated });
-  },
-
-  setFiles: (files) => {
-    set({ files });
-    get().loadAllMetadata();
-  },
 
   loadAllMetadata: async () => {
     try {
@@ -820,6 +791,166 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
     } catch (e) {
       console.error(`Failed to refresh metadata for ${filepath}`, e);
     }
+  },
+
+  handleExternalCardUpdate: (row: any) => {
+    const { idMap, fileMetadatas, currentFilepath, viewMode } = get();
+    const filepath = idMap[row.note_id];
+
+    if (!filepath) return; // Note not loaded or unknown
+
+    const meta = fileMetadatas[filepath];
+    if (!meta) return;
+
+    const prevCard = meta.cards[row.cloze_index];
+
+    // Construct updated card
+    const updatedCard = {
+      ...createEmptyCard(), // Start with defaults
+      state: row.state,
+      due: new Date(row.due),
+      stability: row.stability,
+      difficulty: row.difficulty,
+      elapsed_days: row.elapsed_days,
+      scheduled_days: row.scheduled_days,
+      reps: row.reps,
+      lapses: row.lapses,
+      last_review: row.last_review ? new Date(row.last_review) : undefined
+    };
+
+    const fsrsChanged = !prevCard ||
+      prevCard.state !== updatedCard.state ||
+      prevCard.reps !== updatedCard.reps ||
+      prevCard.lapses !== updatedCard.lapses ||
+      prevCard.stability !== updatedCard.stability ||
+      prevCard.difficulty !== updatedCard.difficulty ||
+      (prevCard.due?.getTime() ?? 0) !== (updatedCard.due?.getTime() ?? 0) ||
+      (prevCard.last_review?.getTime() ?? 0) !== (updatedCard.last_review?.getTime() ?? 0);
+
+    const newMeta = {
+      ...meta,
+      cards: {
+        ...meta.cards,
+        [row.cloze_index]: updatedCard
+      }
+    };
+
+    // Update Store
+    const updates: Partial<AppState> = {
+      fileMetadatas: {
+        ...fileMetadatas,
+        [filepath]: newMeta
+      }
+    };
+
+    // If this is the currently open note, update it too
+    if (currentFilepath === filepath) {
+      updates.currentMetadata = newMeta;
+    }
+
+    set(updates);
+
+    // In Edit mode we still want fresh FSRS state in the store,
+    // but showing detailed review toasts for every external update
+    // becomes noisy (e.g. after saving a note and syncing).
+    // Quietly return in that case.
+    if (viewMode === 'edit') {
+      return;
+    }
+
+    const isSelfReview = !!(
+      lastLocalReview &&
+      row.note_id === lastLocalReview.noteId &&
+      row.cloze_index === lastLocalReview.clozeIndex &&
+      Date.now() - lastLocalReview.time < 5000
+    );
+
+    // For self-initiated reviews we already showed a detailed toast
+    // when the user graded the card. Still update state, but skip
+    // repeating the FSRS info here.
+    if (isSelfReview) {
+      return;
+    }
+
+    if (fsrsChanged) {
+      const noteName = filepath.split(/[\\/]/).pop() || filepath;
+
+      let dueText: string | null = null;
+      if (row.due) {
+        const dueDate = new Date(row.due);
+        if (!isNaN(dueDate.getTime())) {
+          dueText = formatDistanceToNow(dueDate, { addSuffix: true });
+        }
+      }
+
+      const state = typeof row.state === 'number' ? row.state : undefined;
+      let stateLabel = '';
+      if (state === 0) stateLabel = 'New';
+      else if (state === 1) stateLabel = 'Learning';
+      else if (state === 2) stateLabel = 'Review';
+      else if (state === 3) stateLabel = 'Relearning';
+
+      const parts: string[] = [];
+      parts.push(`${noteName} c${row.cloze_index}`);
+      if (stateLabel) parts.push(stateLabel);
+      if (dueText) parts.push(`next ${dueText}`);
+      if (typeof row.stability === 'number') {
+        parts.push(`stability ${row.stability.toFixed(2)}`);
+      }
+
+      const message = `Review state updated: ${parts.join(' • ')}`;
+      useToastStore.getState().addToast(message, 'info');
+    } else {
+      useToastStore.getState().addToast(`External update: ${filepath.split('/').pop()}`, 'info');
+    }
+  },
+});
+
+// =============================================================================
+// VAULT FILES SLICE
+// Handles: rootPath, files, vaults, content cache, file operations
+// =============================================================================
+const createVaultFilesSlice: AppStateCreator<VaultFilesSlice> = (set, get) => ({
+  rootPath: null,
+  recentVaults: [],
+  files: [],
+  contentCache: {},
+  vaults: [],
+  currentVault: null,
+
+  loadSettings: () => {
+    // NOTE: This function is now a no-op.
+    // State persistence is handled entirely by Zustand's persist middleware with IndexedDB.
+    // The old localStorage-based migration logic was removed because:
+    // 1. persist middleware now uses IndexedDB (async), not localStorage
+    // 2. The old check `localStorage.getItem('app-store')` always returned null
+    // 3. This caused rootPath to be incorrectly reset to null on every refresh
+    //
+    // If legacy migration from localStorage is still needed, it should be handled
+    // in the persist middleware's `migrate` function or `onRehydrateStorage` callback.
+  },
+
+  setRootPath: (path) => {
+    const { recentVaults, vaults, currentVault } = get();
+    // Only add to recents if it's not the Demo Vault and not null
+    if (path && path !== 'DEMO_VAULT') {
+      const updatedRecents = [path, ...recentVaults.filter(p => p !== path)].slice(0, 5);
+      const matchedVault = vaults.find(v => (v.config as any)?.rootPath === path) || currentVault;
+      set({ rootPath: path, recentVaults: updatedRecents, contentCache: {}, currentVault: matchedVault || null });
+    } else {
+      set({ rootPath: path, contentCache: {}, currentVault });
+    }
+  },
+
+  removeRecentVault: (path) => {
+    const { recentVaults } = get();
+    const updated = recentVaults.filter(p => p !== path);
+    set({ recentVaults: updated });
+  },
+
+  setFiles: (files) => {
+    set({ files });
+    get().loadAllMetadata();
   },
 
   syncNoteFromFilesystem: async (filepath, content, noteId) => {
@@ -969,118 +1100,6 @@ const createVaultSlice: AppStateCreator<VaultSlice> = (set, get) => ({
 
     if (vault) {
         get().loadAllMetadata();
-    }
-  },
-
-  handleExternalCardUpdate: (row: any) => {
-    const { idMap, fileMetadatas, currentFilepath, viewMode } = get();
-    const filepath = idMap[row.note_id];
-
-    if (!filepath) return; // Note not loaded or unknown
-
-    const meta = fileMetadatas[filepath];
-    if (!meta) return;
-
-    const prevCard = meta.cards[row.cloze_index];
-
-    // Construct updated card
-    const updatedCard = {
-      ...createEmptyCard(), // Start with defaults
-      state: row.state,
-      due: new Date(row.due),
-      stability: row.stability,
-      difficulty: row.difficulty,
-      elapsed_days: row.elapsed_days,
-      scheduled_days: row.scheduled_days,
-      reps: row.reps,
-      lapses: row.lapses,
-      last_review: row.last_review ? new Date(row.last_review) : undefined
-    };
-
-    const fsrsChanged = !prevCard ||
-      prevCard.state !== updatedCard.state ||
-      prevCard.reps !== updatedCard.reps ||
-      prevCard.lapses !== updatedCard.lapses ||
-      prevCard.stability !== updatedCard.stability ||
-      prevCard.difficulty !== updatedCard.difficulty ||
-      (prevCard.due?.getTime() ?? 0) !== (updatedCard.due?.getTime() ?? 0) ||
-      (prevCard.last_review?.getTime() ?? 0) !== (updatedCard.last_review?.getTime() ?? 0);
-
-    const newMeta = {
-      ...meta,
-      cards: {
-        ...meta.cards,
-        [row.cloze_index]: updatedCard
-      }
-    };
-
-    // Update Store
-    const updates: Partial<AppState> = {
-      fileMetadatas: {
-        ...fileMetadatas,
-        [filepath]: newMeta
-      }
-    };
-
-    // If this is the currently open note, update it too
-    if (currentFilepath === filepath) {
-      updates.currentMetadata = newMeta;
-    }
-
-    set(updates);
-
-    // In Edit mode we still want fresh FSRS state in the store,
-    // but showing detailed review toasts for every external update
-    // becomes noisy (e.g. after saving a note and syncing).
-    // Quietly return in that case.
-    if (viewMode === 'edit') {
-      return;
-    }
-
-    const isSelfReview = !!(
-      lastLocalReview &&
-      row.note_id === lastLocalReview.noteId &&
-      row.cloze_index === lastLocalReview.clozeIndex &&
-      Date.now() - lastLocalReview.time < 5000
-    );
-
-    // For self-initiated reviews we already showed a detailed toast
-    // when the user graded the card. Still update state, but skip
-    // repeating the FSRS info here.
-    if (isSelfReview) {
-      return;
-    }
-
-    if (fsrsChanged) {
-      const noteName = filepath.split(/[\\/]/).pop() || filepath;
-
-      let dueText: string | null = null;
-      if (row.due) {
-        const dueDate = new Date(row.due);
-        if (!isNaN(dueDate.getTime())) {
-          dueText = formatDistanceToNow(dueDate, { addSuffix: true });
-        }
-      }
-
-      const state = typeof row.state === 'number' ? row.state : undefined;
-      let stateLabel = '';
-      if (state === 0) stateLabel = 'New';
-      else if (state === 1) stateLabel = 'Learning';
-      else if (state === 2) stateLabel = 'Review';
-      else if (state === 3) stateLabel = 'Relearning';
-
-      const parts: string[] = [];
-      parts.push(`${noteName} c${row.cloze_index}`);
-      if (stateLabel) parts.push(stateLabel);
-      if (dueText) parts.push(`next ${dueText}`);
-      if (typeof row.stability === 'number') {
-        parts.push(`stability ${row.stability.toFixed(2)}`);
-      }
-
-      const message = `Review state updated: ${parts.join(' • ')}`;
-      useToastStore.getState().addToast(message, 'info');
-    } else {
-      useToastStore.getState().addToast(`External update: ${filepath.split('/').pop()}`, 'info');
     }
   },
 });
@@ -1895,7 +1914,8 @@ const persistConfig = {
 // In production, devtools serializes entire state on every update causing massive lag in Tauri WebView
 const createStoreSlices = (...a: [any, any, any]) => ({
   ...createServiceSlice(...(a as Parameters<typeof createServiceSlice>)),
-  ...createVaultSlice(...(a as Parameters<typeof createVaultSlice>)),
+  ...createVaultMetadataSlice(...(a as Parameters<typeof createVaultMetadataSlice>)),
+  ...createVaultFilesSlice(...(a as Parameters<typeof createVaultFilesSlice>)),
   ...createHistorySlice(...(a as Parameters<typeof createHistorySlice>)),
   ...createSessionSlice(...(a as Parameters<typeof createSessionSlice>)),
   ...createNoteSlice(...(a as Parameters<typeof createNoteSlice>)),

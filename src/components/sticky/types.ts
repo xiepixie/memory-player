@@ -32,13 +32,13 @@ export const NOTE_COLORS = {
         text: 'text-emerald-900 dark:text-emerald-50',
     },
     plum: {
-        bg: 'bg-rose-900/80',
-        border: 'border-rose-700/60',
-        text: 'text-rose-50',
+        bg: 'bg-fuchsia-50 dark:bg-fuchsia-900/70',
+        border: 'border-fuchsia-200/70 dark:border-fuchsia-700/40',
+        text: 'text-fuchsia-900 dark:text-fuchsia-50',
     },
     graphite: {
-        bg: 'bg-neutral-900/90',
-        border: 'border-neutral-700/70',
-        text: 'text-neutral-50',
+        bg: 'bg-neutral-100 dark:bg-neutral-800/90',
+        border: 'border-neutral-300/70 dark:border-neutral-600/50',
+        text: 'text-neutral-800 dark:text-neutral-100',
     },
 } as const;

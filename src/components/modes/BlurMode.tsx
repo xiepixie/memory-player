@@ -1,6 +1,7 @@
 import { useAppStore } from '../../store/appStore';
-import { MarkdownContent } from '../shared/MarkdownContent';
+import { IncrementalMarkdownContent } from '../shared/IncrementalMarkdownContent';
 import { ModeActionHint } from '../shared/ModeActionHint';
+import { NoteContentPane } from '../shared/NoteContentPane';
 // REMOVED: useFileWatcher here - useVaultWatcher in Layout handles file watching globally
 // Having multiple watchers causes duplicate IPC calls and performance issues in Tauri
 import { getNoteDisplayTitle } from '../../lib/stringUtils';
@@ -42,15 +43,17 @@ export const BlurMode = ({ immersive = false }: { immersive?: boolean }) => {
         )}
       </div>
 
-      {/* Content Container - merged wrappers for reduced DOM depth */}
-      <div className="relative flex-1 prose prose-lg max-w-none">
-        <MarkdownContent 
+      {/* 
+        Content Container - uses NoteContentPane for unified styling.
+        First H1 is hidden to avoid duplicate title (already shown in header above).
+      */}
+      <NoteContentPane variant="reader" className="flex-1">
+        <IncrementalMarkdownContent 
           content={currentNote.renderableContent}
-          headings={currentNote.headings}
           variant="blur"
-          hideFirstH1
+          disableVirtualize
         />
-      </div>
+      </NoteContentPane>
     </div>
   );
 }

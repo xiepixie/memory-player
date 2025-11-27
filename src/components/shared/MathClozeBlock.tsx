@@ -1,7 +1,6 @@
-import React, { useMemo, memo } from 'react';
-import katex from 'katex';
+import React, { memo } from 'react';
 import clsx from 'clsx';
-import { katexCache } from '../../lib/katexCache';
+import { useKatexRender } from '../../hooks/useKatexRender';
 
 interface MathClozeBlockProps {
     id: number;
@@ -17,33 +16,18 @@ interface MathClozeBlockProps {
 }
 
 /**
- * Render KaTeX with LRU caching for performance.
- * Cache hit avoids expensive KaTeX parsing entirely.
- * 
- * Performance: -30% first paint time for math-heavy notes
+ * Loading skeleton for async KaTeX render
  */
-const renderKatexToString = (latex: string, displayMode: boolean = true): string => {
-    // Check cache first
-    const cached = katexCache.get(latex, displayMode);
-    if (cached !== null) {
-        return cached;
-    }
-    
-    // Render and cache
-    try {
-        const html = katex.renderToString(latex, {
-            displayMode,
-            throwOnError: false,
-            trust: false
-        });
-        katexCache.set(latex, displayMode, html);
-        return html;
-    } catch {
-        const errorHtml = `<span class="text-error">${latex}</span>`;
-        // Don't cache errors - user might fix the formula
-        return errorHtml;
-    }
-};
+const MathSkeleton = () => (
+    <div className="flex items-center justify-center gap-3 w-full py-4 animate-pulse opacity-60">
+        <div className="h-1.5 w-6 bg-base-content/10 rounded-full" />
+        <span className="text-2xl text-base-content/10 font-serif italic">f</span>
+        <div className="h-8 w-32 bg-base-content/10 rounded-md" />
+        <span className="text-xl text-base-content/10">=</span>
+        <div className="h-8 w-20 bg-base-content/10 rounded-md" />
+        <div className="h-1.5 w-6 bg-base-content/10 rounded-full" />
+    </div>
+);
 
 export const MathClozeBlock: React.FC<MathClozeBlockProps> = memo(({
     id,
@@ -57,8 +41,10 @@ export const MathClozeBlock: React.FC<MathClozeBlockProps> = memo(({
 }) => {
     // In edit mode, always use primary theme regardless of revealed state
     const useSuccessTheme = variant === 'review' && isRevealed;
-    // Memoize the rendered HTML so it doesn't re-render on reveal state changes
-    const renderedHtml = useMemo(() => renderKatexToString(latex), [latex]);
+    
+    // Async KaTeX rendering via Web Worker
+    // Cache hits are synchronous (no loading state), cache misses render async
+    const { html: renderedHtml, isLoading } = useKatexRender(latex, { displayMode: true });
 
     // Determine visual state
     const showContent = !isInteractive || isRevealed;
@@ -68,7 +54,7 @@ export const MathClozeBlock: React.FC<MathClozeBlockProps> = memo(({
             id={`cloze-${id}`}
             data-cloze-key={clozeKey}
             className={clsx(
-                "my-4 relative group math-cloze-block", // Reduced margin + CSS containment class
+                "my-4 relative group math-cloze-block max-w-[95%] mx-auto", // Reduced margin + CSS containment + centered width
                 isInteractive ? "cursor-pointer" : "cursor-default",
                 className
             )}
@@ -96,6 +82,7 @@ export const MathClozeBlock: React.FC<MathClozeBlockProps> = memo(({
 
             {/* Content Container - unified styling with text cloze */}
             <div 
+                data-cloze-id={id}
                 className={clsx(
                     "rounded-lg border-2 px-4 overflow-x-auto",
                     "transition-colors duration-150",
@@ -104,7 +91,7 @@ export const MathClozeBlock: React.FC<MathClozeBlockProps> = memo(({
                     // Interactive - common styles
                     isInteractive && [
                         "focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2",
-                        "active:scale-[0.995]",
+                        // Removed active:scale-[0.995] to prevent jumpy animation
                     ],
                     // Success theme (ClozeMode revealed)
                     isInteractive && useSuccessTheme && [
@@ -138,10 +125,14 @@ export const MathClozeBlock: React.FC<MathClozeBlockProps> = memo(({
             >
                 {/* Hidden: mystery placeholder | Revealed: actual KaTeX formula */}
                 {showContent ? (
-                    <div 
-                        className="w-full text-center"
-                        dangerouslySetInnerHTML={{ __html: renderedHtml }}
-                    />
+                    isLoading ? (
+                        <MathSkeleton />
+                    ) : (
+                        <div 
+                            className="w-full text-center"
+                            dangerouslySetInnerHTML={{ __html: renderedHtml || '' }}
+                        />
+                    )
                 ) : (
                     <div className="flex items-center justify-center gap-3 text-base-content/50 font-mono select-none">
                         <span className="text-2xl opacity-30 group-hover:opacity-70 group-hover:text-primary transition-[color,opacity] duration-150">∫</span>

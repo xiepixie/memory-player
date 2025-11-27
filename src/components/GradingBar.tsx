@@ -32,8 +32,8 @@ export const GradingBar = () => {
   // Check if we're in an active session
   const isInSession = sessionStats.timeStarted > 0 && queueLength > 0;
   
-  // Only show in study modes (review/master), not in edit mode
-  const isStudyMode = viewMode === 'review' || viewMode === 'master';
+  // Only show in study modes (test=Cloze, master=Blur), not in edit mode
+  const isStudyMode = viewMode === 'test' || viewMode === 'master';
   
   // Compute previews synchronously to avoid stale data after grading
   // Dependencies: currentMetadata changes when card changes or after grading

@@ -1,8 +1,9 @@
 import { useAppStore } from '../../store/appStore';
 import { isTauri } from '../../lib/tauri';
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { MarkdownContent } from '../shared/MarkdownContent';
-import { Save, Type, Bold, Italic, List, Heading1, Copy, Eraser, RefreshCw, AlertTriangle, Wand2, Trash2, X, Clipboard, Keyboard, ChevronRight, ChevronDown, Tag } from 'lucide-react';
+import { IncrementalMarkdownContent } from '../shared/IncrementalMarkdownContent';
+import { NoteContentPane } from '../shared/NoteContentPane';
+import { Save, Type, Bold, Italic, List, Heading1, Copy, Eraser, RefreshCw, AlertTriangle, Wand2, Trash2, X, Clipboard, Keyboard, ChevronRight, ChevronDown, Tag, Maximize2, Minimize2 } from 'lucide-react';
 import { useToastStore } from '../../store/toastStore';
 import { ClozeUtils } from '../../lib/markdown/clozeUtils';
 import { parseNote, ParsedNote } from '../../lib/markdown/parser';
@@ -210,11 +211,24 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showFixIdsConfirm, setShowFixIdsConfirm] = useState(false);
+  const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
 
   // Reset delete confirm when menu closes or changes
   useEffect(() => {
       setDeleteConfirm(false);
   }, [activePreviewCloze]);
+
+  // Escape key to exit fullscreen preview
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isPreviewFullscreen) {
+        e.preventDefault();
+        setIsPreviewFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPreviewFullscreen]);
 
   // === PERFORMANCE FIX: Avoid double parsing ===
   // Store already parsed the note in loadNote(), use it directly for initial render
@@ -286,17 +300,9 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
   const MAX_HIGHLIGHT_RETRIES = 5;
   const HIGHLIGHT_RETRY_DELAY = 120;
   
-  // === PERFORMANCE: Preview Pane Cache ===
-  // DOM queries are expensive; cache the preview pane reference
-  // React best practice: useRef for mutable values that don't trigger re-renders
-  const previewPaneRef = useRef<Element | null>(null);
-  const getPreviewPane = useCallback(() => {
-    // Lazy initialization + stale check (element may be removed from DOM)
-    if (!previewPaneRef.current || !previewPaneRef.current.isConnected) {
-      previewPaneRef.current = document.querySelector('.group\\/preview .overflow-y-auto');
-    }
-    return previewPaneRef.current;
-  }, []);
+  // === Preview Pane Ref (React best practice: use ref instead of querySelector) ===
+  const previewPaneRef = useRef<HTMLDivElement>(null);
+  const getPreviewPane = useCallback(() => previewPaneRef.current, []);
   
   // === PERFORMANCE: Cloze Index Cache ===
   // Build index once when content changes, not on every jump
@@ -644,18 +650,6 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
     // Note: React state will be updated by CodeMirror's onChange callback
   };
 
-  const computeSameIdTarget = (full: string, cursorIndex: number): number | null => {
-      const prevId = ClozeUtils.findPrecedingClozeId(full, cursorIndex);
-      if (prevId !== null) {
-          return prevId;
-      }
-      const maxId = ClozeUtils.getMaxClozeNumber(full);
-      if (maxId > 0) {
-          return maxId;
-      }
-      return null;
-  };
-
   const updateTargetClozeId = useCallback(() => {
       // === CodeMirror 6: Use cmActions ===
       const full = cmActions.getContent();
@@ -703,9 +697,12 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
       let targetId: number;
 
       if (sameId) {
-          const sameIdTarget = computeSameIdTarget(full, cursorPos);
-          if (sameIdTarget !== null) {
-              targetId = sameIdTarget;
+          // Prefer the preceding cloze ID near the cursor; fall back to global max ID
+          const prevId = ClozeUtils.findPrecedingClozeId(full, cursorPos);
+          if (prevId !== null) {
+              targetId = prevId;
+          } else if (maxId > 0) {
+              targetId = maxId;
           } else {
               targetId = Math.max(maxId + 1, 1);
           }
@@ -1369,8 +1366,15 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
 
       {/* Split View */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Editor Pane - 45% width for more editing space */}
-        <div className="w-[45%] flex flex-col min-w-[400px] border-r border-base-200 bg-base-100 relative group/editor">
+        {/* Editor Pane - Responsive width, hidden in fullscreen preview */}
+        <div className={`
+          flex flex-col border-r border-base-200 bg-base-100 relative group/editor
+          transition-all duration-300 ease-out
+          ${isPreviewFullscreen 
+            ? 'w-0 min-w-0 opacity-0 overflow-hidden' 
+            : 'w-[42%] min-w-[360px]'
+          }
+        `}>
              <MetadataEditor content={content} onChange={handleMetadataChange} />
              
              {/* === CodeMirror 6 Editor === */}
@@ -1384,23 +1388,59 @@ export const EditMode = ({ active = true }: { active?: boolean }) => {
              />
         </div>
 
-        {/* Preview Pane - 45% width */}
-        <div className="w-[45%] flex-1 flex flex-col bg-base-200/30 relative group/preview">
+        {/* Preview Pane - Expands to full width in fullscreen mode */}
+        <div className={`
+          flex-1 flex flex-col bg-base-200/30 relative group/preview
+          transition-all duration-300 ease-out
+          ${isPreviewFullscreen ? 'fixed inset-0 z-[100] bg-base-100 w-full h-full' : 'w-[58%]'}
+        `}>
            {/* Pane Header */}
-           <div className="h-8 min-h-[2rem] border-b border-base-200 bg-base-100/50 flex items-center px-4 justify-between select-none backdrop-blur-sm z-10">
+           <div className="h-9 min-h-[2.25rem] border-b border-base-200 bg-base-100/50 flex items-center px-4 justify-between select-none backdrop-blur-sm z-10">
                 <span className="text-[10px] font-bold uppercase tracking-widest opacity-40">Preview</span>
+                
+                {/* Fullscreen Toggle Button */}
+                <button
+                  onClick={() => setIsPreviewFullscreen(!isPreviewFullscreen)}
+                  className={`
+                    btn btn-xs btn-ghost h-6 w-6 min-h-0 p-0 
+                    transition-all duration-200
+                    ${isPreviewFullscreen 
+                      ? 'text-primary bg-primary/10 hover:bg-primary/20' 
+                      : 'text-base-content/40 hover:text-base-content/70 hover:bg-base-200/50'
+                    }
+                  `}
+                  title={isPreviewFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen preview'}
+                >
+                  {isPreviewFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                </button>
            </div>
 
-          <div className="flex-1 overflow-y-auto px-8 py-8 custom-scrollbar scroll-smooth">
+          {/* Preview Content - Increased padding for MathClozeBlock badges (-top-2.5) */}
+          <div 
+            ref={previewPaneRef} 
+            className={`
+              flex-1 overflow-y-auto custom-scrollbar scroll-smooth
+              transition-all duration-300 ease-out
+              ${isPreviewFullscreen 
+                ? 'px-0' // Remove padding from container in fullscreen to keep scrollbar at edge
+                : 'px-10 pt-10 pb-8'
+              }
+            `}
+          >
             {active && (
-                <MarkdownContent
-                    content={parsedPreview.renderableContent}
-                    headings={parsedPreview.headings}
-                    className="text-base max-w-none"
-                    onClozeClick={handlePreviewClozeClick}
-                    onClozeContextMenu={handlePreviewClozeContextMenu}
-                    onErrorLinkClick={handlePreviewErrorClick}
-                />
+                <NoteContentPane 
+                  variant="reader" 
+                  hideFirstH1={false}
+                  className={isPreviewFullscreen ? 'max-w-5xl mx-auto' : ''}
+                >
+                  <IncrementalMarkdownContent
+                      content={parsedPreview.renderableContent}
+                      variant="edit"
+                      onClozeClick={handlePreviewClozeClick}
+                      onClozeContextMenu={handlePreviewClozeContextMenu}
+                      onErrorLinkClick={handlePreviewErrorClick}
+                  />
+                </NoteContentPane>
             )}
           </div>
         </div>

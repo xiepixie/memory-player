@@ -58,6 +58,16 @@ export const NoteRenderer = () => {
     const [isHydrating, setIsHydrating] = useState(false);
     const addToast = useToastStore((state) => state.addToast);
 
+    // UX: Close sticky notes when switching to a different file
+    // Each file has its own sticky notes, so we close the panel to avoid confusion
+    const prevFilepathRef = useRef(currentFilepath);
+    useEffect(() => {
+        if (prevFilepathRef.current !== currentFilepath) {
+            setStickyOpen(false);
+            prevFilepathRef.current = currentFilepath;
+        }
+    }, [currentFilepath]);
+
     // Check for stale session - redirect to library to show Resume/Discard UI
     // This effect needs to run when session state is restored by persist middleware
     const STALE_SESSION_THRESHOLD_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -148,6 +158,13 @@ export const NoteRenderer = () => {
             window.removeEventListener('keyup', handleKeyUp);
         };
     }, [viewMode]);
+
+    // Ensure immersive mode is only active in study views
+    useEffect(() => {
+        if (!isStudyMode && immersive) {
+            setImmersive(false);
+        }
+    }, [isStudyMode, immersive]);
 
     // Default to edit mode when opening if not already set
     useEffect(() => {
@@ -506,7 +523,7 @@ export const NoteRenderer = () => {
                         </div>
                     </div>
 
-                    {immersive && (
+                    {immersive && isStudyMode && (
                         <ImmersiveControls onExit={() => setImmersive(false)} remaining={hasSessionInProgress ? remainingCards : null} />
                     )}
                 </>

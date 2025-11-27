@@ -1,7 +1,8 @@
 import { useAppStore } from '../../store/appStore';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { MarkdownContent } from '../shared/MarkdownContent';
+import { IncrementalMarkdownContent } from '../shared/IncrementalMarkdownContent';
 import { ModeActionHint } from '../shared/ModeActionHint';
+import { NoteContentPane } from '../shared/NoteContentPane';
 import { fireConfetti } from '../../lib/confettiService';
 import { getNoteDisplayTitle } from '../../lib/stringUtils';
 import { useClozeRevealStore } from '../../store/clozeRevealStore';
@@ -282,15 +283,14 @@ export const ClozeMode = ({ immersive = false }: { immersive?: boolean }) => {
         )}
       </div>
 
-      <div className="flex-1 prose prose-lg relative">
-        {/* No Provider needed - ClozeWithContext uses Zustand store directly */}
-        <MarkdownContent
+      <NoteContentPane variant="reader" className="flex-1">
+        {/* IncrementalMarkdownContent: block-level caching + async math via Web Worker */}
+        <IncrementalMarkdownContent
           content={currentNote.renderableContent}
-          headings={currentNote.headings}
-          hideFirstH1
           variant="review"
+          disableVirtualize
         />
-      </div>
+      </NoteContentPane>
     </div>
   );
 };

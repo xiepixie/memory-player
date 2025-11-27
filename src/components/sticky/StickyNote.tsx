@@ -1,12 +1,36 @@
-import { useState, useRef, useEffect, memo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, memo, useCallback } from 'react';
 import { X, Minus, Maximize2, Palette, Edit3, GripVertical } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
+import { rehypeAsyncMath } from '../../lib/markdown/rehypeAsyncMath';
+import { useKatexRender } from '../../hooks/useKatexRender';
+import { MathInline } from '../shared/MathInline';
 import { StickyNoteData, NOTE_COLORS } from './types';
 
 const COLOR_KEYS = Object.keys(NOTE_COLORS) as Array<keyof typeof NOTE_COLORS>;
+
+/**
+ * Preprocess markdown to ensure $$...$$ display math is rendered as a block.
+ * remark-math requires display math fences ($$) to be on their own lines.
+ * This function forces all $$...$$ patterns into the correct block format.
+ */
+function preprocessMathBlocks(content: string): string {
+    return content
+        // 1. Remove indentation before $$ to prevent it being parsed as code block
+        .replace(/^[ \t]+(\$\$)/gm, '$1')
+        
+        // 2. Force all $$...$$ into proper block math format:
+        //    text
+        //    $$
+        //    latex
+        //    $$
+        //    text
+        .replace(/(\$\$)([\s\S]*?)(\$\$)/g, (_match, _open, latex, _close) => {
+            // Wrap in double newlines to ensure paragraph separation
+            return `\n\n$$\n${latex.trim()}\n$$\n\n`;
+        });
+}
 
 interface StickyNoteProps {
     note: StickyNoteData;
@@ -148,7 +172,7 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
                 position: 'fixed',
                 top: 0,
                 left: 0,
-                transform: `translate(${position.x}px, ${position.y}px) scale(${isDragging ? 1.02 : 1})`,
+                transform: `translate(${position.x}px, ${position.y}px)`,
                 width: note.isMinimized ? 200 : note.width,
                 height: note.isMinimized ? 40 : note.height,
                 zIndex: note.zIndex,
@@ -156,13 +180,13 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
             onMouseDown={() => onFocus(note.id)}
             className={`
                 group flex flex-col overflow-hidden
-                rounded-lg 
-                shadow-lg hover:shadow-xl transition-shadow duration-200
-                backdrop-blur-sm
+                rounded-xl
+                shadow-lg hover:shadow-xl 
+                backdrop-blur-md
                 ${theme.bg} ${theme.border} ${theme.text}
-                border border-opacity-50
+                border-2 border-opacity-30
                 ${isEditing ? 'shadow-2xl ring-2 ring-black/10 dark:ring-white/10' : ''}
-                ${isDragging ? '' : 'transition-transform duration-100'}
+                ${isDragging ? 'shadow-2xl scale-[1.02]' : 'transition-all duration-150'}
             `}
         >
             {/* Header / Drag Handle */}
@@ -249,10 +273,12 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
                         ) : (
                             <div 
                                 className={`
-                                    w-full h-full p-4 overflow-y-auto custom-scrollbar 
-                                    cursor-text text-[13px] leading-relaxed
-                                    space-y-1 break-words whitespace-pre-wrap
+                                    sticky-note-content
+                                    w-full h-full p-3 overflow-y-auto custom-scrollbar 
+                                    cursor-text text-[13px] leading-snug
+                                    break-words
                                     selection:bg-black/10 dark:selection:bg-white/20
+                                    [&>*:first-child]:mt-0 [&>*:last-child]:mb-0
                                 `}
                                 style={fontStyle}
                                 onDoubleClick={() => setIsEditing(true)}
@@ -260,25 +286,69 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
                                 {note.content ? (
                                     <ReactMarkdown 
                                         remarkPlugins={[remarkGfm, remarkMath]}
-                                        rehypePlugins={[rehypeKatex]}
+                                        rehypePlugins={[rehypeAsyncMath]}
                                         components={{
+                                            // Paragraphs - compact line height for sticky notes
+                                            p: ({node, ...props}) => <p {...props} className="mb-1.5 leading-snug" />,
+                                            // Links
                                             a: ({node, ...props}) => <a {...props} className="underline decoration-dotted hover:decoration-solid cursor-pointer" target="_blank" rel="noopener noreferrer" />,
-                                            code: ({node, ...props}) => <code {...props} className="bg-black/5 dark:bg-white/10 rounded px-1 py-0.5 text-xs font-mono" />,
-                                            h1: ({node, ...props}) => <h1 {...props} className="text-[18px] font-semibold mb-1 leading-snug" />,
-                                            h2: ({node, ...props}) => <h2 {...props} className="text-[16px] font-semibold mb-1 leading-snug" />,
-                                            h3: ({node, ...props}) => <h3 {...props} className="text-[13px] font-semibold mb-1 leading-snug" />,
-                                            h4: ({node, ...props}) => <h4 {...props} className="text-[13px] font-semibold mb-1 leading-snug" />,
-                                            h5: ({node, ...props}) => <h5 {...props} className="text-[13px] font-semibold mb-1 leading-snug" />,
-                                            h6: ({node, ...props}) => <h6 {...props} className="text-[13px] font-semibold mb-1 leading-snug" />,
-                                            li: ({node, ...props}) => <li {...props} className="my-0.5" />,
-                                        }}
+                                            // Inline code
+                                            code: ({node, className, children, ...props}) => {
+                                                // Skip math-cloze language classes (handled by math components)
+                                                if (className?.includes('language-math-cloze-')) {
+                                                    return <code {...props}>{children}</code>;
+                                                }
+                                                return <code {...props} className="bg-black/5 dark:bg-white/10 rounded px-1 py-0.5 text-xs font-mono">{children}</code>;
+                                            },
+                                            // Headings - compact for sticky notes
+                                            h1: ({node, ...props}) => <h1 {...props} className="text-[16px] font-semibold mb-2 mt-3 first:mt-0 leading-tight" />,
+                                            h2: ({node, ...props}) => <h2 {...props} className="text-[14px] font-semibold mb-1 mt-1.5 first:mt-0 leading-tight" />,
+                                            h3: ({node, ...props}) => <h3 {...props} className="text-[13px] font-semibold mb-0.5 mt-1 first:mt-0 leading-tight" />,
+                                            h4: ({node, ...props}) => <h4 {...props} className="text-[13px] font-semibold mb-0.5 mt-1 first:mt-0 leading-tight" />,
+                                            h5: ({node, ...props}) => <h5 {...props} className="text-[13px] font-medium mb-0.5 mt-1 first:mt-0 leading-tight" />,
+                                            h6: ({node, ...props}) => <h6 {...props} className="text-[13px] font-medium mb-0.5 mt-1 first:mt-0 leading-tight" />,
+                                            // Lists - compact
+                                            ul: ({node, ...props}) => <ul {...props} className="list-disc list-inside mb-1 space-y-0" />,
+                                            ol: ({node, ...props}) => <ol {...props} className="list-decimal list-inside mb-1 space-y-0" />,
+                                            li: ({node, ...props}) => <li {...props} className="leading-snug" />,
+                                            // Strong
+                                            strong: ({node, ...props}) => <strong {...props} className="font-semibold" />,
+                                            // Code blocks - compact for sticky notes
+                                            // Skip styling if children is a math block (StickyMathBlock renders its own container)
+                                            pre: ({node, children, ...props}) => {
+                                                // Check if child is a math block - if so, render children directly without pre wrapper
+                                                const child = React.Children.toArray(children)[0] as React.ReactElement<{ latex?: string }> | undefined;
+                                                if (child?.props?.latex !== undefined) {
+                                                    // This is a math-block, don't wrap in styled pre
+                                                    return <>{children}</>;
+                                                }
+                                                return <pre {...props} className="bg-black/5 dark:bg-white/5 rounded p-2 my-1.5 text-xs overflow-x-auto">{children}</pre>;
+                                            },
+                                            // Blockquote - compact
+                                            blockquote: ({node, ...props}) => <blockquote {...props} className="border-l-2 border-current/30 pl-2 my-1 italic opacity-80" />,
+                                            // Horizontal rule
+                                            hr: ({node, ...props}) => <hr {...props} className="my-2 border-current/20" />,
+                                            // Block math - centered, larger font, no background
+                                            'math-block': ({ latex }: { latex: string }) => (
+                                                <StickyMathBlock latex={latex} />
+                                            ),
+                                            // Inline math - seamless inline display
+                                            'math-inline': ({ latex }: { latex: string }) => (
+                                                <span className="mx-0.5">
+                                                    <MathInline latex={latex} />
+                                                </span>
+                                            ),
+                                        } as Components}
                                     >
-                                        {note.content.replace(/\n/g, '  \n')}
+                                        {preprocessMathBlocks(note.content)}
                                     </ReactMarkdown>
                                 ) : (
-                                    <div className="h-full flex flex-col items-center justify-center opacity-30 select-none pointer-events-none">
-                                        <Edit3 size={24} className="mb-2 opacity-50" />
-                                        <span className="text-xs">Double-click to edit</span>
+                                    <div className="h-full flex flex-col items-center justify-center select-none pointer-events-none px-4">
+                                        <div className="w-10 h-10 rounded-full bg-current/5 flex items-center justify-center mb-3">
+                                            <Edit3 size={18} className="opacity-40" />
+                                        </div>
+                                        <span className="text-xs opacity-40 mb-1">Double-click to edit</span>
+                                        <span className="text-[10px] opacity-25">Supports Markdown & LaTeX</span>
                                     </div>
                                 )}
                             </div>
@@ -321,6 +391,25 @@ export const StickyNote = memo(({ note, onUpdate, onDelete, onFocus }: StickyNot
         </div>
     );
 });
+
+const StickyMathBlock = ({ latex }: { latex: string }) => {
+    const { html, isLoading } = useKatexRender(latex, { displayMode: true });
+
+    if (isLoading) {
+        return (
+                <span className="inline-block my-0.5">
+                <span className="inline-block h-4 w-8 bg-black/10 dark:bg-white/10 rounded align-middle animate-pulse" />
+            </span>
+        );
+    }
+
+    return (
+        <div
+            className="my-0.5 text-center text-[14px] leading-normal"
+            dangerouslySetInnerHTML={{ __html: html || '' }}
+        />
+    );
+};
 
 // Helper sub-component for cleaner render code
 const ActionBtn = ({ onClick, icon, label, variant = 'default' }: { onClick: (e: any) => void, icon: React.ReactNode, label: string, variant?: 'default' | 'danger' }) => (

@@ -27,19 +27,15 @@
 @keyframes cloze-flash {
   0% {
     box-shadow: 0 0 0 0 var(--color-primary);
-    transform: scale(1);
   }
   15% {
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 50%, transparent);
-    transform: scale(1.02);
   }
   85% {
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 50%, transparent);
-    transform: scale(1.02);
   }
   100% {
     box-shadow: 0 0 0 0 var(--color-primary);
-    transform: scale(1);
   }
 }
 
@@ -47,7 +43,7 @@
     animation: cloze-flash 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
     border-radius: 4px;
     /* PERFORMANCE: GPU acceleration for transform */
-    will-change: transform, box-shadow;
+    will-change: box-shadow;
     /* Limit style recalculation scope */
     contain: style;
 }
@@ -75,6 +71,21 @@
   background: transparent;
 }
 
+/* Custom scrollbar class - uses the global scrollbar styles */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-base-content) 15%, transparent) transparent;
+}
+
+/* Hide scrollbar completely */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
 .mask-linear-fade {
   mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
   -webkit-mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
@@ -96,6 +107,17 @@
   contain: layout style;
 }
 
+/* Sticky note: Override display math styling for compact appearance */
+.sticky-note-content .katex-display {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow-x: visible;
+  contain: none;
+}
+
 /* NOTE: Hover effects removed from regular display math.
    Only MathClozeBlock (挖空公式) should have interactive hover styles.
    This is handled by the MathClozeBlock component directly. */
@@ -109,7 +131,7 @@
 
 /* Math cloze blocks: Isolate repaint boundaries */
 .math-cloze-block {
-  contain: layout style paint;
+  contain: layout style; /* Removed paint to allow ring/shadow overflow */
   isolation: isolate;
 }
 
