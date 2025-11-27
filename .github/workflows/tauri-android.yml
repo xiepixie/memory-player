@@ -1,4 +1,4 @@
-name: 'Android Release Build'
+﻿name: 'Android'
 
 on:
   workflow_dispatch:
@@ -59,7 +59,7 @@ jobs:
         run: bun install
 
       - name: Initialize Tauri Android
-        run: bunx tauri android init || true
+        run: bunx tauri android init
 
       - name: Configure Rust for Android 16KB pages
         run: |
@@ -67,65 +67,45 @@ jobs:
           echo '[target.aarch64-linux-android]' >> .cargo/config.toml
           echo 'rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]' >> .cargo/config.toml
 
-      - name: Setup Android Signing (Fixed Syntax)
+      - name: Setup Android Signing
         env:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
         if: env.ANDROID_KEY_BASE64 != ''
+        shell: bash
         run: |
           cd src-tauri/gen/android
-          
-          # 1. 解码证书
-          echo "$ANDROID_KEY_BASE64" | base64 -d > keystore.p12
-          
-          # 2. 生成属性文件
+          echo "$ANDROID_KEY_BASE64" | base64 -d > release.keystore
+          KEYSTORE_PATH="$(pwd)/release.keystore"
           echo "keyAlias=$ANDROID_KEY_ALIAS" > keystore.properties
           echo "password=$ANDROID_KEY_PASSWORD" >> keystore.properties
-          echo "storeFile=$(pwd)/keystore.p12" >> keystore.properties
-          
-          # 3. 注入 Gradle 脚本 (无 import 版本)
-          cat > signing_config.gradle.kts << 'GRADLE_EOF'
-          
-          val keystorePropertiesFile = rootProject.file("keystore.properties")
-          val keystoreProperties = java.util.Properties()
-          
-          if (keystorePropertiesFile.exists()) {
-              keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
-          }
-          
-          android.signingConfigs {
-              create("release") {
-                  keyAlias = keystoreProperties["keyAlias"] as String?
-                  keyPassword = keystoreProperties["password"] as String?
-                  storeFile = keystoreProperties["storeFile"]?.let { file(it as String) }
-                  storePassword = keystoreProperties["password"] as String?
-                  storeType = "PKCS12"
-              }
-          }
-          
-          android.buildTypes.getByName("release") {
-              signingConfig = android.signingConfigs.getByName("release")
-          }
-          GRADLE_EOF
-          
+          echo "storeFile=$KEYSTORE_PATH" >> keystore.properties
           echo "" >> app/build.gradle.kts
-          echo "// === Release Signing Config ===" >> app/build.gradle.kts
-          cat signing_config.gradle.kts >> app/build.gradle.kts
+          echo "val keystorePropertiesFile = rootProject.file(\"keystore.properties\")" >> app/build.gradle.kts
+          echo "val keystoreProperties = java.util.Properties()" >> app/build.gradle.kts
+          echo "if (keystorePropertiesFile.exists()) { keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile)) }" >> app/build.gradle.kts
+          echo "android.signingConfigs.create(\"release\") {" >> app/build.gradle.kts
+          echo "    keyAlias = keystoreProperties[\"keyAlias\"] as String?" >> app/build.gradle.kts
+          echo "    keyPassword = keystoreProperties[\"password\"] as String?" >> app/build.gradle.kts
+          echo "    storeFile = keystoreProperties[\"storeFile\"]?.let { file(it as String) }" >> app/build.gradle.kts
+          echo "    storePassword = keystoreProperties[\"password\"] as String?" >> app/build.gradle.kts
+          echo "}" >> app/build.gradle.kts
+          echo "android.buildTypes.getByName(\"release\").signingConfig = android.signingConfigs.getByName(\"release\")" >> app/build.gradle.kts
 
-      - name: Build Tauri Android (APK + AAB)
+      - name: Build Tauri Android
         run: bunx tauri android build --apk true --aab true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Memory-Player-Android-APK
-          path: src-tauri/gen/android/app/build/outputs/apk/release/*.apk
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: warn
 
-      - name: Upload AAB (Play Store)
+      - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
           name: Memory-Player-Android-AAB
-          path: src-tauri/gen/android/app/build/outputs/bundle/release/*.aab
+          path: src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
           if-no-files-found: warn
