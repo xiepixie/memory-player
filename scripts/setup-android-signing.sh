@@ -26,32 +26,38 @@ password=$ANDROID_KEY_PASSWORD
 storeFile=$KEYSTORE_PATH
 EOF
 
-# Insert import statements at the top of build.gradle.kts
-sed -i '1s/^/import java.util.Properties\nimport java.io.FileInputStream\n\n/' app/build.gradle.kts
+# Check if signing config already exists
+if grep -q "signingConfigs.create" app/build.gradle.kts; then
+    echo "⚠️ Signing config already exists, skipping..."
+    exit 0
+fi
 
-# Append signing configuration at the end
-cat >> app/build.gradle.kts << 'EOF'
+# Append signing configuration using fully qualified class names (no imports needed)
+cat >> app/build.gradle.kts << 'SIGNING_CONFIG'
 
+// === Release Signing Configuration ===
 val keystorePropertiesFile = rootProject.file("keystore.properties")
-val keystoreProperties = Properties()
+val keystoreProperties = java.util.Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        load(java.io.FileInputStream(keystorePropertiesFile))
+    }
+}
+
 if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+    android.signingConfigs.create("release") {
+        keyAlias = keystoreProperties.getProperty("keyAlias")
+        keyPassword = keystoreProperties.getProperty("password")
+        storeFile = file(keystoreProperties.getProperty("storeFile"))
+        storePassword = keystoreProperties.getProperty("password")
+    }
+    android.buildTypes.getByName("release") {
+        signingConfig = android.signingConfigs.getByName("release")
+    }
 }
-
-android.signingConfigs.create("release") {
-    keyAlias = keystoreProperties.getProperty("keyAlias")
-    keyPassword = keystoreProperties.getProperty("password")
-    storeFile = file(keystoreProperties.getProperty("storeFile"))
-    storePassword = keystoreProperties.getProperty("password")
-}
-
-android.buildTypes.getByName("release") {
-    signingConfig = android.signingConfigs.getByName("release")
-}
-EOF
+SIGNING_CONFIG
 
 echo "✅ Android signing configured"
 echo "=== keystore.properties ==="
 cat keystore.properties
-echo "=== build.gradle.kts (first 10 lines) ==="
-head -10 app/build.gradle.kts
+echo "=== build.gradle.kts (last 20 lines) ==="
+tail -20 app/build.gradle.kts
