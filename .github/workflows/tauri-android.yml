@@ -38,8 +38,15 @@ jobs:
 
       - name: Setup Android NDK
         run: |
-          sdkmanager --install "ndk;27.0.12077973"
-          echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
+          # Use the latest installed NDK version (GitHub runners have one pre-installed)
+          NDK_VERSION=$(ls -1 $ANDROID_HOME/ndk | sort -V | tail -1)
+          if [ -z "$NDK_VERSION" ]; then
+            echo "No NDK found, installing..."
+            sdkmanager --install "ndk;27.0.12077973"
+            NDK_VERSION="27.0.12077973"
+          fi
+          echo "Using NDK version: $NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> $GITHUB_ENV
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -69,10 +76,9 @@ jobs:
 
       - name: Setup Android Signing
         env:
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
-        if: env.ANDROID_KEY_BASE64 != ''
         run: |
           chmod +x scripts/setup-android-signing.sh
           ./scripts/setup-android-signing.sh "$ANDROID_KEY_BASE64" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD"

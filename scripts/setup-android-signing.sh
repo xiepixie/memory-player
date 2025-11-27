@@ -1,6 +1,8 @@
 #!/bin/bash
 # Setup Android signing configuration for Tauri
 # Usage: ./setup-android-signing.sh <keystore_base64> <key_alias> <key_password>
+# 
+# Per Tauri docs: https://v2.tauri.app/distribute/sign/android/
 
 set -e
 
@@ -15,49 +17,87 @@ fi
 
 cd src-tauri/gen/android
 
-# Decode keystore
-echo "$ANDROID_KEY_BASE64" | base64 -d > release.keystore
-KEYSTORE_PATH="$(pwd)/release.keystore"
+# Decode keystore to temp directory (avoids path issues)
+KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
+echo "$ANDROID_KEY_BASE64" | base64 -d > "$KEYSTORE_PATH"
 
-# Create keystore.properties
+# Create keystore.properties (per Tauri docs)
 cat > keystore.properties << EOF
 keyAlias=$ANDROID_KEY_ALIAS
 password=$ANDROID_KEY_PASSWORD
 storeFile=$KEYSTORE_PATH
 EOF
 
+BUILD_FILE="app/build.gradle.kts"
+
 # Check if signing config already exists
-if grep -q "signingConfigs.create" app/build.gradle.kts; then
+if grep -q 'create("release")' "$BUILD_FILE"; then
     echo "⚠️ Signing config already exists, skipping..."
     exit 0
 fi
 
-# Append signing configuration using fully qualified class names (no imports needed)
-cat >> app/build.gradle.kts << 'SIGNING_CONFIG'
+echo "📝 Modifying $BUILD_FILE for release signing..."
 
-// === Release Signing Configuration ===
-val keystorePropertiesFile = rootProject.file("keystore.properties")
-val keystoreProperties = java.util.Properties().apply {
-    if (keystorePropertiesFile.exists()) {
-        load(java.io.FileInputStream(keystorePropertiesFile))
-    }
-}
+# Step 1: Add imports at the very top of the file
+# Create temp file with imports prepended
+{
+    echo 'import java.io.FileInputStream'
+    echo 'import java.util.Properties'
+    echo ''
+    cat "$BUILD_FILE"
+} > "${BUILD_FILE}.tmp"
+mv "${BUILD_FILE}.tmp" "$BUILD_FILE"
 
-if (keystorePropertiesFile.exists()) {
-    android.signingConfigs.create("release") {
-        keyAlias = keystoreProperties.getProperty("keyAlias")
-        keyPassword = keystoreProperties.getProperty("password")
-        storeFile = file(keystoreProperties.getProperty("storeFile"))
-        storePassword = keystoreProperties.getProperty("password")
-    }
-    android.buildTypes.getByName("release") {
-        signingConfig = android.signingConfigs.getByName("release")
-    }
-}
-SIGNING_CONFIG
+# Step 2: Replace the empty signingConfigs {} block with our release config
+# Use Python for reliable multi-line replacement (available on GitHub runners)
+python3 << 'PYTHON_SCRIPT'
+import re
+
+with open('app/build.gradle.kts', 'r') as f:
+    content = f.read()
+
+# Pattern to match signingConfigs { } or signingConfigs { ... }
+# Tauri typically generates: signingConfigs {}
+signing_config_block = '''signingConfigs {
+        create("release") {
+            val keystorePropertiesFile = rootProject.file("keystore.properties")
+            val keystoreProperties = Properties()
+            if (keystorePropertiesFile.exists()) {
+                keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+            }
+            keyAlias = keystoreProperties["keyAlias"] as String
+            keyPassword = keystoreProperties["password"] as String
+            storeFile = file(keystoreProperties["storeFile"] as String)
+            storePassword = keystoreProperties["password"] as String
+        }
+    }'''
+
+# Replace empty signingConfigs block
+content = re.sub(r'signingConfigs\s*\{\s*\}', signing_config_block, content)
+
+# Add signingConfig to the release buildType
+# Match: getByName("release") { ... } and inject signingConfig after the opening brace
+def add_signing_to_release(match):
+    indent = match.group(1)
+    return f'{indent}getByName("release") {{\n{indent}    signingConfig = signingConfigs.getByName("release")'
+
+content = re.sub(
+    r'(\s*)getByName\("release"\)\s*\{',
+    add_signing_to_release,
+    content,
+    count=1  # Only replace the first occurrence in buildTypes
+)
+
+with open('app/build.gradle.kts', 'w') as f:
+    f.write(content)
+
+print("✅ build.gradle.kts modified successfully")
+PYTHON_SCRIPT
 
 echo "✅ Android signing configured"
+echo ""
 echo "=== keystore.properties ==="
 cat keystore.properties
-echo "=== build.gradle.kts (last 20 lines) ==="
-tail -20 app/build.gradle.kts
+echo ""
+echo "=== Signing config in build.gradle.kts ==="
+grep -A 12 "signingConfigs {" "$BUILD_FILE" | head -15 || true
